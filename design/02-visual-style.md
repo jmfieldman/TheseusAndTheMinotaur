@@ -286,13 +286,41 @@ The exit door has two distinctive visual treatments:
   the player.
 - Camera framing adjusts to fit the puzzle grid with appropriate padding for UI.
 
-### 6.1 Camera Considerations by Grid Size
+### 6.1 Camera Angle
+
+The camera looks down at the diorama from a **configurable elevation angle**
+defined as a single engine constant (e.g. `CAMERA_ELEVATION_DEG`). This
+angle is measured from the horizontal plane:
+
+- **0°** = looking straight at the side (fully horizontal)
+- **90°** = looking straight down (top-down)
+- **Target range: ~30--40°** (based on art direction mockups)
+
+This constant is the **single source of truth** for camera orientation. All
+downstream systems that depend on the camera angle must derive their values
+from it rather than using independent hard-coded numbers:
+
+- **Back wall height** (how tall before it exits the top of the frame)
+- **Wall occlusion threshold** (max wall height before it blocks tile contents
+  behind it at this angle)
+- **Side door visibility** (how much of the virtual exit tile is visible
+  through side wall openings)
+- **Shadow projection angle** (baked shadow direction)
+- **Orthographic bounds calculation** (how much floor vs. front-face is
+  visible at a given angle)
+- **Vignette center offset** (vignette should center on the diorama, which
+  shifts vertically with camera angle)
+
+The angle should be tuned visually during development. Changing it should
+not require touching any other constants -- everything adapts automatically.
+
+### 6.2 Camera Considerations by Grid Size
 
 - Small grids (4x4): Diorama fills the screen comfortably.
 - Large grids (16x16): May need to zoom out. Must ensure tiles remain large
   enough to read on all target screen sizes (especially mobile).
 
-### 6.2 iOS Layout Constraint
+### 6.3 iOS Layout Constraint
 
 On iOS/iPadOS (portrait only), the game engine renders into a **square
 viewport** at the top of the screen (see [06 -- Input](06-input.md) §5).

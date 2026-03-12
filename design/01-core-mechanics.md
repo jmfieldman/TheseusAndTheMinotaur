@@ -4,6 +4,10 @@
 
 - Rectangular grid of **N x M** tiles, where N and M each range from **4 to 16**.
 - Dimensions are independent (e.g. a 4x12 puzzle is valid).
+- **Coordinate convention:** Columns increase left-to-right (West → East).
+  Rows increase bottom-to-top (South → North). **South** is the camera-facing
+  edge (bottom of screen). **North** is the back wall (top/far edge). This
+  convention is used consistently across all design docs and code.
 - Walls exist on **edges between adjacent tiles**, not on tiles themselves.
   - A wall blocks movement between the two tiles it separates.
   - Outer boundary of the grid is implicitly walled, with two exceptions:
@@ -176,8 +180,11 @@ outer boundary of the grid (openings in the boundary wall).
 - The exit door is an **opening in the boundary wall** leading to a
   **virtual exit tile** that sits just outside the grid boundary.
 - The virtual exit tile is visible to the player (the floor extends one tile
-  outward through the door opening), but is **outside the playable grid** --
-  neither the Minotaur nor environmental features can reach it.
+  outward through the door opening), but is **outside the playable grid**.
+- **The Minotaur cannot pass through the exit door.** The exit boundary edge
+  acts as a **wall for the Minotaur** -- only Theseus can step through it.
+  The Minotaur is confined to the N×M grid at all times.
+- Environmental features likewise cannot affect the virtual exit tile.
 - The exit door can have the god-light effect (see
   [02 -- Visual Style](02-visual-style.md) §4.4) shining through the opening.
 - If the exit is on the **top (back) wall**, the wall geometry around the

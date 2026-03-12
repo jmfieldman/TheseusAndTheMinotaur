@@ -1,4 +1,19 @@
+# Build output
+build/
+cmake-build-*/
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# IDE / editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.ccls-cache/
+.cache/
 
 # Prerequisites
 *.d
@@ -34,24 +49,18 @@
 *.exe
 *.out
 *.app
-*.i*86
-*.x86_64
-*.hex
 
 # Debug files
 *.dSYM/
 *.su
 *.idb
 *.pdb
-
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
-
-# debug information files
 *.dwo
+
+# Xcode (for iOS/tvOS builds)
+xcuserdata/
+*.xcworkspace
+DerivedData/
+
+# Claude Code
+.claude/plans/

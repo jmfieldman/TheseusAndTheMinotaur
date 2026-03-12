@@ -18,7 +18,9 @@ interesting, not a rigid grid.
 
 Each biome's overworld is a **static diorama** (no scrolling or panning). The
 entire biome map fits on screen at once, rendered in the same voxel art style
-as the puzzle levels.
+as the puzzle levels. Like puzzle dioramas, the overworld diorama is
+**procedurally generated** from the biome's overworld definition
+(`overworld.yml`) and procgen config — no external mesh files are used.
 
 ### 2.1 Visual Design
 

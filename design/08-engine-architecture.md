@@ -281,6 +281,8 @@ mapping). The engine loads strings from a data file at startup, keyed by locale.
 
 ### 4.2 Font Considerations
 
+- A single font file **`assets/fonts/theseus.ttf`** is used for all text
+  rendering. Multiple sizes are rendered from this TTF at runtime.
 - SDL_ttf supports Unicode / TrueType, so CJK and other scripts are feasible
   if the shipped font covers the required glyphs.
 - Right-to-left text is **not** planned for launch but should be considered if
@@ -288,15 +290,21 @@ mapping). The engine loads strings from a data file at startup, keyed by locale.
 
 ## 5. Resource Management
 
+- **Startup:** The engine decompresses `gamedata.tar.gz` into memory, parsing
+  all level JSON, biome configs, overworld definitions, and localization
+  strings into runtime data structures. Font (`assets/fonts/theseus.ttf`) is
+  loaded via SDL_ttf.
 - Assets loaded at scene transitions (not during gameplay).
-- Each biome's assets (meshes, textures, audio) are a loadable bundle.
-- **Biome load:** All LOD meshes for the biome's ~10 puzzles are generated
-  and uploaded to VRAM. Overworld diorama mesh and paths are loaded. This
+- Since all geometry is procedurally generated, there are **no mesh files** to
+  load. Biome "assets" are the parsed JSON configs + audio files.
+- **Biome load:** All LOD meshes for the biome's ~10 puzzles are procedurally
+  generated and uploaded to VRAM. Overworld diorama mesh is procedurally
+  generated. Audio (music, ambient, SFX) is loaded from disk. This all
   happens during the biome transition loading screen.
-- **Puzzle enter:** Full-detail mesh for the target puzzle is generated and
-  uploaded. The previous puzzle's full-detail mesh (if any) is released.
-  Only one full-detail puzzle mesh is in memory at a time.
-- **Biome exit:** All LOD meshes + overworld mesh released.
+- **Puzzle enter:** Full-detail mesh for the target puzzle is procedurally
+  generated and uploaded. The previous puzzle's full-detail mesh (if any) is
+  released. Only one full-detail puzzle mesh is in memory at a time.
+- **Biome exit:** All LOD meshes + overworld mesh released. Audio unloaded.
 - Simple scope-based lifetime (load on biome enter, release on biome exit).
 - C structs with explicit init/destroy functions (no RAII).
 

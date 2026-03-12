@@ -122,9 +122,12 @@ Impassable tiles give level designers a way to create non-rectangular playable
 areas and interesting negative space without the visual monotony of walls on
 every edge.
 
-> **Open question:** Should we use a binary/compact format instead of JSON for
-> shipping builds, with JSON as the authoring format? A simple compile step
-> could convert JSON to a packed binary format.
+Level data files remain in **JSON format** for both authoring and shipping.
+All static data files (level JSON, biome configs, localization strings, procgen
+configs) are packaged into a single **`gamedata.tar.gz`** archive that is
+shipped with the game and decompressed into memory at startup. The total data
+volume is small enough that this is fast and memory-efficient. See §9 for
+packaging details.
 
 ## 3. Procedural Diorama Generation
 
@@ -385,29 +388,36 @@ tabletop miniature feel:
 
 ### 3.6 Actor Models
 
-- **Theseus** and **Minotaur** are the only pre-authored assets that are not
-  procedurally generated.
-- Each actor is a small voxel model with animation states (idle, hop/roll,
-  celebrate, caught/death).
-- Authored in a voxel editor or modeled directly in code as positioned voxel
-  arrays.
-- The Minotaur model includes retractable horn and face sub-meshes (see
-  [02 -- Visual Style](02-visual-style.md) §2.4 and §7.2).
+Actors are **procedurally generated** in code — no external mesh files are
+loaded. Both Theseus and the Minotaur are fundamentally **cubes** (with
+beveled edges), built as positioned voxel arrays at runtime:
+
+- **Theseus:** A beveled cube with warm gold/amber vertex colors. The cube
+  geometry is generated once at startup. Animation (hop arc, squash, lean)
+  is purely tween-based transforms applied to the cube mesh.
+- **Minotaur:** A larger beveled cube with dark red/brown vertex colors.
+  Includes procedurally generated sub-meshes for:
+  - **Horns:** White voxel horn shapes attached to the top face, with
+    retract/extend tween support (see [02 -- Visual Style](02-visual-style.md)
+    §7.2).
+  - **Face:** Smaller detail voxels (eyes, snout, brow) on the camera-facing
+    side, with retract/re-materialize tween support.
+  - **Expression variants:** Voxel arrangements for angry/neutral/etc.
+    generated at startup and swapped based on proximity to Theseus.
+- Animation states (idle, hop/roll, celebrate, caught/death) are all
+  tween-based transforms — no skeletal animation or keyframe data needed.
 
 ### 3.7 Mesh Format
 
-Since dioramas are procedurally generated, the engine builds GPU-ready vertex
-buffers at runtime rather than loading mesh files for levels. The mesh format
-considerations apply only to **actor models** and **decoration prefabs**:
+**Everything is procedurally generated.** The engine builds all GPU-ready
+vertex buffers at runtime. There are **no external mesh files** for any
+game content — dioramas, actors, decorations, and overworld geometry are
+all constructed in code.
 
-| Format   | Use Case                          | Notes                        |
-|----------|-----------------------------------|------------------------------|
-| Custom   | Voxel prefabs (decoration clusters) | Simple positioned voxel arrays; can be defined in JSON or binary |
-| glTF     | Actor models (if complex animation needed) | Well-supported, binary variant is compact |
-
-> **TBD:** Actor model format. If actors are simple enough to define as
-> positioned voxel arrays with tween-based animation, a custom format may be
-> simpler than glTF.
+Decoration prefabs (voxel clusters for floor scatter, wall decorations,
+lantern pillars, etc.) are defined as **positioned voxel arrays** in the
+biome's procgen configuration (JSON). The engine interprets these definitions
+and generates vertex data at level load time.
 
 ### 3.8 Textures
 
@@ -458,14 +468,16 @@ seamless.
 ## 5. Font Assets
 
 - Text rendering via **SDL_ttf** (TrueType font rendering).
-- Ship one or more `.ttf` font files with the game.
+- A single font file **`theseus.ttf`** is shipped with the game, located at:
+  ```
+  assets/fonts/theseus.ttf
+  ```
 - Font style should complement the matte/ancient aesthetic (clean sans-serif
   or a tasteful serif with good readability at small sizes).
-- Multiple font sizes may be needed (HUD, menus, titles, level results).
+- Multiple font sizes are rendered from this single TTF at runtime (HUD,
+  menus, titles, level results).
 - SDL_ttf renders glyphs to SDL surfaces which are then uploaded as OpenGL
   textures for rendering.
-
-> **TBD:** Specific font selection. Must be licensed for commercial game use.
 
 ## 6. Biome Definition
 
@@ -750,21 +762,31 @@ save paths.
 ## 9. Build Pipeline
 
 ```
-Source Assets (JSON, YAML, OBJ/glTF, PNG, OGG, WAV, TTF)
+Source Assets (JSON, YAML, OGG, WAV, TTF)
     │
     ▼
-Asset Compiler (build step)
-    │  • Validates level JSON
-    │  • Converts meshes to engine-optimized format
-    │  • Compresses textures
-    │  • Packages into biome bundles
+Asset Packager (build step)
+    │  • Validates level JSON (schema, wall consistency, door placement)
+    │  • Validates biome configs (palette ranges, procgen params)
+    │  • Packages all static data into gamedata.tar.gz:
+    │      - Level JSON files (per-biome directories)
+    │      - Biome configs (biome.json, procgen config)
+    │      - Overworld definitions (overworld.yml)
+    │      - Localization strings (strings/*.json)
+    │  • Font file (theseus.ttf) shipped separately in assets/fonts/
+    │  • Audio files (OGG, WAV) shipped separately in assets/audio/
     │
     ▼
-Runtime Assets (binary bundles loaded by engine)
+Runtime Loading:
+    1. Engine reads gamedata.tar.gz → decompresses into memory
+    2. Parses JSON/YAML into runtime data structures
+    3. Font and audio loaded from their asset directories
+    4. No mesh files to load — all geometry is procedurally generated
 ```
 
-> **TBD:** Asset compiler tooling needs to be built. Could be a simple
-> Python/shell script pipeline or a more structured tool.
+The asset packager is a simple build script (Python or shell) that validates
+and archives. Since there are no external mesh files and all geometry is
+procedural, the pipeline is lightweight.
 
 ## 10. Localization Strings
 
