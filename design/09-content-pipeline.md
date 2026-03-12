@@ -121,15 +121,17 @@ Biome procgen config (§6.2)
     │
     ▼
 Procedural Diorama Generator (runtime)
-    │  1. Lay floor tiles (checkerboard coloring, per-biome palette)
-    │  2. Generate walls (biome-styled voxel compositions)
-    │  3. Fill impassable tiles (biome-appropriate blocking geometry)
-    │  4. Place environmental features (spike traps, pressure plates, etc.)
-    │  5. Scatter floor decorations (biome-themed micro-details)
-    │  6. Apply wall decorations (moss, cracks, dripping, etc.)
-    │  7. Place environmental light sources (lanterns, lava glow, etc.)
-    │  8. Place exit tile effects (god-light, finish-flag border)
-    │  9. Build surrounding diorama edge / border geometry
+    │  1. Build diorama platform (raised base with biome-styled side faces)
+    │  2. Lay floor tiles (checkerboard coloring, per-biome palette)
+    │  3. Generate walls (stacked-block voxel compositions with archways)
+    │  3a. Generate back wall (tall thematic backdrop along far edge)
+    │  4. Fill impassable tiles (biome-appropriate blocking geometry)
+    │  5. Place environmental features (spike traps, pressure plates, etc.)
+    │  6. Scatter floor decorations (biome-themed micro-details)
+    │  7. Apply wall decorations (moss, cracks, dripping, etc.)
+    │  8. Place lantern pillars (tall columns with glowing tops at edges/corners)
+    │  9. Place exit tile effects (warm god-light, finish-flag border)
+    │ 10. Build surrounding edge / border geometry (foliage, cliffs, etc.)
     │
     ▼
 Voxel Mesh (GPU-ready VBO, vertex colors, per-frame rebuild for dynamic parts)
@@ -142,14 +144,17 @@ duration of the level (only actors and stateful environmental features animate).
 
 #### 3.2.1 Checkerboard Grid
 
-Walkable floor tiles use a **subtle checkerboard pattern** -- every other tile
-is a slightly offset color from the biome's floor palette. This makes the grid
-inherently visible even in areas with no walls, without requiring explicit grid
-lines.
+Walkable floor tiles use a **checkerboard pattern** -- every other tile uses an
+offset color from the biome's floor palette. This makes the grid inherently
+visible even in areas with no walls, without requiring explicit grid lines.
 
-- The color offset should be **low-contrast** (e.g. 5--10% lightness shift) --
-  enough to perceive the grid at a glance but not visually noisy.
+- The color offset should be **~5--15% lightness shift** -- enough to clearly
+  perceive the grid at a glance but not visually garish.
 - Both checkerboard colors are derived from the biome's floor palette.
+- Each floor tile is composed of **multiple smaller voxel blocks** (paving
+  stones, flagstones, planks depending on biome) with subtle per-block color
+  variation. This gives floors visual richness while preserving the
+  tile-level checkerboard readability.
 
 #### 3.2.2 Floor Surface Detail
 
@@ -183,14 +188,21 @@ contents behind them (see [02 -- Visual Style](02-visual-style.md) §2.2).
 
 Each biome defines a wall generation style that controls:
 
-- **Voxel shape variation:** Whether wall voxels are uniform cubes (Mechanical
-  Halls) or irregular/offset (Catacombs, Dark Forest).
+- **Block composition:** Walls are visibly composed of **individual stacked
+  stone/brick voxel blocks** with mortar gaps between them. The block size,
+  regularity, and arrangement vary per biome.
+- **Voxel shape variation:** Whether wall blocks are uniform rectangles
+  (Mechanical Halls, Palace) or irregular/offset (Catacombs, Dark Forest).
 - **Surface roughness:** How much positional jitter is applied to wall voxels.
   Smooth for palace/mechanical themes, rough for natural/underground themes.
-- **Color variation:** Per-voxel color jitter within the biome's wall palette
-  range.
+- **Color variation:** Per-block color jitter within the biome's wall palette
+  range. Each block should be a slightly different shade.
 - **Height variation:** Whether walls are uniform height or have ragged/
   crumbling tops.
+- **Passage archways:** Where a gap exists between wall segments (i.e. two
+  adjacent tiles with no wall between them, flanked by walls on neighboring
+  edges), the wall ends curve or step inward to form subtle **archway shapes**
+  that frame the passage opening.
 - **Decorative overlays:** Moss growth, cracks, dripping water stains,
   cobwebs, etc. applied as additional voxels on wall surfaces (see §3.5).
 
@@ -204,6 +216,41 @@ Each biome defines a wall generation style that controls:
 | Crystal Caverns    | Crystalline formations mixed with raw rock           |
 | Palace of Knossos  | Ornate painted columns, clean Minoan masonry         |
 
+### 3.3a Back Wall Generation
+
+The **back wall** (the edge of the diorama farthest from the camera) is a
+special-case wall that is exempt from the low-profile height rule. It rises
+**tall behind the playable area** and serves as a **decorative, thematic
+backdrop** -- it is purely aesthetic and does **not** contain exit doors or
+indicate an escape route.
+
+The back wall generator:
+
+- **Height:** Significantly taller than gameplay walls -- roughly 3--5x the
+  standard wall height, enough to create an imposing backdrop that frames the
+  scene without overwhelming the diorama.
+- **Composition:** Built from the same biome wall block style (§3.3) but
+  extended vertically and enriched with additional decorative elements.
+- **Biome theming:** Each biome defines back wall prefab clusters and
+  decoration rules:
+
+| Biome              | Back Wall Treatment                                   |
+|--------------------|-------------------------------------------------------|
+| Stone Labyrinth    | Tall sandstone wall with carved geometric reliefs     |
+| Dark Forest        | Overgrown stone ruin, heavy vine/moss coverage        |
+| Mechanical Halls   | Massive gear assemblies, pipes, riveted bronze panels |
+| Catacombs          | Towering rough-hewn rock face, skull niches           |
+| Sunken Ruins       | Partially submerged colonnade, waterfall overflow     |
+| Crystal Caverns    | Jagged crystal formations rising from raw stone       |
+| Palace of Knossos  | Ornate Minoan colonnade with painted fresco panels    |
+
+- **Decoration layers:** The back wall receives its own decoration pass
+  (moss, cracks, hanging vines, embedded crystals, etc.) at higher density
+  than gameplay walls since occlusion is not a concern.
+- **Lighting interaction:** Back walls catch dynamic light from nearby
+  lantern pillars, creating atmospheric shadow interplay (e.g. lantern light
+  casting long shadows of wall relief details).
+
 ### 3.4 Impassable Tile Generation
 
 Impassable tiles are filled with **biome-appropriate blocking geometry** that
@@ -216,22 +263,61 @@ procgen config, with randomized rotation, scale variation, and color jitter.
 The procedural generator applies decorations in **modular layers**, each
 independently configurable per biome:
 
-| Layer              | Applied To      | Examples                              |
-|--------------------|-----------------|---------------------------------------|
-| Floor scatter      | Walkable tiles  | Pebbles, leaves, flowers, shards      |
-| Wall surface       | Wall faces      | Moss, cracks, cobwebs, water stains   |
-| Wall top           | Wall upper edge | Crumbling voxels, small plants, snow  |
-| Impassable fill    | Blocked tiles   | Trees, lava, columns, rubble          |
-| Edge border        | Diorama perimeter | Cliff edges, water, void, roots     |
-| Light sources      | Specific tiles/walls | Lanterns, torches, lava cracks     |
+| Layer              | Applied To           | Examples                              |
+|--------------------|----------------------|---------------------------------------|
+| Floor scatter      | Walkable tiles       | Pebbles, leaves, flowers, shards      |
+| Wall surface       | Wall faces           | Moss, cracks, cobwebs, water stains   |
+| Wall top           | Wall upper edge      | Crumbling voxels, small plants, snow  |
+| Impassable fill    | Blocked tiles        | Trees, lava, columns, rubble          |
+| Lantern pillars    | Diorama edges/corners| Tall columns with glowing crystal top |
+| Diorama platform   | Entire grid base     | Raised platform with side faces       |
+| Edge border        | Diorama perimeter    | Cliff edges, foliage, water, void     |
+| Environmental features | Feature tiles   | Pressure plates, spike traps, etc.    |
 
 Each layer has:
 
 - **Density** (0.0 -- 1.0): How frequently decorations appear.
 - **Variety** (list of prefab voxel clusters): Pool of options to choose from.
 - **Placement rules:** Where decorations can appear (e.g. moss only on walls
-  adjacent to open tiles, lanterns only on wall ends).
+  adjacent to open tiles, lanterns at diorama corners and wall endpoints).
 - **RNG seed:** Derived from level ID for deterministic output.
+
+### 3.5a Lantern Pillars
+
+Lantern pillars are the primary decorative light source and a defining visual
+element of the diorama aesthetic:
+
+- **Structure:** Tall voxel columns (~actor height, significantly taller than
+  walls) with a biome-styled base, shaft, and a **glowing crystal or flame
+  element** at the top.
+- **Placement:** At diorama corners, along the diorama edge, and at wall
+  endpoints. The procgen config controls density.
+- **Light emission:** Each lantern emits a **cool-toned point light**
+  (cyan/blue/teal) that illuminates nearby floor and wall geometry and casts
+  dynamic shadows (see [02 -- Visual Style](02-visual-style.md) §4.3).
+- **Biome variation:** The pillar style varies per biome (rough stone columns
+  for Stone Labyrinth, ornate bronze columns for Mechanical Halls, bone
+  columns for Catacombs, etc.) but all share the tall-column-with-glowing-top
+  silhouette.
+
+### 3.5b Diorama Platform and Edge
+
+The playable grid sits on a **raised platform** that gives the diorama its
+tabletop miniature feel:
+
+- **Platform:** The floor grid is elevated above the surrounding space. The
+  sides of the platform are visible (biome-styled stone, earth, or metal
+  depending on biome) and add visual weight.
+- **Edge drop-off:** Beyond the platform edge, the diorama transitions into
+  biome-appropriate border geometry:
+  - **Dark Forest:** Dense foliage, undergrowth, and tree canopy wrapping the
+    edges.
+  - **Stone Labyrinth:** Clean stone frame or cliff face.
+  - **Sunken Ruins:** Water surface surrounding the platform.
+  - **Catacombs:** Rough rock faces descending into darkness.
+  - **Crystal Caverns:** Raw crystal formations and cave walls.
+- The border treatment should make the diorama feel like a **self-contained
+  island** -- a miniature world the player is peering into.
 
 ### 3.6 Actor Models
 
@@ -334,10 +420,12 @@ parameters that control how the diorama generator builds levels for this biome:
 {
   "procgen": {
     "wall_style": {
+      "block_size": "medium",
+      "block_regularity": 0.4,
       "roughness": 0.3,
       "height_variation": 0.1,
-      "voxel_shape": "irregular",
-      "color_jitter": 0.08
+      "color_jitter": 0.08,
+      "archway_style": "curved"
     },
     "floor_decorations": {
       "density": 0.15,
@@ -355,14 +443,25 @@ parameters that control how the diorama generator builds levels for this biome:
       "placement": "wall_top"
     },
     "impassable_prefabs": ["dense_trees", "thick_undergrowth", "fallen_log"],
-    "edge_border": {
-      "style": "cliff_with_roots",
-      "depth": 2
+    "lantern_pillars": {
+      "style": "rough_stone",
+      "glow_color": "#66cccc",
+      "placement": ["corners", "wall_endpoints"],
+      "density": 0.3
     },
-    "light_sources": {
-      "type": "lantern",
-      "placement": "wall_end",
-      "density": 0.1
+    "platform": {
+      "elevation": 3,
+      "side_style": "rough_stone"
+    },
+    "back_wall": {
+      "height_multiplier": 4.0,
+      "prefabs": ["overgrown_ruin_section", "vine_covered_arch", "crumbled_tower"],
+      "decoration_density": 0.6,
+      "decorations": ["heavy_moss", "hanging_vines", "root_tendrils"]
+    },
+    "edge_border": {
+      "style": "dense_foliage",
+      "depth": 2
     }
   }
 }

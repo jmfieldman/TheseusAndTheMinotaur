@@ -7,6 +7,18 @@ in 3D with an **orthographic projection**. The camera looks down at the puzzle
 board at a fixed angle, preserving the 2D grid readability while giving depth
 and atmosphere through 3D geometry and lighting.
 
+The overall feel is that of a **miniature tabletop diorama** -- the playable
+grid sits on a **raised platform** that is visually elevated above its
+surroundings. The diorama edge drops away into a biome-themed border treatment
+(cliff face, dense foliage, water, stone frame, etc.), reinforcing the sense
+that the player is looking down at a self-contained miniature world. The
+**back wall** (the wall farthest from the camera) is an exception to the
+low-profile wall rule -- it rises tall behind the playable area and serves as
+a **thematic backdrop** with rich biome-specific detailing (e.g. towering
+overgrown ruins, carved stone reliefs, mechanical gantries). The scene should
+feel **intimate and enclosed**, with atmospheric darkness pressing in at the
+edges (aided by the vignette post-processing pass).
+
 ## 2. Geometry
 
 ### 2.1 Voxel Philosophy
@@ -24,11 +36,16 @@ and atmosphere through 3D geometry and lighting.
 
 ### 2.1a Grid Visibility
 
-The game grid is made **inherently visible** through a subtle **checkerboard
-pattern** on the floor tiles. Every other tile uses a slightly offset color
-from the biome's floor palette (low-contrast, ~5--10% lightness shift). This
-ensures the player can always perceive tile boundaries even in open areas with
-no walls, without requiring explicit grid lines or overlays.
+The game grid is made **inherently visible** through a **checkerboard pattern**
+on the floor tiles. Every other tile uses an offset color from the biome's
+floor palette (~5--15% lightness shift). This ensures the player can always
+perceive tile boundaries even in open areas with no walls, without requiring
+explicit grid lines or overlays.
+
+Each floor tile is itself composed of **multiple smaller voxel blocks** (like
+individual paving stones or flagstones) with subtle per-block color variation.
+This block composition gives the floor texture and visual richness while the
+overall checkerboard pattern at the tile level preserves grid readability.
 
 ### 2.1b Floor Surface Detail
 
@@ -64,6 +81,29 @@ grid dimensions or screen resolution.
   angle, a wall on the near (camera-facing) edge of a tile must not block
   the player's view of Theseus or the Minotaur standing on that tile. Think
   of them as raised curbs or low ledges rather than towering barriers.
+- **Wall construction is visibly blocky.** Walls are composed of individually
+  discernible **stacked stone/brick voxel blocks** with visible mortar gaps
+  and per-block color variation. They should not look like smooth extruded
+  surfaces -- the block composition is part of the charm. The block style
+  varies per biome (e.g. regular rectangular blocks for Stone Labyrinth,
+  irregular rough-cut stones for Dark Forest, aligned bronze panels for
+  Mechanical Halls).
+- **Passage archways:** Where two adjacent tiles have no wall between them
+  but walls exist on neighboring edges (creating a corridor), the wall ends
+  may form subtle **archway shapes** -- the top edge of the wall curves or
+  steps inward toward the gap. This frames passages and makes openings in
+  walls visually distinct from simply missing wall segments.
+- **Back wall exception:** The **back wall** -- the wall along the far edge
+  of the diorama (farthest from the camera) -- is exempt from the low-profile
+  height rule. It rises **tall behind the playable area** and serves as a
+  **decorative, thematic backdrop** for the diorama. Because it sits at the
+  back of the orthographic view, it never occludes actors or gameplay
+  elements. The back wall is **purely aesthetic** -- it does not contain exit
+  doors or indicate an escape route. Theseus always wins by reaching a
+  specific floor tile (the exit tile), never by passing through a wall. The
+  back wall's design is rich with biome-specific detail (e.g. towering
+  vine-covered ruins, carved mythological reliefs, massive gear assemblies)
+  and helps frame the diorama as a self-contained miniature world.
 
 ### 2.3 Mesh Properties
 
@@ -106,10 +146,10 @@ grid dimensions or screen resolution.
 - **Very simple textures** where used -- subtle noise or gradient overlays to
   break up flat surfaces, not detailed texture maps.
 - No transparency/translucency in standard geometry (simplifies rendering).
-
-> **Open question:** Should any environmental features (e.g. magical effects,
-> portals) use additive blending or glow effects as exceptions to the matte
-> rule?
+- **Glow exception:** Light-emitting elements (lantern crystals, lava surfaces,
+  exit tile) may use **additive blending or emissive vertex colors** to create
+  a soft glow effect. This is the one exception to the matte rule -- glow
+  should be used sparingly and only on gameplay-relevant light sources.
 
 ## 4. Lighting and Shadows
 
@@ -140,9 +180,14 @@ All voxel geometry and actors should **cast shadows**:
 Certain environmental elements emit **dynamic light** that affects nearby
 geometry:
 
-- **Lantern posts, torches, lava cracks, luminescent crystals** -- these emit
-  localized light that illuminates and casts dynamic shadows from surrounding
-  walls and actors.
+- **Lantern pillars** are the primary dynamic light source on most biomes.
+  These are **tall decorative columns** (roughly actor height, taller than
+  walls) topped with a **glowing crystal or flame element**. They are placed
+  at diorama edges, corners, or wall endpoints by the procedural generator.
+  Lantern light uses a **cool color temperature** (cyan/blue/teal family) to
+  contrast with the warm exit glow.
+- **Other light sources** (torches, lava cracks, luminescent crystals) emit
+  localized light with biome-appropriate color temperatures.
 - **Theseus** may carry a subtle warm glow (gold/amber) for readability.
 - **Minotaur** may carry a subtle threatening tint (deep red) for readability.
 - Dynamic lights should be **point lights or spot lights** with limited radius
@@ -151,13 +196,33 @@ geometry:
   from those sources, creating atmospheric interplay (e.g. the Minotaur's
   shadow looming on a wall lit by a nearby lantern).
 
+### 4.3a Light Temperature Design
+
+The scene uses a deliberate **cool/warm light temperature contrast** to guide
+the player's eye and create atmospheric depth:
+
+- **Cool lights** (cyan/blue): Lantern pillars, ambient fill. These set the
+  moody, atmospheric baseline of the scene.
+- **Warm lights** (gold/amber): Exit tile god-light, Theseus glow. These draw
+  attention to the goal and the player character.
+- **Hot lights** (red/orange): Lava, fire hazards, Minotaur glow. These signal
+  danger.
+
+This temperature separation ensures that even at a glance, the player can
+distinguish ambient atmosphere (cool) from objectives (warm) from threats
+(hot).
+
 ### 4.4 Exit Tile Lighting
 
 The exit tile has a distinctive **"god-light" effect** -- a subtle volumetric
 cone of light shining down onto the tile from above. This draws the player's
 eye and reinforces the exit as a goal.
 
-- The god-light should be soft and warm, not blindingly bright.
+- The god-light should be **warm golden/amber** in color -- soft and inviting,
+  not blindingly bright.
+- The warm exit glow deliberately contrasts with the cool-toned lantern
+  lighting that fills the rest of the scene (see §4.3a), making the exit
+  instantly identifiable.
 - Combined with the exit tile's finish-flag border (see §5.2), this creates
   a clear and inviting visual target.
 
@@ -178,7 +243,7 @@ biomes:
 | ----------- | ----------------------------------------------------------- |
 | Theseus     | Warm, identifiable (gold/amber family)                      |
 | Minotaur    | Dark, threatening (deep red/brown)                          |
-| Exit tile   | Distinct & inviting (soft green/teal), god-light from above |
+| Exit tile   | Warm & inviting (golden/amber glow), god-light from above   |
 | Walls       | Derived from biome palette                                  |
 | Floor tiles | Derived from biome palette, subtle grid distinction         |
 | Hazards     | Warning tones (muted orange/red)                            |
@@ -270,8 +335,12 @@ feel:
 
 ### 7.3 Environmental Features
 
+- Environmental features should have **real 3D depth** -- they are not flat
+  decals on the floor. A pressure plate is a visibly recessed slab sitting
+  slightly below floor level; spike traps have visible machinery beneath the
+  surface; a stairway descends into the diorama platform.
 - Subtle idle animations (e.g. spike traps vibrating before activation, gears
-  turning, lava bubbling).
+  turning, lava bubbling, pressure plate ticking).
 - State-change animations should be clear and predictable (see
   [03 -- Level Design](03-level-design.md) §3.1).
 
@@ -299,7 +368,11 @@ the current turn's animations are still playing (see
 
 Kept minimal to maintain the clean matte look:
 
-- Subtle **vignette** (darken screen edges).
-- Optional light **bloom** on specific emissive elements (exit tile god-light,
-  lava glow, lantern light).
+- **Vignette** (darken screen edges) -- should be **moderately pronounced**,
+  not just a hint. The darkened edges create an intimate, enclosed atmosphere
+  and focus the player's eye on the diorama center. The vignette should make
+  the diorama feel like it's being spotlit from above in a dark room.
+- **Bloom** on emissive elements (exit tile god-light, lantern pillar glow,
+  lava glow). Bloom should be soft and contained -- it should make glowing
+  elements feel luminous without washing out the scene.
 - No film grain, chromatic aberration, or heavy color grading.
