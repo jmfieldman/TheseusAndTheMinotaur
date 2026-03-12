@@ -7,6 +7,11 @@
 - Walls exist on **edges between adjacent tiles**, not on tiles themselves.
   - A wall blocks movement between the two tiles it separates.
   - Outer boundary of the grid is implicitly walled.
+- Tiles may be marked **impassable** (environment tiles). Neither Theseus nor
+  the Minotaur can enter an impassable tile. They are functionally equivalent
+  to a tile walled on all sides but are rendered as biome-appropriate blocking
+  geometry (e.g. deep water, lava, large columns). See
+  [09 -- Content Pipeline](09-content-pipeline.md) §2.4.
 
 ## 2. Actors
 

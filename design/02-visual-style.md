@@ -17,6 +17,27 @@ and atmosphere through 3D geometry and lighting.
   and depth to create visual interest.
 - The logical game grid (NxM tiles) is a separate concept from the visual voxel
   geometry. The renderer maps grid positions to world-space diorama coordinates.
+- All level dioramas are **procedurally generated** from logical level data +
+  biome configuration. No per-level meshes are hand-authored. See
+  [09 -- Content Pipeline](09-content-pipeline.md) §3 for the generation
+  pipeline.
+
+### 2.1a Grid Visibility
+
+The game grid is made **inherently visible** through a subtle **checkerboard
+pattern** on the floor tiles. Every other tile uses a slightly offset color
+from the biome's floor palette (low-contrast, ~5--10% lightness shift). This
+ensures the player can always perceive tile boundaries even in open areas with
+no walls, without requiring explicit grid lines or overlays.
+
+### 2.1b Floor Surface Detail
+
+Floors are **not perfectly flat**. Small biome-themed voxel details are
+scattered on walkable tiles by the procedural generator (e.g. small clover
+patches in the Dark Forest, loose pebbles in the Catacombs, bolt heads in the
+Mechanical Halls). These sit at or below floor level and are purely cosmetic --
+they must not obscure gameplay-critical information. See
+[09 -- Content Pipeline](09-content-pipeline.md) §3.2 for the full catalog.
 
 ### 2.2 Tile Proportions and Sizing
 
@@ -29,6 +50,7 @@ grid dimensions or screen resolution.
 | Theseus         | ~40--50% of tile width/depth | Centered on tile                    |
 | Minotaur        | ~75% of tile width/depth     | Centered on tile; noticeably larger |
 | Wall inset      | ~10% of tile width per side  | Walls render in this border zone    |
+| Wall height     | ~25--35% of tile width       | Low-profile; must not occlude actors|
 | Playable center | ~80% of tile width/depth     | Area remaining after wall insets    |
 
 - The **size difference** between Theseus and the Minotaur is an important
@@ -36,6 +58,12 @@ grid dimensions or screen resolution.
   Theseus must rely on wit, not strength.
 - Wall insets (~10% per side) ensure that even the larger Minotaur fits
   snugly inside tiles bounded by walls on all sides.
+- **Wall height is intentionally low.** Walls should be just tall enough to
+  clearly read as impassable barriers on tile edges, but **must not occlude
+  actors or tile contents** behind them. With the fixed orthographic camera
+  angle, a wall on the near (camera-facing) edge of a tile must not block
+  the player's view of Theseus or the Minotaur standing on that tile. Think
+  of them as raised curbs or low ledges rather than towering barriers.
 
 ### 2.3 Mesh Properties
 

@@ -77,11 +77,12 @@ The engine consumes a level data format that encodes:
 
 - Grid dimensions (N x M)
 - Wall placement (per-edge)
+- Impassable tile positions (environment blocking tiles)
 - Theseus start position
 - Minotaur start position
 - Exit tile position
 - Environmental feature placement and configuration
-- Biome identifier (determines visual theme)
+- Biome identifier (determines visual theme and procedural generation style)
 - Optimal (minimum) turn count for star rating
 - Metadata (level name, difficulty rating, author, etc.)
 

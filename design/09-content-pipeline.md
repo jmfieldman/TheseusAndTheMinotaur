@@ -17,11 +17,17 @@ The level data format must encode:
 
 - Grid dimensions (width, height)
 - Wall map (per-edge: which edges between adjacent tiles have walls)
+- Tile type map (walkable vs. impassable environment tiles)
 - Actor start positions (Theseus, Minotaur)
 - Exit tile position
 - Environmental feature definitions (type, position, configuration, initial state)
 - Biome identifier
 - Level metadata (name, difficulty, id, ordering)
+
+Level data is **purely logical** -- it contains no visual information. All
+visual representation (voxel geometry, wall styling, floor decorations,
+environmental dressing) is generated procedurally at runtime by the engine
+using the biome's procedural generation configuration (see §3).
 
 ### 2.2 Proposed Format
 
@@ -43,8 +49,11 @@ JSON (human-readable, easy to generate and parse):
   "exit": { "col": 3, "row": 0 },
   "walls": [
     { "col": 2, "row": 3, "side": "east" },
-    { "col": 2, "row": 3, "side": "south" },
-    ...
+    { "col": 2, "row": 3, "side": "south" }
+  ],
+  "impassable": [
+    { "col": 4, "row": 5 },
+    { "col": 4, "row": 6 }
   ],
   "features": [
     {
@@ -68,52 +77,194 @@ Each wall is defined by a tile coordinate and the side of that tile:
 Shared edges need only be specified once (e.g. a wall between (2,3) east and
 (3,3) west is stored as one entry).
 
+### 2.4 Impassable Tiles
+
+Tiles listed in the `"impassable"` array are **environment tiles** that neither
+Theseus nor the Minotaur can enter. They function as solid blocking regions
+(equivalent to a tile walled on all four sides, but with distinct visual
+treatment).
+
+The procedural diorama generator renders impassable tiles as **biome-appropriate
+blocking space** rather than empty floor:
+
+| Biome              | Impassable Tile Rendering Examples                |
+|--------------------|---------------------------------------------------|
+| Dark Forest        | Dense tree trunks, thick undergrowth, fallen logs |
+| Sunken Ruins       | Deep water pools, flooded sections                |
+| Infernal Dungeon   | Lava pools, magma-filled pits                     |
+| Mechanical Halls   | Large bronze machinery, gear assemblies           |
+| Crystal Caverns    | Massive crystal formations, stalagmite clusters   |
+| Catacombs          | Collapsed rubble, bone piles, cave-ins            |
+| Stone Labyrinth    | Solid stone columns, large boulders               |
+
+Impassable tiles give level designers a way to create non-rectangular playable
+areas and interesting negative space without the visual monotony of walls on
+every edge.
+
 > **Open question:** Should we use a binary/compact format instead of JSON for
 > shipping builds, with JSON as the authoring format? A simple compile step
 > could convert JSON to a packed binary format.
 
-## 3. Visual Assets
+## 3. Procedural Diorama Generation
 
-### 3.1 Diorama Meshes
+Level dioramas are **fully procedurally generated** at runtime from the logical
+level data (§2) combined with the biome's procedural generation configuration
+(§6). No per-level meshes are hand-authored. This scales to 100--200 levels
+without prohibitive art costs.
 
-Each level or biome needs a 3D diorama mesh that the puzzle grid maps onto.
+### 3.1 Generation Pipeline
 
-**Authoring options:**
+```
+Level JSON (logical data)
+    +
+Biome procgen config (§6.2)
+    │
+    ▼
+Procedural Diorama Generator (runtime)
+    │  1. Lay floor tiles (checkerboard coloring, per-biome palette)
+    │  2. Generate walls (biome-styled voxel compositions)
+    │  3. Fill impassable tiles (biome-appropriate blocking geometry)
+    │  4. Place environmental features (spike traps, pressure plates, etc.)
+    │  5. Scatter floor decorations (biome-themed micro-details)
+    │  6. Apply wall decorations (moss, cracks, dripping, etc.)
+    │  7. Place environmental light sources (lanterns, lava glow, etc.)
+    │  8. Place exit tile effects (god-light, finish-flag border)
+    │  9. Build surrounding diorama edge / border geometry
+    │
+    ▼
+Voxel Mesh (GPU-ready VBO, vertex colors, per-frame rebuild for dynamic parts)
+```
 
-- **Hand-modeled** in a voxel editor (MagicaVoxel, Goxel) or DCC tool
-  (Blender).
-- **Procedurally generated** from the level grid data + biome decorations.
-- **Template + variation** -- a biome-specific template diorama with
-  procedural placement of walls, floors, and decoration voxels based on level
-  data.
+The generator runs once when a level loads. The resulting mesh is static for the
+duration of the level (only actors and stateful environmental features animate).
 
-> **TBD:** Which approach? Template + variation is likely the most practical
-> for 100--200 levels -- hand-modeling each would be prohibitive.
+### 3.2 Floor Generation
 
-### 3.2 Mesh Format
+#### 3.2.1 Checkerboard Grid
 
-The engine needs to load meshes at runtime. Options:
+Walkable floor tiles use a **subtle checkerboard pattern** -- every other tile
+is a slightly offset color from the biome's floor palette. This makes the grid
+inherently visible even in areas with no walls, without requiring explicit grid
+lines.
 
-| Format   | Pros                              | Cons                         |
+- The color offset should be **low-contrast** (e.g. 5--10% lightness shift) --
+  enough to perceive the grid at a glance but not visually noisy.
+- Both checkerboard colors are derived from the biome's floor palette.
+
+#### 3.2.2 Floor Surface Detail
+
+Floors are **not perfectly flat**. The procedural generator scatters small
+voxel details on walkable tiles to add visual interest:
+
+| Biome              | Floor Decoration Examples                          |
+|--------------------|----------------------------------------------------|
+| Dark Forest        | Small clover patches, fallen leaves, tiny mushrooms|
+| Stone Labyrinth    | Scattered pebbles, sand drifts, worn tile edges    |
+| Mechanical Halls   | Bolt heads, small gear fragments, oil stains        |
+| Catacombs          | Loose pebbles, bone fragments, dust piles          |
+| Sunken Ruins       | Shallow puddles, moss patches, cracked stone        |
+| Crystal Caverns    | Tiny crystal shards, mineral deposits               |
+| Infernal Dungeon   | Ash patches, small embers, scorched marks           |
+| Overgrown Temple   | Vine tendrils, root tips, small flowers             |
+
+- Decorations are placed **randomly per tile** using a seeded RNG (seed
+  derived from level ID + tile coordinate) so layouts are deterministic and
+  reproducible.
+- Decorations must not obscure gameplay-critical information (actor positions,
+  feature states). They sit at or below floor level and are purely cosmetic.
+- Decoration **density and variety** are configurable per biome (see §6.2).
+
+### 3.3 Wall Generation
+
+Walls are **procedurally generated compositions of voxels**, not flat planes.
+Walls are **low-profile** (~25--35% of tile width in height) -- tall enough to
+clearly read as barriers but short enough to never occlude actors or tile
+contents behind them (see [02 -- Visual Style](02-visual-style.md) §2.2).
+
+Each biome defines a wall generation style that controls:
+
+- **Voxel shape variation:** Whether wall voxels are uniform cubes (Mechanical
+  Halls) or irregular/offset (Catacombs, Dark Forest).
+- **Surface roughness:** How much positional jitter is applied to wall voxels.
+  Smooth for palace/mechanical themes, rough for natural/underground themes.
+- **Color variation:** Per-voxel color jitter within the biome's wall palette
+  range.
+- **Height variation:** Whether walls are uniform height or have ragged/
+  crumbling tops.
+- **Decorative overlays:** Moss growth, cracks, dripping water stains,
+  cobwebs, etc. applied as additional voxels on wall surfaces (see §3.5).
+
+| Biome              | Wall Style                                         |
+|--------------------|----------------------------------------------------|
+| Stone Labyrinth    | Regular sandstone blocks, minor weathering          |
+| Dark Forest        | Rough stone with heavy moss/vine growth             |
+| Mechanical Halls   | Bronze-toned, aligned, with rivets and panel lines  |
+| Catacombs          | Rocky, irregular, crumbling sections, bone inlays   |
+| Sunken Ruins       | Waterlogged stone, algae, partial collapse           |
+| Crystal Caverns    | Crystalline formations mixed with raw rock           |
+| Palace of Knossos  | Ornate painted columns, clean Minoan masonry         |
+
+### 3.4 Impassable Tile Generation
+
+Impassable tiles are filled with **biome-appropriate blocking geometry** that
+is visually distinct from walls (see §2.4 for per-biome examples). The
+generator selects from a set of prefab voxel clusters defined in the biome's
+procgen config, with randomized rotation, scale variation, and color jitter.
+
+### 3.5 Decoration Layers
+
+The procedural generator applies decorations in **modular layers**, each
+independently configurable per biome:
+
+| Layer              | Applied To      | Examples                              |
+|--------------------|-----------------|---------------------------------------|
+| Floor scatter      | Walkable tiles  | Pebbles, leaves, flowers, shards      |
+| Wall surface       | Wall faces      | Moss, cracks, cobwebs, water stains   |
+| Wall top           | Wall upper edge | Crumbling voxels, small plants, snow  |
+| Impassable fill    | Blocked tiles   | Trees, lava, columns, rubble          |
+| Edge border        | Diorama perimeter | Cliff edges, water, void, roots     |
+| Light sources      | Specific tiles/walls | Lanterns, torches, lava cracks     |
+
+Each layer has:
+
+- **Density** (0.0 -- 1.0): How frequently decorations appear.
+- **Variety** (list of prefab voxel clusters): Pool of options to choose from.
+- **Placement rules:** Where decorations can appear (e.g. moss only on walls
+  adjacent to open tiles, lanterns only on wall ends).
+- **RNG seed:** Derived from level ID for deterministic output.
+
+### 3.6 Actor Models
+
+- **Theseus** and **Minotaur** are the only pre-authored assets that are not
+  procedurally generated.
+- Each actor is a small voxel model with animation states (idle, hop/roll,
+  celebrate, caught/death).
+- Authored in a voxel editor or modeled directly in code as positioned voxel
+  arrays.
+- The Minotaur model includes retractable horn and face sub-meshes (see
+  [02 -- Visual Style](02-visual-style.md) §2.4 and §7.2).
+
+### 3.7 Mesh Format
+
+Since dioramas are procedurally generated, the engine builds GPU-ready vertex
+buffers at runtime rather than loading mesh files for levels. The mesh format
+considerations apply only to **actor models** and **decoration prefabs**:
+
+| Format   | Use Case                          | Notes                        |
 |----------|-----------------------------------|------------------------------|
-| OBJ      | Simple, universal                 | No animation, verbose        |
-| glTF     | Modern, supports animation, compact | More complex to parse       |
-| Custom   | Minimal, tailored to our needs    | Must build tooling           |
+| Custom   | Voxel prefabs (decoration clusters) | Simple positioned voxel arrays; can be defined in JSON or binary |
+| glTF     | Actor models (if complex animation needed) | Well-supported, binary variant is compact |
 
-> **TBD:** glTF is the recommended starting point (well-supported, binary
-> variant is compact, animation support for actors).
+> **TBD:** Actor model format. If actors are simple enough to define as
+> positioned voxel arrays with tween-based animation, a custom format may be
+> simpler than glTF.
 
-### 3.3 Actor Models
+### 3.8 Textures
 
-- Theseus and Minotaur need simple animated models (idle, walk, celebrate,
-  caught).
-- Low-poly, consistent with the diorama aesthetic.
-- Authored in Blender or similar, exported to engine format.
-
-### 3.4 Textures
-
-- Minimal texture use (mostly vertex colors).
-- Where needed: small atlases (e.g. 256x256) for subtle surface detail.
+- Minimal texture use -- the procedural generator relies on **vertex colors**
+  for all voxel geometry.
+- Where needed: small atlases (e.g. 256x256) for subtle surface detail
+  (e.g. the exit tile's checkered border pattern).
 - Format: PNG for authoring, engine may convert to a GPU-compressed format at
   build time.
 
@@ -144,9 +295,9 @@ Each biome is a data-driven bundle:
 ```
 biomes/
   dark_forest/
-    biome.json         -- palette, feature set
+    biome.json         -- palette, feature set, procgen configuration
     overworld.yml      -- overworld graph, nodes, edges, star gates, secrets
-    diorama_template/  -- base mesh + decoration meshes
+    prefabs/           -- decoration voxel cluster prefabs (JSON or binary)
     music/             -- biome soundtrack(s)
     ambient/           -- ambient loop(s)
     sfx/               -- biome-specific SFX overrides
@@ -159,13 +310,67 @@ biomes/
   "id": "dark_forest",
   "name": "Dark Forest",
   "palette": {
-    "floor": "#4a5240",
+    "floor_a": "#4a5240",
+    "floor_b": "#455038",
     "wall": "#2b3025",
-    "accent": "#6b7a5c"
+    "wall_jitter": 0.08,
+    "accent": "#6b7a5c",
+    "impassable": "#1e2518"
   },
   "features_introduced": ["spike_trap"]
 }
 ```
+
+- **floor_a / floor_b:** The two checkerboard tile colors (see §3.2.1).
+- **wall_jitter:** Maximum per-voxel color variation applied to wall voxels
+  (fraction of palette range).
+
+### 6.2 Procedural Generation Configuration
+
+The `biome.json` also contains (or references) the procedural generation
+parameters that control how the diorama generator builds levels for this biome:
+
+```json
+{
+  "procgen": {
+    "wall_style": {
+      "roughness": 0.3,
+      "height_variation": 0.1,
+      "voxel_shape": "irregular",
+      "color_jitter": 0.08
+    },
+    "floor_decorations": {
+      "density": 0.15,
+      "prefabs": ["clover_patch", "fallen_leaf", "tiny_mushroom", "pebble"],
+      "max_per_tile": 2
+    },
+    "wall_decorations": {
+      "density": 0.25,
+      "prefabs": ["moss_patch", "vine_tendril", "crack", "cobweb"],
+      "placement": "wall_face"
+    },
+    "wall_top_decorations": {
+      "density": 0.1,
+      "prefabs": ["crumble_voxels", "small_fern"],
+      "placement": "wall_top"
+    },
+    "impassable_prefabs": ["dense_trees", "thick_undergrowth", "fallen_log"],
+    "edge_border": {
+      "style": "cliff_with_roots",
+      "depth": 2
+    },
+    "light_sources": {
+      "type": "lantern",
+      "placement": "wall_end",
+      "density": 0.1
+    }
+  }
+}
+```
+
+Each decoration layer is modular and independently tunable. The engine loads
+prefab voxel clusters from the `prefabs/` directory and places them according
+to the density, placement rules, and seeded RNG described in §3.5.
 
 ## 7. Overworld Data Format (YAML)
 

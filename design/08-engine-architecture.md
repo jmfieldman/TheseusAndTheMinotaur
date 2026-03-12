@@ -128,19 +128,26 @@ top of the stack receives input and renders on top.
 12. Render overlays (HUD, touch controls, UI)
 ```
 
-#### 3.3.3 Voxel Rendering
+#### 3.3.3 Voxel Rendering (Procedural)
 
-Each diorama is a collection of voxel meshes. Options for rendering:
+All level dioramas are **procedurally generated at runtime** from logical level
+data + biome configuration (see [09 -- Content Pipeline](09-content-pipeline.md)
+§3). The engine builds GPU-ready geometry on level load:
 
-- **Pre-baked mesh:** The entire diorama is a single static mesh loaded from
-  an asset file. Simplest and fastest.
-- **Instanced rendering:** Voxels are instances of a few base shapes (cube,
-  beveled cube, rounded cube) with per-instance transforms and colors.
-- **Hybrid:** Static diorama as pre-baked mesh; dynamic elements (actors,
-  environmental features) as separate instanced meshes.
+- **Static diorama mesh:** Generated once on level load. Includes floor tiles
+  (checkerboard), walls (biome-styled voxel compositions), impassable tile
+  fill, decorations (floor scatter, wall moss/cracks, wall-top crumble), edge
+  borders, and light source geometry. Packed into a single VBO with vertex
+  colors.
+- **Dynamic elements:** Actors (Theseus, Minotaur) and stateful environmental
+  features (spike traps, pressure plates, etc.) are rendered as separate
+  meshes that update per frame.
+- **Instanced rendering** may be used for repeated voxel shapes within the
+  static mesh (e.g. floor voxels, uniform wall blocks) to reduce draw calls.
 
-> **TBD:** Which approach depends on asset pipeline decisions (see
-> [09 -- Content Pipeline](09-content-pipeline.md)).
+The procedural generator uses a **seeded RNG** (seed = level ID + tile
+coordinate) to ensure deterministic, reproducible output across runs and
+platforms.
 
 #### 3.3.4 Shader Requirements
 
