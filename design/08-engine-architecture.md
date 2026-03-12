@@ -113,15 +113,19 @@ top of the stack receives input and renders on top.
 #### 3.3.2 Rendering Pipeline
 
 ```
-1. Set viewport (full screen on desktop, square sub-region on iOS)
-2. Clear framebuffer
-3. Set camera / projection uniforms
-4. Render diorama (static voxel geometry) -- could be a single pre-built VBO
-5. Render actors (Theseus, Minotaur) -- animated meshes
-6. Render environmental features (animated/stateful geometry)
-7. Post-processing pass (vignette, etc.)
-8. Reset viewport to full screen
-9. Render overlays (HUD, touch controls, UI)
+ 1. Shadow pass: render scene from each dynamic light's perspective into
+    shadow map(s) (actors, walls, dynamic features)
+ 2. Set viewport (full screen on desktop, square sub-region on iOS)
+ 3. Clear framebuffer
+ 4. Set camera / projection uniforms
+ 5. Render diorama (static voxel geometry with baked AO + shadows)
+ 6. Render environmental features (animated/stateful geometry)
+ 7. Render actors (Theseus, Minotaur) with real-time shadow sampling
+ 8. Render exit tile god-light volumetric effect
+ 9. Apply dynamic lighting from environmental light sources
+10. Post-processing pass (vignette, bloom on emissive elements)
+11. Reset viewport to full screen
+12. Render overlays (HUD, touch controls, UI)
 ```
 
 #### 3.3.3 Voxel Rendering
@@ -140,18 +144,25 @@ Each diorama is a collection of voxel meshes. Options for rendering:
 
 #### 3.3.4 Shader Requirements
 
-Minimal shader set:
-
-| Shader         | Purpose                                     |
-|----------------|---------------------------------------------|
-| Diorama        | Static geometry with baked AO, vertex color |
-| Actor          | Animated mesh with flat shading + rim light |
-| UI / Overlay   | Screen-space 2D quads, SDL_ttf text          |
-| Post-process   | Full-screen vignette, optional bloom        |
+| Shader         | Purpose                                              |
+|----------------|------------------------------------------------------|
+| Shadow depth   | Render depth from light POV for shadow mapping       |
+| Diorama        | Static geometry with baked AO, vertex color, shadow sampling |
+| Actor          | Animated mesh with flat shading, rim light, shadow cast/receive |
+| Dynamic light  | Additive per-light pass with shadow map sampling     |
+| God-light      | Exit tile volumetric cone effect                     |
+| UI / Overlay   | Screen-space 2D quads, SDL_ttf text                  |
+| Post-process   | Full-screen vignette, bloom on emissive elements     |
 
 ### 3.4 Animation System
 
-- **Tween-based** animation for actor movement (position lerp over N frames).
+- **Tween-based** animation for actor movement.
+  - **Theseus:** Position follows a parabolic arc (hop); no rotation. Subtle
+    vertical squash on landing.
+  - **Minotaur:** Position follows a slight arc; rotation is 90° around the
+    leading bottom edge (roll). Horn retract/extend tweens at roll start/end.
+    Localized ground-shake effect on landing (camera micro-shake + optional
+    impact visual).
 - **State-driven** animation for environmental features (e.g. spike trap up/down
   transitions).
 - Animation playback is decoupled from game logic -- logic resolves instantly,
