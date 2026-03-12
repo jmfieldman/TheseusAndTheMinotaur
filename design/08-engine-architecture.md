@@ -91,13 +91,19 @@ A stack-based state machine manages the active game screen:
 |---------------|------------------------------------------------|
 | TitleScreen   | Main menu                                       |
 | SaveSelect    | Save slot picker                                |
-| Overworld     | Biome diorama navigation                        |
-| Puzzle        | Active puzzle level                              |
+| Overworld     | Biome diorama navigation (contains all mini-diorama LOD meshes) |
+| Puzzle        | Active puzzle level (zoomed into one diorama)   |
+| ZoomTransition| Animating between Overworld and Puzzle (or Puzzle to Puzzle) |
 | PauseOverlay  | Overlay on top of Puzzle state (pushed on stack) |
 | Settings      | Settings screen (can be pushed from multiple states) |
 
 States can push/pop (e.g. Puzzle pushes PauseOverlay), and the state at the
 top of the stack receives input and renders on top.
+
+The **Overworld** and **Puzzle** states share the same scene geometry --
+the overworld contains all puzzle dioramas as LOD meshes. The
+**ZoomTransition** state manages the camera interpolation and LOD↔full-detail
+mesh crossfade between them. See §3.3.5 for the zoom camera system.
 
 ### 3.3 Renderer
 
@@ -132,22 +138,53 @@ top of the stack receives input and renders on top.
 
 All level dioramas are **procedurally generated at runtime** from logical level
 data + biome configuration (see [09 -- Content Pipeline](09-content-pipeline.md)
-§3). The engine builds GPU-ready geometry on level load:
+§3). The engine builds GPU-ready geometry at two detail levels:
 
-- **Static diorama mesh:** Generated once on level load. Includes floor tiles
-  (checkerboard), walls (biome-styled voxel compositions), impassable tile
-  fill, decorations (floor scatter, wall moss/cracks, wall-top crumble), edge
-  borders, and light source geometry. Packed into a single VBO with vertex
-  colors.
-- **Dynamic elements:** Actors (Theseus, Minotaur) and stateful environmental
-  features (spike traps, pressure plates, etc.) are rendered as separate
-  meshes that update per frame.
+**Full-detail mesh** (generated when entering a puzzle):
+- **Static diorama mesh:** Includes floor tiles (checkerboard with paving-
+  stone blocks), walls (biome-styled voxel compositions with mortar gaps),
+  back wall (tall thematic backdrop), entrance/exit doors, impassable tile
+  fill, all decoration layers (floor scatter, wall moss/cracks, wall-top
+  crumble), edge borders, lantern pillars, and exit door god-light geometry.
+  Packed into a single VBO with vertex colors.
+- **Dynamic elements:** Actors (Theseus, Minotaur), entrance door lock
+  mechanism, and stateful environmental features (spike traps, pressure
+  plates, etc.) are rendered as separate meshes that update per frame.
+
+**LOD mesh** (generated for all puzzles when a biome loads):
+- Simplified version of the diorama for overworld display. Includes floor
+  tiles (flat checkerboard, no individual paving blocks), wall silhouettes
+  (simplified block shapes), back wall silhouette, entrance/exit door
+  openings, diorama platform, and lantern pillars. Decoration layers are
+  omitted. See [09 -- Content Pipeline](09-content-pipeline.md) §3.9.
+- All ~10 LOD meshes for a biome are held in VRAM simultaneously.
+- Each LOD mesh is small enough (low voxel count, no decorations) that
+  the combined memory footprint is manageable.
+
 - **Instanced rendering** may be used for repeated voxel shapes within the
   static mesh (e.g. floor voxels, uniform wall blocks) to reduce draw calls.
 
 The procedural generator uses a **seeded RNG** (seed = level ID + tile
 coordinate) to ensure deterministic, reproducible output across runs and
 platforms.
+
+#### 3.3.5 Zoom Camera System
+
+The zoom transition between overworld and puzzle views is implemented as a
+smooth interpolation of the **orthographic projection bounds**:
+
+- **Overworld framing:** Ortho bounds encompass the entire biome diorama
+  (all mini-dioramas visible).
+- **Puzzle framing:** Ortho bounds tightened to frame a single puzzle diorama
+  with appropriate padding.
+- **Zoom animation:** Smoothly interpolate ortho bounds (position + scale)
+  using an easing curve (e.g. ease-in-out cubic). Duration ~0.8--1.2s.
+- **LOD crossfade:** During zoom-in, once the target diorama exceeds a
+  screen-space size threshold, the LOD mesh fades out and the full-detail
+  mesh fades in (alpha crossfade over ~0.2--0.3s). Reverse on zoom-out.
+- **Auto-progression (puzzle → puzzle):** Zoom out to a mid-level view
+  (partial overworld), pan to the next puzzle node, zoom in. The zoom-out
+  and pan can overlap for a fluid camera move.
 
 #### 3.3.4 Shader Requirements
 
@@ -165,13 +202,20 @@ platforms.
 
 - **Tween-based** animation for actor movement.
   - **Theseus:** Position follows a parabolic arc (hop); no rotation. Subtle
-    vertical squash on landing.
+    vertical squash on landing. Entrance animation (hop in from outside grid
+    through entrance door).
   - **Minotaur:** Position follows a slight arc; rotation is 90° around the
     leading bottom edge (roll). Horn retract/extend tweens at roll start/end.
     Localized ground-shake effect on landing (camera micro-shake + optional
-    impact visual).
+    impact visual). Drop-in animation (fall from above onto starting tile).
 - **State-driven** animation for environmental features (e.g. spike trap up/down
   transitions).
+- **Level lifecycle animations:**
+  - **Level start:** Minotaur drop-in → Theseus entrance hop → door lock.
+  - **Level reset:** Actors lift off-screen → environment reset → Minotaur
+    drop-in → Theseus entrance → door lock.
+  - **Level win:** Theseus exits through exit door onto virtual tile.
+  - **Zoom transitions:** Managed by the ZoomTransition state (see §3.2).
 - Animation playback is decoupled from game logic -- logic resolves instantly,
   then the renderer plays back the visual transition.
 
@@ -246,6 +290,13 @@ mapping). The engine loads strings from a data file at startup, keyed by locale.
 
 - Assets loaded at scene transitions (not during gameplay).
 - Each biome's assets (meshes, textures, audio) are a loadable bundle.
+- **Biome load:** All LOD meshes for the biome's ~10 puzzles are generated
+  and uploaded to VRAM. Overworld diorama mesh and paths are loaded. This
+  happens during the biome transition loading screen.
+- **Puzzle enter:** Full-detail mesh for the target puzzle is generated and
+  uploaded. The previous puzzle's full-detail mesh (if any) is released.
+  Only one full-detail puzzle mesh is in memory at a time.
+- **Biome exit:** All LOD meshes + overworld mesh released.
 - Simple scope-based lifetime (load on biome enter, release on biome exit).
 - C structs with explicit init/destroy functions (no RAII).
 

@@ -6,7 +6,8 @@
 - Dimensions are independent (e.g. a 4x12 puzzle is valid).
 - Walls exist on **edges between adjacent tiles**, not on tiles themselves.
   - A wall blocks movement between the two tiles it separates.
-  - Outer boundary of the grid is implicitly walled.
+  - Outer boundary of the grid is implicitly walled, with two exceptions:
+    the **entrance door** and the **exit door** (see §7).
 - Tiles may be marked **impassable** (environment tiles). Neither Theseus nor
   the Minotaur can enter an impassable tile. They are functionally equivalent
   to a tile walled on all sides but are rendered as biome-appropriate blocking
@@ -63,7 +64,7 @@ On his turn, Theseus may perform exactly one of:
 | Move N/S/E/W | Move one tile in the chosen cardinal direction (blocked by walls) |
 | Wait      | Stay in place; turn still advances         |
 | Undo      | Revert the *entire* last turn (Theseus + Environment + Minotaur) |
-| Reset     | Restart the level from its initial state   |
+| Reset     | Restart the level from its initial state (see §7.5 for reset animation) |
 | Menu      | Open the pause/options menu (does not advance the turn) |
 
 - **Move** and **Wait** advance the turn (triggering Environment + Minotaur phases).
@@ -148,19 +149,79 @@ All environmental features must be:
 
 In all cases, the Minotaur is **unaffected** by these same hazards.
 
-## 7. Win Condition
+## 7. Entrance and Exit Doors
 
-Theseus wins when:
+Each level has an **entrance door** and an **exit door**, both located on the
+outer boundary of the grid (openings in the boundary wall).
 
-1. Theseus occupies the **exit tile**, AND
-2. The Minotaur has completed both of its steps for that turn, AND
-3. The Minotaur is **not** on the exit tile.
+### 7.1 Door Placement Rules
 
-In other words, Theseus must survive the full turn cycle while on the exit.
+- Doors are placed on the **left side**, **right side**, or **top (back) wall**
+  of the grid. Doors are **never** on the bottom (camera-facing) wall.
+- The entrance and exit are always on **different** wall segments (never the
+  same opening).
+
+### 7.2 Entrance Door
+
+- Theseus **enters the level** by walking in through the entrance door from
+  outside the grid.
+- Once Theseus steps onto the first interior tile, the entrance door
+  **closes and locks behind him** with a biome-themed lock animation (e.g.
+  stone door slides shut, iron bars drop down, vines seal the opening).
+- After locking, the entrance functions as a normal wall segment for the
+  remainder of the level.
+
+### 7.3 Exit Door
+
+- The exit door is an **opening in the boundary wall** leading to a
+  **virtual exit tile** that sits just outside the grid boundary.
+- The virtual exit tile is visible to the player (the floor extends one tile
+  outward through the door opening), but is **outside the playable grid** --
+  neither the Minotaur nor environmental features can reach it.
+- The exit door can have the god-light effect (see
+  [02 -- Visual Style](02-visual-style.md) §4.4) shining through the opening.
+- If the exit is on the **top (back) wall**, the wall geometry around the
+  exit opening should be **transparent or cut away** so the player can see
+  Theseus stepping through it from the fixed camera angle.
+
+### 7.4 Win Condition
+
+Theseus wins **instantly** when he steps onto the virtual exit tile:
+
+1. Theseus moves through the exit door opening onto the virtual exit tile.
+2. The level is immediately won -- **no Environment Phase or Minotaur Phase
+   occurs** after this move.
+3. The Minotaur's position is irrelevant; the win is instant.
+
+This replaces the previous design where Theseus had to survive a full turn
+cycle on an exit tile. The new model is simpler and creates a satisfying
+"escape" moment.
+
+### 7.5 Level Start and Reset Sequence
+
+When a level first loads (or is reset), the following sequence plays:
+
+1. The diorama is shown with the entrance door open and the exit door visible.
+   The Minotaur and Theseus are **not** on the board initially.
+2. The **environment resets** -- all environmental features return to their
+   initial states (with animation if mid-level reset).
+3. The **Minotaur drops in** from above, landing on his starting tile with a
+   ground-shake impact.
+4. **Theseus enters** through the entrance door, hopping onto the first
+   interior tile.
+5. The entrance door **closes and locks** behind Theseus.
+6. Player control begins.
+
+On a **mid-level reset**, before the above sequence plays:
+
+- Theseus and the Minotaur **lift up into the sky** and disappear (quick
+  upward tween to off-screen).
+- Then steps 2--6 above play out.
 
 ## 8. Loss Conditions
 
-Theseus loses when any of the following occur:
+Theseus loses when any of the following occur (note: none of these can occur
+on the virtual exit tile, since stepping onto it is an instant win):
 
 1. **Theseus walks into Minotaur:** If Theseus moves onto the Minotaur's tile
    during the Theseus phase, Theseus dies immediately (before Environment or

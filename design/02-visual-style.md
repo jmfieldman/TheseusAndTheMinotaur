@@ -98,12 +98,21 @@ grid dimensions or screen resolution.
   height rule. It rises **tall behind the playable area** and serves as a
   **decorative, thematic backdrop** for the diorama. Because it sits at the
   back of the orthographic view, it never occludes actors or gameplay
-  elements. The back wall is **purely aesthetic** -- it does not contain exit
-  doors or indicate an escape route. Theseus always wins by reaching a
-  specific floor tile (the exit tile), never by passing through a wall. The
-  back wall's design is rich with biome-specific detail (e.g. towering
-  vine-covered ruins, carved mythological reliefs, massive gear assemblies)
-  and helps frame the diorama as a self-contained miniature world.
+  elements. The back wall is **mostly aesthetic**, but may contain the
+  entrance or exit door (see [01 -- Core Mechanics](01-core-mechanics.md)
+  §7.1). When the exit door is in the back wall, the wall geometry around
+  the opening must be **transparent or cut away** so the player can see
+  Theseus stepping through it. The back wall's design is rich with
+  biome-specific detail (e.g. towering vine-covered ruins, carved
+  mythological reliefs, massive gear assemblies) and helps frame the diorama
+  as a self-contained miniature world.
+- **Entrance and exit doors:** Two openings in the boundary walls serve as
+  the level's entrance and exit (see [01 -- Core Mechanics](01-core-mechanics.md)
+  §7). These are the only breaks in the otherwise solid boundary. The
+  entrance has a biome-themed locking mechanism (stone slab, iron bars,
+  vine growth) that seals visibly after Theseus enters. The exit has a
+  **virtual exit tile** extending one tile outward from the grid, with
+  god-light shining through the opening (see §4.4).
 
 ### 2.3 Mesh Properties
 
@@ -212,18 +221,23 @@ This temperature separation ensures that even at a glance, the player can
 distinguish ambient atmosphere (cool) from objectives (warm) from threats
 (hot).
 
-### 4.4 Exit Tile Lighting
+### 4.4 Exit Door Lighting
 
-The exit tile has a distinctive **"god-light" effect** -- a subtle volumetric
-cone of light shining down onto the tile from above. This draws the player's
-eye and reinforces the exit as a goal.
+The exit door has a distinctive **"god-light" effect** -- a warm volumetric
+light that shines **through the exit door opening** into the diorama,
+illuminating the floor tiles near the exit and casting light onto the boundary
+wall edges around the opening. This draws the player's eye and reinforces the
+exit as the goal.
 
 - The god-light should be **warm golden/amber** in color -- soft and inviting,
-  not blindingly bright.
+  not blindingly bright. It should feel like sunlight or warmth pouring in
+  from outside the labyrinth.
 - The warm exit glow deliberately contrasts with the cool-toned lantern
   lighting that fills the rest of the scene (see §4.3a), making the exit
   instantly identifiable.
-- Combined with the exit tile's finish-flag border (see §5.2), this creates
+- The **virtual exit tile** (the floor tile just outside the door opening)
+  is the brightest point, bathed in the warm glow.
+- Combined with the exit door's finish-flag border (see §5.2), this creates
   a clear and inviting visual target.
 
 ## 5. Color Palette
@@ -243,7 +257,7 @@ biomes:
 | ----------- | ----------------------------------------------------------- |
 | Theseus     | Warm, identifiable (gold/amber family)                      |
 | Minotaur    | Dark, threatening (deep red/brown)                          |
-| Exit tile   | Warm & inviting (golden/amber glow), god-light from above   |
+| Exit door   | Warm & inviting (golden/amber glow), god-light through opening |
 | Walls       | Derived from biome palette                                  |
 | Floor tiles | Derived from biome palette, subtle grid distinction         |
 | Hazards     | Warning tones (muted orange/red)                            |
@@ -253,15 +267,16 @@ styling alone -- no explicit highlight or outline system. The combination of
 distinct geometry, functional color rules (above), and biome-specific palettes
 should provide sufficient readability without an overlay system.
 
-### 5.2 Exit Tile Presentation
+### 5.2 Exit Door Presentation
 
-The exit tile has two distinctive visual treatments:
+The exit door has two distinctive visual treatments:
 
-- **God-light:** A soft volumetric light cone shining down from above (see
-  §4.4).
-- **Finish-flag border:** The edges of the exit tile feature a subtle
-  **black-and-white checkered/flag pattern**, evoking a finish line. This
-  pattern should be understated (not garish) and complement the biome palette.
+- **God-light:** Warm volumetric light pouring through the door opening from
+  outside (see §4.4).
+- **Finish-flag border:** The floor edges around the exit door opening and
+  the virtual exit tile feature a subtle **black-and-white checkered/flag
+  pattern**, evoking a finish line. This pattern should be understated (not
+  garish) and complement the biome palette.
 
 ## 6. Camera
 
@@ -346,9 +361,39 @@ feel:
 
 ### 7.4 Transitions
 
-- **Level enter:** Diorama assembles (voxels fall/slide into place, or camera
-  zooms into the level node on the overworld).
-- **Level exit:** Diorama disassembles or camera pulls back.
+- **Level enter (from overworld):** Camera **zooms in** from the overworld
+  view to the selected puzzle node. The low-detail overworld mesh fades to
+  the high-detail puzzle mesh during the zoom. On arrival, the level start
+  sequence plays (see [01 -- Core Mechanics](01-core-mechanics.md) §7.5).
+- **Auto-progression (puzzle → puzzle):** Camera **zooms out** from the
+  current puzzle to a mid-level view showing both dioramas on the overworld,
+  then **pans** across the overworld to the next puzzle node, then **zooms
+  in** to the next puzzle. The LOD meshes swap during zoom transitions.
+- **Level exit (return to overworld):** Camera **zooms out** from the puzzle
+  back to the full overworld view.
+
+### 7.6 Level Start and Reset Animation
+
+The level start and reset sequences have distinct visual choreography:
+
+**First entry (zoom in from overworld):**
+
+1. Camera zoom completes, high-detail diorama is visible.
+2. Entrance door is open; exit door is visible with god-light.
+3. Minotaur **drops from above** onto his starting tile (ground shake).
+4. Theseus **hops in** through the entrance door onto the first interior tile.
+5. Entrance door **locks shut** with biome-themed animation (stone slab, bars,
+   vines, etc.).
+
+**Mid-level reset:**
+
+1. Theseus and the Minotaur **lift upward** off the board and disappear
+   (quick upward tween off-screen).
+2. Environmental features **reset** to initial states (animated reversal).
+3. Entrance door **unlocks and opens**.
+4. Minotaur drops in from above (ground shake).
+5. Theseus hops in through the entrance door.
+6. Entrance door locks shut.
 
 ### 7.5 Non-Blocking Animation
 

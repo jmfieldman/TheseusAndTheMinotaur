@@ -134,51 +134,77 @@ players can predict its behavior without assistance.
 
 ## 6. Transitions
 
+All transitions between overworld and puzzle use a **seamless zoom** system.
+Because the overworld contains miniature LOD versions of every puzzle diorama,
+transitions are smooth camera movements rather than cuts or dissolves.
+
 ### 6.1 Level Enter (from Overworld)
 
-Transition from overworld to puzzle. Options:
-
-- Camera zooms into the level node, diorama assembles/rises from the node.
-- Quick crossfade/dissolve.
+1. Player confirms entry on a level node (mini-diorama).
+2. Camera **zooms in** toward the mini-diorama. The orthographic projection
+   bounds smoothly interpolate from overworld framing to puzzle framing.
+3. During the zoom, the **low-detail LOD mesh fades** to the **high-detail
+   puzzle mesh** (quick crossfade once the diorama fills enough of the
+   screen that detail matters).
+4. On arrival at full zoom, the **level start sequence** plays:
+   - Minotaur drops from above onto starting tile (ground shake).
+   - Theseus hops in through the entrance door.
+   - Entrance door locks shut.
+5. Player control begins.
 
 ### 6.2 Level Win → Next Level (Auto-Progression)
 
-- Victory animation on the diorama (e.g. Theseus celebrates, diorama sparkles).
-- Results display:
-  - Turn count for this attempt
-  - Best (lowest) turn count ever achieved
-  - Stars earned: ★ for completion, ★★ for optimal move count
-  - New star indicator if this is the first time earning a star tier
-- After a short delay, auto-advances to the next puzzle diorama (no overworld
-  visit). The player can press Confirm to skip the delay and proceed immediately.
+1. **Win animation:** Theseus steps through the exit door onto the virtual
+   exit tile. Brief celebration pose.
+2. **Results display** (overlay):
+   - Turn count for this attempt
+   - Best (lowest) turn count ever achieved
+   - Stars earned: ★ for completion, ★★ for optimal move count
+   - New star indicator if this is the first time earning a star tier
+3. Camera **zooms out** from the completed puzzle to a mid-level overworld
+   view. The high-detail mesh fades back to LOD during zoom-out.
+4. The completed node's visual state updates (flag / torch appears on the
+   mini-diorama).
+5. Camera **pans** across the overworld to the next unbeaten puzzle node.
+6. Camera **zooms in** to the next puzzle. LOD fades to high-detail.
+7. Level start sequence plays (Minotaur drop, Theseus entrance, door lock).
 
-### 6.3 Level Win → Overworld (Biome Complete)
+The player can press Confirm at any point to accelerate the transition.
 
-- Same victory animation + results display.
-- Transition back to overworld with the completed node visually updated.
+### 6.3 Level Win → Overworld (Biome Complete / Replay)
+
+1. Same win animation + results display as §6.2.
+2. Camera **zooms out** all the way to the full overworld view.
+3. Completed node's visual state updates.
+4. Theseus token appears on the completed node.
 
 ### 6.4 Level Exit (Environmental Death)
 
 - Environmental hazard kills Theseus (spikes, pit, etc.) -- brief death
   animation.
 - Prompt: Retry / Undo Last Move / Return to Overworld.
+- **Retry** triggers the reset sequence (actors lift off, environment resets,
+  Minotaur drops in, Theseus re-enters through entrance door).
+- **Return to Overworld** triggers a zoom-out transition.
 
 ### 6.5 Level Exit (Minotaur Capture)
 
 - Minotaur catches Theseus -- brief dramatic animation.
 - Prompt: Retry / Undo Last Move / Return to Overworld.
+- Same retry/return behavior as §6.4.
 
 ### 6.6 Level Exit (Abandon)
 
-- From pause menu: return to overworld. No save of in-progress state (level
-  resets next time).
+- From pause menu: return to overworld via zoom-out. No save of in-progress
+  state (level resets next time).
 
 ### 6.7 Biome Transition
 
 - When using a transition node on the overworld, the current biome diorama
   transitions out and the new biome diorama transitions in.
 - Could be a dissolve, a camera pan through a doorway/portal, or a diorama
-  swap animation.
+  swap animation. All mini-dioramas for the new biome are generated during
+  the transition loading screen.
 
 ## 7. Pause Menu
 

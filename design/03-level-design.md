@@ -26,8 +26,8 @@ ancient Crete, and labyrinthine aesthetics.
 The **Ship of Theseus** is a special tutorial biome with at most **3 levels**.
 Tutorial levels are small (4x4 or 5x5) and teach core mechanics quickly:
 
-1. Basic movement and reaching the exit (Minotaur present but walled off in an
-   unreachable area, so the player can focus on movement without threat)
+1. Basic movement and reaching the exit door (Minotaur present but walled off
+   in an unreachable area, so the player can focus on movement without threat)
 2. How the Minotaur moves and using walls to avoid capture
 3. The "wait" action and its tactical use
 
@@ -78,13 +78,20 @@ The engine consumes a level data format that encodes:
 - Grid dimensions (N x M)
 - Wall placement (per-edge)
 - Impassable tile positions (environment blocking tiles)
-- Theseus start position
+- **Entrance door** position and side (boundary wall segment where Theseus
+  enters; closes and locks behind him)
+- **Exit door** position and side (boundary wall segment where Theseus
+  escapes; has a virtual exit tile outside the grid)
+- Theseus start position (the interior tile adjacent to the entrance door)
 - Minotaur start position
-- Exit tile position
 - Environmental feature placement and configuration
 - Biome identifier (determines visual theme and procedural generation style)
 - Optimal (minimum) turn count for star rating
 - Metadata (level name, difficulty rating, author, etc.)
+
+Door placement constraints: doors may be on the **left**, **right**, or
+**top (back)** boundary walls only -- never on the **bottom (camera-facing)**
+wall. See [01 -- Core Mechanics](01-core-mechanics.md) §7 for full rules.
 
 > See [09 -- Content Pipeline](09-content-pipeline.md) for the level data format
 > specification.

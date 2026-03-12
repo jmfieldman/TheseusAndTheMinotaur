@@ -18,8 +18,9 @@ The level data format must encode:
 - Grid dimensions (width, height)
 - Wall map (per-edge: which edges between adjacent tiles have walls)
 - Tile type map (walkable vs. impassable environment tiles)
-- Actor start positions (Theseus, Minotaur)
-- Exit tile position
+- **Entrance door** (boundary wall segment: position and side)
+- **Exit door** (boundary wall segment: position and side)
+- Actor start positions (Theseus start = tile adjacent to entrance; Minotaur)
 - Environmental feature definitions (type, position, configuration, initial state)
 - Biome identifier
 - Level metadata (name, difficulty, id, ordering)
@@ -44,9 +45,10 @@ JSON (human-readable, easy to generate and parse):
     "width": 6,
     "height": 8
   },
-  "theseus": { "col": 0, "row": 0 },
+  "entrance": { "col": 0, "row": 3, "side": "west" },
+  "exit": { "col": 5, "row": 4, "side": "east" },
+  "theseus": { "col": 0, "row": 3 },
   "minotaur": { "col": 5, "row": 7 },
-  "exit": { "col": 3, "row": 0 },
   "walls": [
     { "col": 2, "row": 3, "side": "east" },
     { "col": 2, "row": 3, "side": "south" }
@@ -76,6 +78,25 @@ Each wall is defined by a tile coordinate and the side of that tile:
 
 Shared edges need only be specified once (e.g. a wall between (2,3) east and
 (3,3) west is stored as one entry).
+
+### 2.3a Entrance and Exit Door Encoding
+
+Each level has an `"entrance"` and `"exit"` object specifying boundary wall
+openings:
+
+```json
+"entrance": { "col": 0, "row": 3, "side": "west" },
+"exit": { "col": 5, "row": 4, "side": "east" }
+```
+
+- `col` / `row`: The grid tile adjacent to the door opening (the tile
+  Theseus enters onto, or the last interior tile before the exit).
+- `side`: Which boundary wall the door is on. Must be a boundary edge:
+  `"west"` (left), `"east"` (right), or `"north"` (top/back).
+  `"south"` (bottom/camera-facing) is **not allowed**.
+- The `"theseus"` start position must match the entrance tile (the tile
+  specified in the entrance object).
+- The entrance and exit must be on **different** wall segments.
 
 ### 2.4 Impassable Tiles
 
@@ -125,12 +146,13 @@ Procedural Diorama Generator (runtime)
     │  2. Lay floor tiles (checkerboard coloring, per-biome palette)
     │  3. Generate walls (stacked-block voxel compositions with archways)
     │  3a. Generate back wall (tall thematic backdrop along far edge)
+    │  3b. Generate entrance/exit doors (boundary openings, virtual exit tile)
     │  4. Fill impassable tiles (biome-appropriate blocking geometry)
     │  5. Place environmental features (spike traps, pressure plates, etc.)
     │  6. Scatter floor decorations (biome-themed micro-details)
     │  7. Apply wall decorations (moss, cracks, dripping, etc.)
     │  8. Place lantern pillars (tall columns with glowing tops at edges/corners)
-    │  9. Place exit tile effects (warm god-light, finish-flag border)
+    │  9. Place exit door effects (warm god-light through opening, finish-flag border)
     │ 10. Build surrounding edge / border geometry (foliage, cliffs, etc.)
     │
     ▼
@@ -221,8 +243,10 @@ Each biome defines a wall generation style that controls:
 The **back wall** (the edge of the diorama farthest from the camera) is a
 special-case wall that is exempt from the low-profile height rule. It rises
 **tall behind the playable area** and serves as a **decorative, thematic
-backdrop** -- it is purely aesthetic and does **not** contain exit doors or
-indicate an escape route.
+backdrop**. The back wall is primarily aesthetic, but may contain an
+**entrance or exit door** opening (see §3.3b). When a door is present in the
+back wall, the wall geometry around the opening must be **cut away or made
+transparent** so the player can see Theseus passing through it.
 
 The back wall generator:
 
@@ -250,6 +274,46 @@ The back wall generator:
 - **Lighting interaction:** Back walls catch dynamic light from nearby
   lantern pillars, creating atmospheric shadow interplay (e.g. lantern light
   casting long shadows of wall relief details).
+
+### 3.3b Entrance and Exit Door Generation
+
+The procedural generator creates two **boundary wall openings** per level
+based on the `entrance` and `exit` fields in the level data (see §2.3a).
+
+**Entrance door:**
+
+- A gap in the boundary wall at the specified position and side.
+- The opening is framed with biome-themed **door geometry** (stone archway,
+  iron gate frame, wooden doorframe, etc.) that is part of the static mesh.
+- A **locking mechanism** is rendered as a separate dynamic mesh element
+  (stone slab, iron bars, vine growth, portcullis, etc.) that animates
+  shut after Theseus enters. The lock style is defined per biome.
+- After locking, the mechanism becomes visually solid and reads as part of
+  the wall.
+
+**Exit door:**
+
+- A gap in the boundary wall at the specified position and side.
+- The opening is framed with similar biome-themed door geometry.
+- A **virtual exit tile** extends one tile outward from the grid through the
+  opening. This tile is generated as part of the static floor mesh but sits
+  outside the logical grid boundary.
+- The exit door opening receives the **god-light effect** (warm golden light
+  shining through the opening) and the **finish-flag checkered border**.
+- If the exit is on the **north (back) wall**, the tall back wall geometry
+  is cut away around the opening and the surrounding wall section is made
+  partially transparent so the player can see Theseus stepping through from
+  the fixed camera angle.
+
+| Biome              | Door Style                                         |
+|--------------------|----------------------------------------------------|
+| Stone Labyrinth    | Stone archway, sliding stone slab lock             |
+| Dark Forest        | Rough timber frame, vine/root growth lock          |
+| Mechanical Halls   | Bronze-riveted frame, mechanical portcullis lock   |
+| Catacombs          | Rough stone opening, iron bar drop lock            |
+| Sunken Ruins       | Waterlogged stone arch, rising water seal lock     |
+| Crystal Caverns    | Crystal-framed opening, crystal growth lock        |
+| Palace of Knossos  | Ornate Minoan doorframe, painted door panel lock   |
 
 ### 3.4 Impassable Tile Generation
 
@@ -350,9 +414,38 @@ considerations apply only to **actor models** and **decoration prefabs**:
 - Minimal texture use -- the procedural generator relies on **vertex colors**
   for all voxel geometry.
 - Where needed: small atlases (e.g. 256x256) for subtle surface detail
-  (e.g. the exit tile's checkered border pattern).
+  (e.g. the exit door's checkered finish-flag border pattern).
 - Format: PNG for authoring, engine may convert to a GPU-compressed format at
   build time.
+
+### 3.9 LOD Mesh Generation (Overworld)
+
+Each puzzle also generates a **low-detail (LOD) mesh** for display on the
+overworld as a mini-diorama. All ~10 LOD meshes for a biome are generated
+when the biome loads and held in VRAM for the duration of the biome.
+
+The LOD generator runs the same pipeline as the full-detail generator (§3.1)
+but with the following simplifications:
+
+| Pipeline Step       | Full Detail                              | LOD                                     |
+|---------------------|------------------------------------------|-----------------------------------------|
+| Floor tiles         | Checkerboard, per-block paving stones    | Flat checkerboard (single quad per tile)|
+| Walls               | Stacked blocks, mortar gaps, variation   | Simplified block silhouette             |
+| Back wall           | Full biome theming, decorations          | Flat silhouette with biome color        |
+| Entrance/exit doors | Full door frame, lock mechanism          | Simple opening in wall                  |
+| Impassable tiles    | Detailed prefab clusters                 | Simplified fill geometry                |
+| Floor scatter       | Full decoration layer                    | **Omitted**                             |
+| Wall surface decor  | Moss, cracks, cobwebs                    | **Omitted**                             |
+| Wall top decor      | Crumble, plants, snow                    | **Omitted**                             |
+| Lantern pillars     | Full pillar + glow                       | Simplified pillar + glow point          |
+| Exit door god-light | Full volumetric cone                     | Simple glow quad                        |
+| Edge border         | Full biome border geometry               | **Omitted** (platform edge is visible)  |
+| Diorama platform    | Full platform with side faces            | Simplified platform block               |
+
+The LOD mesh uses the same seeded RNG as the full mesh, so the wall layout,
+floor pattern, and overall silhouette are identical -- only detail density
+differs. This ensures the zoom transition from LOD to full-detail feels
+seamless.
 
 ## 4. Audio Assets
 
@@ -443,6 +536,11 @@ parameters that control how the diorama generator builds levels for this biome:
       "placement": "wall_top"
     },
     "impassable_prefabs": ["dense_trees", "thick_undergrowth", "fallen_log"],
+    "doors": {
+      "frame_style": "rough_timber",
+      "lock_style": "vine_growth",
+      "exit_frame_style": "rough_timber"
+    },
     "lantern_pillars": {
       "style": "rough_stone",
       "glow_color": "#66cccc",
