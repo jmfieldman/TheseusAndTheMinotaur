@@ -120,6 +120,26 @@ post-processing), so 60 FPS should be easily achievable on all targets.
 
 | Platform | Key Requirements                                    |
 |----------|-----------------------------------------------------|
-| Steam    | Steamworks integration, achievements (optional)     |
-| App Store| App Review guidelines, privacy manifest, age rating |
-| tvOS     | Top Shelf image, Siri Remote as primary input       |
+| Steam    | Steamworks integration, achievements, cloud saves    |
+| App Store| App Review guidelines, privacy manifest, age rating  |
+| tvOS     | Top Shelf image, Siri Remote as primary input        |
+
+### 5.1 Achievements
+
+Achievements are **TBD** in terms of design, but the engine must support hooks
+for platform achievement APIs (Steamworks, Game Center). The achievement system
+should be abstracted behind a platform-agnostic interface that fires events
+(e.g. "biome_completed", "all_stars_earned") and lets the platform layer map
+them to native achievements.
+
+### 5.2 Localization
+
+The engine supports localized string tables (see
+[08 -- Engine Architecture](08-engine-architecture.md) §4). **English only at
+launch.** Additional locales can be added by shipping new string files with no
+code changes.
+
+### 5.3 Business Model
+
+**One-time purchase** on all platforms. No in-app purchases, no ads, no
+subscription. Pricing TBD.

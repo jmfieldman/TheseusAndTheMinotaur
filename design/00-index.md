@@ -29,3 +29,7 @@ engine with orthographic projection.
 - **Actors:** Theseus (player) + one Minotaur (AI) per level
 - **Platforms (launch):** Steam (Windows, macOS, Steam Deck)
 - **Platforms (fast-follow):** Apple TV (tvOS), iOS / iPadOS
+- **Business model:** One-time purchase (no IAP, no ads)
+- **Localization:** Engine supports localized strings; English only at launch
+- **Achievements:** TBD -- engine should support hooks for platform achievement APIs
+- **Analytics:** TBD

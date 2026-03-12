@@ -81,8 +81,10 @@ biomes:
 | Floor tiles      | Derived from biome palette, subtle grid distinction |
 | Hazards          | Warning tones (muted orange/red)       |
 
-> **Open question:** Should there be a consistent highlight/outline system for
-> interactive or dangerous tiles, or rely purely on color and geometry?
+Environmental features and hazards should be visually apparent from their
+styling alone -- no explicit highlight or outline system. The combination of
+distinct geometry, functional color rules (above), and biome-specific palettes
+should provide sufficient readability without an overlay system.
 
 ## 6. Camera
 

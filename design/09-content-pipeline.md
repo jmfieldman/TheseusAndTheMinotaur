@@ -363,3 +363,35 @@ Runtime Assets (binary bundles loaded by engine)
 
 > **TBD:** Asset compiler tooling needs to be built. Could be a simple
 > Python/shell script pipeline or a more structured tool.
+
+## 10. Localization Strings
+
+Player-facing strings are stored in per-locale JSON files:
+
+```
+assets/
+  strings/
+    en.json       -- English (launch locale)
+    fr.json       -- (future)
+    de.json       -- (future)
+```
+
+### 10.1 String File Format
+
+```json
+{
+  "title_play": "Play",
+  "title_continue": "Continue",
+  "title_settings": "Settings",
+  "title_quit": "Quit",
+  "hud_turns": "Turns: {0}",
+  "results_best": "Best: {0}",
+  "save_empty": "New Game",
+  "gate_locked": "{0} stars required"
+}
+```
+
+- Keys are stable identifiers used in code.
+- Values support simple `{0}`, `{1}` positional placeholders.
+- **English only at launch.** Additional locale files can be shipped without
+  code changes.

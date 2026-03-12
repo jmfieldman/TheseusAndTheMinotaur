@@ -203,20 +203,41 @@ Entirely separate from rendering:
 └──────────────────────────────────────────┘
 ```
 
-## 4. Resource Management
+## 4. Localization
+
+### 4.1 String Table
+
+All player-facing text is driven by a **string table** (key → localized string
+mapping). The engine loads strings from a data file at startup, keyed by locale.
+
+- Format: JSON or YAML file per locale (e.g. `strings/en.json`,
+  `strings/fr.json`).
+- Keys are used throughout the codebase; the renderer looks up display text at
+  draw time.
+- **English only at launch.** The architecture supports additional locales with
+  no code changes -- only new string files are needed.
+
+### 4.2 Font Considerations
+
+- SDL_ttf supports Unicode / TrueType, so CJK and other scripts are feasible
+  if the shipped font covers the required glyphs.
+- Right-to-left text is **not** planned for launch but should be considered if
+  Arabic or Hebrew locales are added later.
+
+## 5. Resource Management
 
 - Assets loaded at scene transitions (not during gameplay).
 - Each biome's assets (meshes, textures, audio) are a loadable bundle.
 - Simple scope-based lifetime (load on biome enter, release on biome exit).
 - C structs with explicit init/destroy functions (no RAII).
 
-## 5. Threading Model
+## 6. Threading Model
 
 - **Single-threaded** for game logic and rendering.
 - Audio playback on a separate thread (handled by SDL audio callbacks).
 - Asset loading may use a background thread with a loading screen.
 
-## 6. Build System
+## 7. Build System
 
 **CMake** is the build system. Must support:
 
@@ -226,7 +247,7 @@ Entirely separate from rendering:
 - iOS / iPadOS (Xcode project generation via `cmake -G Xcode`)
 - tvOS (Xcode project generation via `cmake -G Xcode`)
 
-### 6.1 Project Structure (Preliminary)
+### 7.1 Project Structure (Preliminary)
 
 ```
 /

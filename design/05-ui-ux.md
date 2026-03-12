@@ -128,8 +128,9 @@ On iOS/iPadOS (portrait orientation), the screen is divided into two zones:
 This layout ensures the game view is never obscured by controls. See
 [06 -- Input](06-input.md) §5 for detailed layout specifications.
 
-> **Open question:** Should the HUD show any Minotaur AI information (e.g.
-> an indicator of which direction the Minotaur will move next)?
+The HUD does **not** show Minotaur AI information (e.g. predicted movement
+direction). The Minotaur's rules are simple and deterministic enough that
+players can predict its behavior without assistance.
 
 ## 6. Transitions
 
