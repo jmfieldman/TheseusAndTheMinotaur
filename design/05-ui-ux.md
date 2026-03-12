@@ -15,18 +15,34 @@
                                                    │  Return to Title
 ```
 
-### 1.1 Puzzle Auto-Progression
+### 1.1 New Game Flow
+
+A new game skips the overworld entirely and starts in the first tutorial
+puzzle (Ship of Theseus biome). See [04 -- Overworld](04-overworld.md) §6.
+
+```
+New Game ──► Tutorial Puzzle 1 ──► ... ──► Tutorial Complete
+                                                │
+                                           Ship Overworld
+                                           (walk to gangplank)
+                                                │
+                                           Stone Labyrinth
+                                           Overworld
+```
+
+### 1.2 Puzzle Auto-Progression
 
 After completing a puzzle, the player does **not** return to the overworld.
 Instead, the game automatically loads the next unbeaten level in the biome
-(see [04 -- Overworld](04-overworld.md) §6.2). The flow during a play session
+(see [04 -- Overworld](04-overworld.md) §5.2). The flow during a play session
 typically looks like:
 
 ```
 Overworld ──► Puzzle 01 ──(win)──► Puzzle 02 ──(win)──► Puzzle 03 ──► ...
                                                            │
                                                      (all beaten or
-                                                      player exits)
+                                                      player exits or
+                                                      replaying level)
                                                            │
                                                            ▼
                                                        Overworld
@@ -65,8 +81,11 @@ Overworld ──► Puzzle 01 ──(win)──► Puzzle 02 ──(win)──�
 - No mid-level save (levels are short enough that this is unnecessary).
 - Selecting an occupied save slot resumes from last auto-save.
 - Selecting an empty slot starts a new game.
-
-> **Open question:** Allow deleting save slots? If so, require confirmation.
+- **Delete slot** available with a confirmation dialog ("Are you sure? This
+  cannot be undone.").
+- Settings are stored in a **separate global file** (not per save slot), so
+  they persist across all slots and are not lost on deletion. See
+  [09 -- Content Pipeline](09-content-pipeline.md) §8.1.
 
 ## 4. Settings Screen
 
@@ -95,17 +114,16 @@ diorama:
 - **Reset button**
 - **Menu button**
 
-### 5.3 Touch / iOS Layout
+### 5.3 Touch / iOS Layout (Portrait Only)
 
-On iOS/iPadOS, the screen is divided into two zones:
+On iOS/iPadOS (portrait orientation), the screen is divided into two zones:
 
-- **Game area:** A **square region** containing the puzzle diorama. Positioned
-  at the top in portrait, or on one side in landscape.
-- **Controls area:** The remaining rectangular strip, containing:
-  - D-pad / directional controls
-  - Wait, Undo, Reset buttons
-  - Menu button
-  - Turn counter and level info
+- **Game area:** A **square region** at the top of the screen containing the
+  puzzle diorama.
+- **Controls area:** The remaining space below, containing:
+  - D-pad (left side)
+  - Wait, Undo, Reset, Menu buttons (right side)
+  - Turn counter, level info, and star display
 
 This layout ensures the game view is never obscured by controls. See
 [06 -- Input](06-input.md) §5 for detailed layout specifications.
@@ -125,26 +143,36 @@ Transition from overworld to puzzle. Options:
 ### 6.2 Level Win → Next Level (Auto-Progression)
 
 - Victory animation on the diorama (e.g. Theseus celebrates, diorama sparkles).
-- Brief results display (turns taken, optional stats).
-- Crossfade/transition directly to the next puzzle diorama (no overworld visit).
+- Results display:
+  - Turn count for this attempt
+  - Best (lowest) turn count ever achieved
+  - Stars earned: ★ for completion, ★★ for optimal move count
+  - New star indicator if this is the first time earning a star tier
+- After a short delay, auto-advances to the next puzzle diorama (no overworld
+  visit). The player can press Confirm to skip the delay and proceed immediately.
 
 ### 6.3 Level Win → Overworld (Biome Complete)
 
 - Same victory animation + results display.
 - Transition back to overworld with the completed node visually updated.
 
-### 6.4 Level Exit (Lose)
+### 6.4 Level Exit (Environmental Death)
 
-- Minotaur catches Theseus or environmental hazard kills Theseus -- brief
-  dramatic animation.
+- Environmental hazard kills Theseus (spikes, pit, etc.) -- brief death
+  animation.
 - Prompt: Retry / Undo Last Move / Return to Overworld.
 
-### 6.5 Level Exit (Abandon)
+### 6.5 Level Exit (Minotaur Capture)
+
+- Minotaur catches Theseus -- brief dramatic animation.
+- Prompt: Retry / Undo Last Move / Return to Overworld.
+
+### 6.6 Level Exit (Abandon)
 
 - From pause menu: return to overworld. No save of in-progress state (level
   resets next time).
 
-### 6.6 Biome Transition
+### 6.7 Biome Transition
 
 - When using a transition node on the overworld, the current biome diorama
   transitions out and the new biome diorama transitions in.

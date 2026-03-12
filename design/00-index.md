@@ -23,7 +23,7 @@ engine with orthographic projection.
 ## High-Level Parameters
 
 - **Grid sizes:** 4x4 to 16x16, any rectangular dimension
-- **Biomes:** ~12, all Greek/ancient/Crete themed
+- **Biomes:** ~13 (1 tutorial + 12 main), all Greek/ancient/Crete themed
 - **Levels:** 100--200 total, ~10 per biome + secret levels
 - **Level authoring:** External generator (not in this repo)
 - **Actors:** Theseus (player) + one Minotaur (AI) per level

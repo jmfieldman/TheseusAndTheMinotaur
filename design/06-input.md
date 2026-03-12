@@ -49,10 +49,10 @@ is blocked until the loss UI appears.
 
 | Action         | Description                        |
 |----------------|------------------------------------|
-| OW_MOVE_NORTH  | Move token north                   |
-| OW_MOVE_SOUTH  | Move token south                   |
-| OW_MOVE_EAST   | Move token east                    |
-| OW_MOVE_WEST   | Move token west                    |
+| OW_MOVE_NORTH  | Move token north along path        |
+| OW_MOVE_SOUTH  | Move token south along path        |
+| OW_MOVE_EAST   | Move token east along path         |
+| OW_MOVE_WEST   | Move token west along path         |
 | OW_ENTER       | Enter level at current node        |
 | OW_BACK        | Return to previous screen          |
 
@@ -94,11 +94,12 @@ center before another input is registered (no auto-repeat from holding).
 
 ### 3.3 Touch (iOS / iPadOS)
 
-- **On-screen D-pad** for directional movement (positioned in the controls
-  area, see §5).
+- **On-screen D-pad** for directional movement (no swipe gestures).
 - **On-screen buttons** for Wait, Undo, Reset, Pause.
-- Touch controls are placed in the **dedicated controls area** and never
-  overlap the game diorama (see §5 for layout).
+- All touch controls are placed in the **dedicated controls area** below the
+  game viewport (portrait only; see §5).
+- D-pad chosen over swipe for reliability and precision in tight puzzle
+  situations.
 
 ### 3.4 Apple Remote (tvOS)
 
@@ -157,15 +158,13 @@ semantic actions are routed:
 
 ## 5. iOS / iPadOS Screen Layout
 
-On iOS and iPadOS, the screen is divided into two distinct zones to ensure
-controls never obscure the game view.
+### 5.1 Orientation: Portrait Only
 
-### 5.1 Layout Principle
+iOS and iPadOS are locked to **portrait orientation**. This simplifies layout,
+matches how most people hold their phones for puzzle games, and provides a
+natural split between the game view and controls.
 
-The game engine always renders into a **square viewport**. The remaining screen
-area is dedicated to UI controls (D-pad, action buttons, level info).
-
-### 5.2 Portrait Orientation
+### 5.2 Layout
 
 ```
 ┌──────────────────────┐
@@ -178,53 +177,31 @@ area is dedicated to UI controls (D-pad, action buttons, level info).
 │                      │
 │    Controls Area     │
 │  ┌─────┐   ┌──────┐ │
-│  │D-pad│   │Action│ │
-│  │     │   │Btns  │ │
-│  └─────┘   └──────┘ │
+│  │D-pad│   │Wait  │ │
+│  │     │   │Undo  │ │
+│  └─────┘   │Reset │ │
+│             │Menu  │ │
+│             └──────┘ │
 │   Level info / HUD   │
 │                      │
 └──────────────────────┘
 ```
 
-- Game viewport: top of screen, full width, square.
-- Controls area: below the game viewport, fills remaining height.
-- D-pad on the left side, action buttons (Wait, Undo, Reset, Menu) on the
-  right side.
+- **Game viewport:** Top of screen, full width, **square**. Contains the
+  puzzle diorama rendered with orthographic projection.
+- **Controls area:** Below the game viewport, fills remaining height.
+  - D-pad on the left side for directional movement.
+  - Action buttons (Wait, Undo, Reset, Menu) on the right side.
+  - Level info, turn counter, and star display in the controls area.
 
-### 5.3 Landscape Orientation
+### 5.3 iPad Considerations
 
-```
-┌─────────────────┬──────────┐
-│                 │          │
-│  Square Game    │ Controls │
-│  Viewport       │  Area    │
-│  (puzzle        │ ┌──────┐ │
-│   diorama)      │ │D-pad │ │
-│                 │ └──────┘ │
-│                 │ ┌──────┐ │
-│                 │ │Action│ │
-│                 │ │Btns  │ │
-│                 │ └──────┘ │
-│                 │  HUD     │
-└─────────────────┴──────────┘
-```
-
-- Game viewport: left side of screen, square (height-matched).
-- Controls area: right side, fills remaining width.
-
-> **Open question:** In landscape, should the controls be on the right side
-> only, or should D-pad be on the left and action buttons on the right (with
-> the game viewport in the center)? The center-viewport option uses screen
-> real estate better on wide devices but may make the game viewport smaller.
-
-### 5.4 iPad Considerations
-
-- iPads have a nearly-square aspect ratio in some models, leaving minimal
-  controls area. Ensure minimum control zone sizes are enforced.
+- iPads in portrait have a nearly-square aspect ratio, leaving a narrow
+  controls strip. Ensure minimum control zone height is enforced.
 - On iPad with a connected keyboard or gamepad, the touch controls area can
-  be hidden to give the full screen to the game viewport.
+  be hidden and the game viewport expands to fill more of the screen.
 
-### 5.5 Desktop / Non-Touch Platforms
+### 5.4 Desktop / Non-Touch Platforms
 
 On desktop, Steam Deck, and Apple TV, the game viewport uses the **full
 screen** (no controls area). All input comes from physical devices.

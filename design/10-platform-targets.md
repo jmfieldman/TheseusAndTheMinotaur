@@ -64,11 +64,10 @@
 - **Input:** Touch (primary), MFi gamepad (optional)
 - **Distribution:** App Store
 - **Build:** Xcode (CMake-generated), arm64
-- **Orientation:** Supports both **portrait and landscape**.
-- **Layout:** The game renders into a **square viewport**; the remaining screen
-  area is used for touch controls (see [06 -- Input](06-input.md) §5).
-  - Portrait: game square at top, controls below.
-  - Landscape: game square on left, controls on right.
+- **Orientation:** **Portrait only**.
+- **Layout:** The game renders into a **square viewport** at the top of the
+  screen; the remaining area below is used for touch controls including a
+  D-pad and action buttons (see [06 -- Input](06-input.md) §5).
 - **Constraints:**
   - Must handle multiple screen sizes (iPhone SE through iPad Pro 12.9").
   - Minimum control zone sizes must be enforced (especially on near-square

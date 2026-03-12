@@ -18,10 +18,10 @@ There are exactly **two actors** on the board at all times:
 | Minotaur | AI (deterministic) | 1 | **No** -- the Minotaur is always alive |
 
 No level will ever contain more than one Minotaur. The Minotaur **cannot be
-killed** by any environmental feature. Environmental features may **freeze** or
-**block** the Minotaur (preventing movement for some number of steps), but the
-Minotaur is never removed from the board. There is no alternate win condition
-based on eliminating the Minotaur.
+killed or incapacitated** by any environmental feature. Environmental features
+may **block** the Minotaur's movement (acting as walls), but the Minotaur is
+never removed from the board and never has its steps forfeited by a feature.
+There is no alternate win condition based on eliminating the Minotaur.
 
 ## 3. Turn Cycle
 
@@ -39,6 +39,8 @@ The cycle repeats until a win or loss condition is met.
 
 Loss conditions are checked at **multiple points** within the turn cycle:
 
+- **After Theseus Phase:** If Theseus moved onto the Minotaur's tile, Theseus
+  loses immediately (environment and Minotaur phases do not occur).
 - **After Environment Phase:** If an environmental hazard kills Theseus (e.g.
   spikes activate on his tile, weak floor collapses), Theseus loses before the
   Minotaur phase begins.
@@ -101,19 +103,10 @@ in order:
   (the Minotaur does not accumulate missed steps).
 - **Intermediate capture:** If the Minotaur lands on Theseus' tile after
   step 1, the player loses immediately -- the Minotaur does not take step 2.
-- **Environmental immunity:** The Minotaur ignores hazards that would kill
-  Theseus. However, some features may **block** the Minotaur's movement (e.g.
-  a wall that appears during environment phase) or **freeze** the Minotaur
-  (causing it to forfeit steps).
-
-### 5.3 Minotaur Freeze
-
-When the Minotaur is frozen (by an environmental feature):
-
-- The Minotaur forfeits all remaining steps for the current turn.
-- The freeze has a defined duration (number of turns).
-- While frozen, the Minotaur is visually distinct (ice effect, chains, etc.)
-  so the player can clearly see the state.
+- **Environmental immunity:** The Minotaur ignores all hazards that would kill
+  Theseus. Features may **block** the Minotaur's movement (e.g. a wall that
+  appears during environment phase), but the Minotaur is never frozen, stunned,
+  or otherwise incapacitated.
 
 ## 6. Environment Phase
 
@@ -136,7 +129,8 @@ All environmental features must be:
   never hidden).
 - **Asymmetric (actor effects):** Features may affect Theseus and the Minotaur
   differently. Theseus can be killed by hazards; the Minotaur cannot. Features
-  can block or freeze the Minotaur but never destroy it.
+  may block the Minotaur's movement (like walls) but never kill, freeze, or
+  incapacitate it.
 
 ### 6.2 Environmental Kill Examples
 
@@ -163,9 +157,12 @@ In other words, Theseus must survive the full turn cycle while on the exit.
 
 Theseus loses when any of the following occur:
 
-1. **Minotaur capture:** The Minotaur occupies the same tile as Theseus at any
+1. **Theseus walks into Minotaur:** If Theseus moves onto the Minotaur's tile
+   during the Theseus phase, Theseus dies immediately (before Environment or
+   Minotaur phases occur).
+2. **Minotaur capture:** The Minotaur occupies the same tile as Theseus at any
    point during the Minotaur phase (after step 1 or step 2).
-2. **Environmental death:** An environmental hazard kills Theseus during the
+3. **Environmental death:** An environmental hazard kills Theseus during the
    Environment phase (see §6.2).
 
 ## 9. Undo System

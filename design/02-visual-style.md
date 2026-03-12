@@ -100,9 +100,10 @@ biomes:
 
 ### 6.2 iOS Layout Constraint
 
-On iOS/iPadOS, the game engine renders into a **square viewport** (see
-[06 -- Input](06-input.md) §5). The camera framing must account for this
-square aspect ratio rather than the full screen dimensions.
+On iOS/iPadOS (portrait only), the game engine renders into a **square
+viewport** at the top of the screen (see [06 -- Input](06-input.md) §5).
+The camera framing must account for this square aspect ratio rather than
+the full screen dimensions.
 
 ## 7. Animation
 

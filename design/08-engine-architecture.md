@@ -9,6 +9,9 @@
 | Windowing / OS  | SDL3                |
 | Rendering       | OpenGL (3.3 Core on desktop, ES 3.0 on mobile) |
 | Audio           | SDL3 Audio          |
+| Text Rendering  | SDL_ttf (TrueType)  |
+| JSON Parsing    | cJSON (MIT)         |
+| YAML Parsing    | libyaml (MIT)       |
 | Input           | SDL3 Events         |
 
 ### 1.1 Language Choice: C
@@ -143,7 +146,7 @@ Minimal shader set:
 |----------------|---------------------------------------------|
 | Diorama        | Static geometry with baked AO, vertex color |
 | Actor          | Animated mesh with flat shading + rim light |
-| UI / Overlay   | Screen-space 2D quads, text rendering       |
+| UI / Overlay   | Screen-space 2D quads, SDL_ttf text          |
 | Post-process   | Full-screen vignette, optional bloom        |
 
 ### 3.4 Animation System

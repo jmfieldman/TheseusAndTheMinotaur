@@ -7,20 +7,35 @@ ancient Crete, and labyrinthine aesthetics.
 
 ### 1.1 Candidate Biome List
 
-| #  | Biome                  | Description                                              |
-|----|------------------------|----------------------------------------------------------|
-| 1  | Stone Labyrinth        | Classic Cretan maze, sandstone and marble                |
-| 2  | Dark Forest            | Ancient twisted olive/cypress groves, overgrown ruins    |
-| 3  | Mechanical Halls       | Bronze gears, Daedalus-style mechanisms and automata     |
-| 4  | Infernal Dungeon       | Deep underground, lava cracks, Tartarus-inspired         |
-| 5  | Sunken Ruins           | Flooded temple corridors, shallow water, mossy stone     |
-| 6  | Palace of Knossos      | Ornate Minoan palace, painted columns, frescoes          |
-| 7  | Catacombs              | Bone-lined corridors, dim torchlight, narrow passages    |
-| 8  | Crystal Caverns        | Underground geode chambers, faint luminescent minerals   |
-| 9  | Overgrown Temple       | Jungle reclaiming ancient architecture, vines and roots  |
-| 10 | Volcanic Forge         | Hephaestus-inspired, molten metal channels, anvils       |
-| 11 | Celestial Observatory  | Open-air stargazing platform, astrolabes, constellations |
-| 12 | The Minotaur's Sanctum | Final biome, dark and foreboding, culminating encounter  |
+| #  | Biome                  | Description                                              | Role         |
+|----|------------------------|----------------------------------------------------------|--------------|
+| 0  | Ship of Theseus        | Wooden ship deck, rigging, sea backdrop; tutorial levels  | **Tutorial** |
+| 1  | Stone Labyrinth        | Classic Cretan maze, sandstone and marble                | First biome  |
+| 2  | Dark Forest            | Ancient twisted olive/cypress groves, overgrown ruins    |              |
+| 3  | Mechanical Halls       | Bronze gears, Daedalus-style mechanisms and automata     |              |
+| 4  | Infernal Dungeon       | Deep underground, lava cracks, Tartarus-inspired         |              |
+| 5  | Sunken Ruins           | Flooded temple corridors, shallow water, mossy stone     |              |
+| 6  | Palace of Knossos      | Ornate Minoan palace, painted columns, frescoes          |              |
+| 7  | Catacombs              | Bone-lined corridors, dim torchlight, narrow passages    |              |
+| 8  | Crystal Caverns        | Underground geode chambers, faint luminescent minerals   |              |
+| 9  | Overgrown Temple       | Jungle reclaiming ancient architecture, vines and roots  |              |
+| 10 | Volcanic Forge         | Hephaestus-inspired, molten metal channels, anvils       |              |
+| 11 | Celestial Observatory  | Open-air stargazing platform, astrolabes, constellations |              |
+| 12 | The Minotaur's Sanctum | Final biome, dark and foreboding, culminating encounter  | Final biome  |
+
+The **Ship of Theseus** is a special tutorial biome with at most **3 levels**.
+Tutorial levels are small (4x4 or 5x5) and teach core mechanics quickly:
+
+1. Basic movement and reaching the exit (Minotaur present but walled off in an
+   unreachable area, so the player can focus on movement without threat)
+2. How the Minotaur moves and using walls to avoid capture
+3. The "wait" action and its tactical use
+
+A new game starts directly in the first tutorial puzzle (not the overworld).
+After completing the tutorial levels, the player reaches the ship's overworld
+diorama (deck), walks to the gangplank transition node, and disembarks onto
+the island of Crete (Stone Labyrinth biome). See
+[04 -- Overworld](04-overworld.md) §6 for details.
 
 > **TBD:** Final biome list pending creative review. Biomes may be added,
 > removed, or reordered.
@@ -67,6 +82,7 @@ The engine consumes a level data format that encodes:
 - Exit tile position
 - Environmental feature placement and configuration
 - Biome identifier (determines visual theme)
+- Optimal (minimum) turn count for star rating
 - Metadata (level name, difficulty rating, author, etc.)
 
 > See [09 -- Content Pipeline](09-content-pipeline.md) for the level data format
@@ -112,9 +128,26 @@ All features must be:
   Minotaur.
 - Features that **move actors** (e.g. conveyor) apply to both Theseus and the
   Minotaur equally unless otherwise specified.
-- Features that are **deadly** (e.g. spike traps when active): **TBD** whether
-  they kill Theseus, the Minotaur, or both.
+- Features that are **deadly** (e.g. spike traps when active) **kill Theseus**
+  but **never kill the Minotaur**. The Minotaur is immune to all lethal hazards.
+- Features may **block** the Minotaur's movement (acting as walls), but the
+  Minotaur is never killed, frozen, or incapacitated. The Minotaur is always
+  alive and always on the board.
 
-> **Open question:** Can the Minotaur be killed/stunned by environmental
-> features? If so, does the player still need to reach the exit, or is
-> Minotaur elimination an alternate win condition?
+See [01 -- Core Mechanics](01-core-mechanics.md) §2 and §5.2 for full actor
+interaction rules.
+
+## 4. Star Rating System
+
+Each level has an **optimal turn count** (the minimum number of turns needed
+to solve the puzzle). This value is computed by the external level generator
+and stored in the level data.
+
+| Stars | Requirement                                          |
+|-------|------------------------------------------------------|
+| 0     | Level not yet completed                               |
+| 1     | Level completed (any turn count)                      |
+| 2     | Level completed in the optimal turn count              |
+
+Stars are used for overworld progression gating -- see
+[04 -- Overworld](04-overworld.md) §7.
