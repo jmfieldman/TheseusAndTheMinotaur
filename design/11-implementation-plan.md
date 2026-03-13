@@ -66,13 +66,24 @@ self-contained `.c` file + registration in the feature registry.
 
 ## Step 3 — Animation System
 
-Tween-based animation framework. Non-blocking: game logic resolves instantly, animations play out visually, and new input can be accepted during playback (fast-forwarding the current animation).
+Tween-based animation framework with input buffering. Game logic resolves instantly; animations play out fully (never fast-forwarded). New input is accepted only during a specific buffer window. See [01 -- Core Mechanics](01-core-mechanics.md) §10 for the full input buffering specification.
 
 **Files:**
 - `src/engine/tween.h / .c` — Tween primitives: lerp position, lerp rotation, lerp color, easing functions (linear, ease-in-out, parabolic arc for hop). Tween struct with start/end values, duration, elapsed, easing function pointer.
-- `src/engine/anim_queue.h / .c` — Per-entity animation queue. Sequential steps (hop, roll, pause) that play out over time. `anim_queue_push()`, `anim_queue_update(dt)`, `anim_queue_is_idle()`, `anim_queue_skip()` (fast-forward to end).
+- `src/engine/anim_queue.h / .c` — Turn animation sequencer. Plays the turn's animation steps in order: Theseus move → environment phase → Minotaur step 1 → Minotaur step 2. Tracks current phase for input buffer window logic. `anim_queue_push()`, `anim_queue_update(dt)`, `anim_queue_is_playing()`, `anim_queue_phase()`.
+- `src/engine/input_buffer.h / .c` — Single-slot input buffer. Accepts a fresh key press (not held) during the Minotaur's last step animation. Last press wins. Commit on animation complete. Distinguishes held keys (ignored) from fresh presses (buffered).
 
-**Verification:** Hook into puzzle scene — Theseus square slides smoothly between tiles instead of teleporting. New input while animating fast-forwards the current animation and starts the next turn.
+**Input buffer rules:**
+- Buffer window opens at start of Minotaur's **last** step animation (step 2 if 2 steps, step 1 if 1 step, no window if 0 steps)
+- Only fresh key-down events accepted (held keys ignored)
+- Last press wins if multiple presses during window
+- Bufferable actions: Move (N/S/E/W), Wait, Undo, Reset
+- Pause is always immediate regardless of animation state
+- Buffered action is not pre-validated — game logic evaluates it on commit
+- On death: movement blocked, but Undo and Reset still available
+- Undo from death plays death animation in reverse (e.g. voxels reconstitute)
+
+**Verification:** Hook into puzzle scene — Theseus square slides smoothly between tiles instead of teleporting. Verify: (1) held key does not fire during animation, (2) fresh press during Minotaur's last step queues next turn, (3) no input accepted during Theseus/environment animations, (4) undo from death works.
 
 ---
 

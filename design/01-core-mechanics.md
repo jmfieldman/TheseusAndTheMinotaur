@@ -255,30 +255,94 @@ on the virtual exit tile, since stepping onto it is an instant win):
 - Implementation: maintain a stack of complete board snapshots, or a stack of
   deltas.
 
-## 10. Non-Blocking Input Model
+## 10. Input Buffering and Animation
 
 The game logic and animation systems are **decoupled** to keep input feeling
-responsive:
+responsive without sacrificing visual clarity.
+
+### 10.1 Core Model
 
 - Game logic resolves **instantly** when the player commits an action (Theseus
   move + environment resolution + Minotaur 2 steps all computed immediately).
-- The renderer then **plays back** the visual sequence (Theseus animation,
-  environment animation, Minotaur step 1 animation, Minotaur step 2 animation).
-- **The player may input their next action at any time**, even while the
-  previous turn's animations are still playing, provided the new action would
-  be legal and the player has not entered a death state.
-- When a new action is received during animation playback:
-  - All pending animations for the previous turn are **fast-forwarded** to
-    their final positions.
-  - The new turn's logic resolves immediately.
-  - The new turn's animations begin playing.
-- **Death state blocks input:** If the resolved game state is a loss (Minotaur
-  capture or environmental death), further gameplay input is blocked. The death
-  animation plays, then the loss UI appears.
+- The renderer then **plays back** the visual sequence in order:
+  1. Theseus move animation
+  2. Environment phase animations
+  3. Minotaur step 1 animation
+  4. Minotaur step 2 animation (if applicable)
+- Animations are **never fast-forwarded or skipped**. Every animation plays
+  out fully so the player can always see what happened.
 
-### 10.1 Benefits
+### 10.2 Input Buffer Window
 
-- Experienced players can input moves as fast as they think -- no waiting for
-  animations.
-- New players who input slowly will see full animations play out naturally.
-- The game never feels sluggish or unresponsive.
+During most of the animation sequence, **new input is ignored**. The player
+cannot queue a move during Theseus's animation, the environment phase, or the
+Minotaur's first step.
+
+The **buffer window** opens during the **Minotaur's last step animation**:
+
+- If the Minotaur takes 2 steps: window opens at the start of step 2's
+  animation.
+- If the Minotaur takes 1 step: window opens at the start of step 1's
+  animation (it is the last step).
+- If the Minotaur takes 0 steps: no window. Input is accepted only after all
+  animations complete (Theseus move + environment). This is fine because the
+  total animation is short.
+
+During the buffer window, a **fresh key press** (not a held key) is stored as
+the buffered action. If the player presses multiple keys during the window,
+**last press wins** -- the buffer is overwritten until it fires.
+
+**Held keys** (keys that were already down before the buffer window opened)
+are ignored. Only a new key-down event (key was up, then pressed) registers.
+This prevents accidental rapid-fire moves from holding a direction.
+
+### 10.3 Buffer-Eligible Actions
+
+The following actions can be buffered during the Minotaur's last step:
+
+| Action              | Bufferable | Notes |
+|---------------------|------------|-------|
+| Move (N/S/E/W)      | Yes        | Resolves next turn normally |
+| Wait                | Yes        | Resolves next turn normally |
+| Undo                | Yes        | Reverts the current turn |
+| Reset               | Yes        | Restarts the level |
+| Pause               | No         | Takes effect immediately at any time |
+
+**Pause** is special -- it is always accepted immediately regardless of
+animation state (it opens a menu overlay, not a game action).
+
+### 10.4 Buffer Commit
+
+When the Minotaur's last step animation completes:
+
+1. If a buffered action exists: the next turn's logic resolves instantly using
+   the buffered action, and the new turn's animations begin playing.
+2. If no buffered action exists: the game waits for player input normally.
+
+The buffered action is **not pre-validated**. If the player buffers "move east"
+and that would walk Theseus into the Minotaur, the turn resolves normally and
+Theseus dies. The buffer just accepts intent; the game logic evaluates it.
+
+### 10.5 Death State
+
+If the resolved game state is a **loss** (Minotaur capture or environmental
+death):
+
+- **Movement input is blocked.** The player cannot queue new move/wait actions.
+- The **death animation** plays (e.g. Theseus voxels explode outward).
+- **Undo and Reset remain available** even in death state:
+  - **Undo** reverses the death animation (e.g. voxels reconstitute back into
+    Theseus's body) and rewinds the turn, restoring the pre-death board state.
+  - **Reset** restarts the level from the initial state (with the standard
+    reset animation sequence from §7.5).
+- After the death animation completes, the **loss UI** appears with options
+  to Undo, Reset, or Quit.
+
+### 10.6 Benefits
+
+- The game never feels sluggish -- experienced players can chain moves with
+  minimal downtime between turns.
+- All animations play fully, so players always understand what happened.
+- The "fresh press only" rule prevents accidental moves from held keys while
+  still allowing deliberate rapid play.
+- Undo from death creates a satisfying "rewind" feel.
