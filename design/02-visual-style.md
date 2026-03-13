@@ -23,16 +23,47 @@ edges (aided by the vignette post-processing pass).
 
 ### 2.1 Voxel Philosophy
 
-- Voxels are the primary building block but are **not constrained to a uniform
-  grid**. They are positioned artistically to create beautiful diorama pieces.
-- Voxels **do not need to be perfect cubes** -- they can vary in width, height,
-  and depth to create visual interest.
+- The scene is composed of **axis-aligned boxes** ("voxels") that create a
+  chunky, handcrafted diorama aesthetic. However, these boxes are **completely
+  freeform** in placement and sizing -- they are **not snapped to any voxel
+  grid**. Each box has an arbitrary position (any float coordinate) and
+  arbitrary dimensions (any width, height, depth).
+- This means:
+  - A wall is composed of ~5--15 irregularly sized stone blocks with slight
+    position jitter and mortar gaps between them.
+  - A grass decoration is a thin sliver (e.g. 0.05 tall) sitting just above
+    the floor surface.
+  - A pebble is a tiny wide-flat box at an arbitrary floor position.
+  - Wall blocks can have subtle random offsets to look rough and hand-stacked
+    rather than perfectly aligned.
 - The logical game grid (NxM tiles) is a separate concept from the visual voxel
   geometry. The renderer maps grid positions to world-space diorama coordinates.
+  The procedural generator places boxes relative to tile positions but is free
+  to add jitter, variation, and overlaps.
 - All level dioramas are **procedurally generated** from logical level data +
   biome configuration. No per-level meshes are hand-authored. See
   [09 -- Content Pipeline](09-content-pipeline.md) §3 for the generation
   pipeline.
+
+### 2.1.1 Occupancy Grid (Internal)
+
+Although boxes are placed at freeform coordinates, the mesh builder maintains
+a **coarse occupancy grid** (~8 subdivisions per game tile) as an internal
+acceleration structure. This grid is used for two purposes only:
+
+1. **Face culling:** Before emitting vertices for a box face, the builder
+   checks whether the occupancy grid shows solid material on the other side.
+   If fully occluded (e.g. the underside of a floor slab, a wall face
+   pressed against another wall), the face is skipped. This eliminates
+   ~40--60% of hidden geometry.
+2. **Ambient occlusion:** For each emitted vertex, the builder samples the
+   3 neighboring occupancy cells at that corner to compute a darkening
+   multiplier (see §4.1). The coarse resolution produces smooth, natural AO
+   at seams and corners.
+
+The occupancy grid is **not a placement constraint** -- boxes are placed
+freely, then rasterized into the grid for these two queries. The grid is
+discarded after the mesh is built (zero runtime cost).
 
 ### 2.1a Grid Visibility
 
@@ -127,13 +158,13 @@ grid dimensions or screen resolution.
 #### Theseus
 
 - A **cube** (with beveled edges consistent with the voxel aesthetic).
-- Warm gold/amber coloring (see §5.1).
+- Blue coloring — RGB(80, 168, 251) (see §5.1).
 - Has a consistent **"down" face** -- Theseus always appears right-side-up
   regardless of movement.
 
 #### Minotaur
 
-- A larger cube/block form (~75% tile size), dark red/brown coloring.
+- A larger cube/block form (~75% tile size), red coloring — RGB(239, 34, 34).
 - **White voxel horns** protrude from the top of the Minotaur. The horns are
   a key visual identifier and always appear on the uppermost face when the
   Minotaur is at rest.
@@ -166,9 +197,19 @@ grid dimensions or screen resolution.
 
 - **Soft baked lighting** -- the primary illumination is pre-computed per
   diorama, not dynamic.
-- **Ambient occlusion** in crevices and where voxels meet to add depth.
+- **Baked ambient occlusion** -- computed offline during the voxel mesh
+  generation phase (not per-frame). After all boxes are placed, the mesh
+  builder rasterizes them into the coarse occupancy grid (see §2.1.1).
+  For each emitted vertex, it samples the 3 neighboring occupancy cells at
+  that corner to compute a 0.0--1.0 occlusion multiplier, which is baked
+  directly into the **vertex color** as a darkening factor. This adds depth
+  at voxel junctions, wall-floor seams, inside corners, and beneath
+  overhangs without any runtime cost. The AO calculation runs once when the
+  diorama mesh is built and the shading is permanently encoded in the vertex
+  data.
 - **Gentle gradients** across surfaces (e.g. slight darkening toward the bottom
-  of walls, subtle sky-light from above).
+  of walls, subtle sky-light from above). These can also be baked into vertex
+  colors during generation.
 - Possible subtle **rim lighting** on actors to help them read against the
   diorama.
 
@@ -197,8 +238,8 @@ geometry:
   contrast with the warm exit glow.
 - **Other light sources** (torches, lava cracks, luminescent crystals) emit
   localized light with biome-appropriate color temperatures.
-- **Theseus** may carry a subtle warm glow (gold/amber) for readability.
-- **Minotaur** may carry a subtle threatening tint (deep red) for readability.
+- **Theseus** may carry a subtle cool glow (blue) for readability.
+- **Minotaur** may carry a subtle threatening tint (red) for readability.
 - Dynamic lights should be **point lights or spot lights** with limited radius
   to keep the effect localized and performant.
 - Walls and actors near dynamic light sources should cast **real-time shadows**
@@ -210,10 +251,10 @@ geometry:
 The scene uses a deliberate **cool/warm light temperature contrast** to guide
 the player's eye and create atmospheric depth:
 
-- **Cool lights** (cyan/blue): Lantern pillars, ambient fill. These set the
-  moody, atmospheric baseline of the scene.
-- **Warm lights** (gold/amber): Exit tile god-light, Theseus glow. These draw
-  attention to the goal and the player character.
+- **Cool lights** (cyan/blue): Lantern pillars, ambient fill, Theseus glow.
+  These set the moody, atmospheric baseline and highlight the player character.
+- **Warm lights** (gold/amber): Exit tile god-light. These draw attention to
+  the goal.
 - **Hot lights** (red/orange): Lava, fire hazards, Minotaur glow. These signal
   danger.
 
@@ -255,8 +296,8 @@ biomes:
 
 | Element     | Color Direction                                             |
 | ----------- | ----------------------------------------------------------- |
-| Theseus     | Warm, identifiable (gold/amber family)                      |
-| Minotaur    | Dark, threatening (deep red/brown)                          |
+| Theseus     | Cool blue — RGB(80, 168, 251)                               |
+| Minotaur    | Threatening red — RGB(239, 34, 34)                          |
 | Exit door   | Warm & inviting (golden/amber glow), god-light through opening |
 | Walls       | Derived from biome palette                                  |
 | Floor tiles | Derived from biome palette, subtle grid distinction         |
@@ -423,19 +464,107 @@ The level start and reset sequences have distinct visual choreography:
 5. Theseus hops in through the entrance door.
 6. Entrance door locks shut.
 
-### 7.5 Non-Blocking Animation
+### 7.5 Input Buffering During Animation
 
-Animations are **non-blocking** -- the player can input their next move while
-the current turn's animations are still playing (see
-[01 -- Core Mechanics](01-core-mechanics.md) §10). When this happens:
+Animations always play out **fully** -- they are never fast-forwarded or
+skipped. See [01 -- Core Mechanics](01-core-mechanics.md) §10 for the
+complete input buffering specification.
 
-- All in-progress animations **fast-forward** to their final positions.
-- The new turn's animations begin immediately.
-- This means animation durations should be short enough to feel snappy by
-  default, but long enough to be readable when the player is watching.
-- When fast-forwarding Minotaur animations, horn/face retract/extend and
-  ground shake effects are **skipped** -- the Minotaur snaps to position with
-  horns on top and face toward the camera.
+During the **Minotaur's last step animation**, the player may press a key to
+buffer their next action. When the animation completes, the buffered action
+fires immediately, creating fluid turn chaining without cutting any animation
+short. Animation durations should be short enough to feel snappy but long
+enough to be readable.
+
+### 7.7 Death Animations
+
+Each death cause has a distinct voxel animation. All death animations work
+with Theseus's voxel body -- the individual boxes that compose him separate,
+transform, or react physically to the cause of death.
+
+All death animations are **reversible** -- when the player triggers **Undo**
+from the death state, the animation plays in reverse (e.g. scattered voxels
+reconstitute back into Theseus's body, a petrified Theseus un-freezes and
+regains color). This creates a satisfying "rewind" feel. See
+[01 -- Core Mechanics](01-core-mechanics.md) §10.5.
+
+#### 7.7.1 Minotaur Squish (Minotaur moves onto Theseus)
+
+The Minotaur rolls onto Theseus's tile and **crushes** him:
+
+- The Minotaur's roll animation plays normally onto the tile.
+- On impact, Theseus's voxels **flatten and scatter outward** from the
+  Minotaur's landing position -- as if squashed under the rolling cube.
+- Voxels spray to the sides with a brief upward arc, then settle on the
+  floor around the tile.
+- Ground shake is stronger than usual (heavier impact).
+- A subtle dust/debris puff accompanies the scatter.
+
+**Undo reversal:** Scattered voxels slide back toward the tile center, lift
+up, and reassemble into Theseus. The Minotaur rolls backward to its
+previous position.
+
+#### 7.7.2 Walk Into Minotaur (Theseus moves onto Minotaur)
+
+Theseus hops toward the Minotaur and is **knocked back**:
+
+- Theseus begins his hop animation toward the Minotaur's tile.
+- Mid-arc, Theseus **collides** with the Minotaur -- the hop cuts short.
+- Theseus's voxels **shatter on impact** and scatter backward (away from
+  the Minotaur), as if he bounced off and broke apart.
+- The Minotaur does a brief **recoil/flex** reaction (slight scale pulse).
+
+**Undo reversal:** Voxels fly back from behind, reassemble into Theseus
+mid-air, and he hops backward to his original tile.
+
+#### 7.7.3 Spike Impale (Theseus on active spike trap)
+
+Spikes shoot up through Theseus:
+
+- The spike trap activates during the environment phase with Theseus on it.
+- Spike geometry **extends upward through the tile** with force.
+- Theseus's voxels **launch upward and outward** -- popped into the air by
+  the spikes, then scatter and tumble down around the tile.
+- The spikes remain extended with a few of Theseus's blue voxels impaled
+  on them.
+
+**Undo reversal:** Voxels fall back onto the spikes, slide down, reassemble
+into Theseus. Spikes retract back into the floor.
+
+#### 7.7.4 Medusa Petrification (Theseus faces Medusa)
+
+Theseus turns to stone:
+
+- As Theseus begins his move toward the Medusa, a **wave of grey** sweeps
+  across his voxels from the Medusa's direction -- blue voxels shift to
+  cold grey/stone color.
+- Theseus **freezes mid-motion** (partial lean into the move direction).
+- A brief pause while fully petrified, then the stone form **cracks and
+  crumbles** -- voxels split along fracture lines and collapse downward
+  into a small rubble pile on the tile.
+- Faint dust particles rise from the rubble.
+
+**Undo reversal:** Rubble voxels lift and reassemble, grey color sweeps back
+to blue from the direction away from Medusa, Theseus unfreezes and steps
+back.
+
+#### 7.7.5 Pit Fall (Crumbling floor, missing platform, bottomless pit)
+
+Theseus falls into the void:
+
+- The floor beneath Theseus **crumbles away** (for crumbling floor) or is
+  simply absent (missing platform / pit tile).
+- Theseus's voxels **drop downward** into the hole -- not a scatter, but a
+  coherent fall with slight tumble rotation.
+- As Theseus falls, he **shrinks toward a vanishing point** below the
+  diorama platform (disappearing into the depth).
+- For lava/hazard pits: voxels glow orange/red as they descend and
+  dissolve, with rising heat-shimmer particles.
+- The pit opening remains visible (dark void or lava glow).
+
+**Undo reversal:** Theseus rises back up out of the pit (voxels growing
+from the vanishing point), the floor reassembles beneath him, and he steps
+back to his previous tile.
 
 ## 8. Post-Processing
 

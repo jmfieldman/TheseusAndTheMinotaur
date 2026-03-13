@@ -392,10 +392,10 @@ Actors are **procedurally generated** in code — no external mesh files are
 loaded. Both Theseus and the Minotaur are fundamentally **cubes** (with
 beveled edges), built as positioned voxel arrays at runtime:
 
-- **Theseus:** A beveled cube with warm gold/amber vertex colors. The cube
+- **Theseus:** A beveled cube with blue vertex colors — RGB(80, 168, 251). The cube
   geometry is generated once at startup. Animation (hop arc, squash, lean)
   is purely tween-based transforms applied to the cube mesh.
-- **Minotaur:** A larger beveled cube with dark red/brown vertex colors.
+- **Minotaur:** A larger beveled cube with red vertex colors — RGB(239, 34, 34).
   Includes procedurally generated sub-meshes for:
   - **Horns:** White voxel horn shapes attached to the top face, with
     retract/extend tween support (see [02 -- Visual Style](02-visual-style.md)
@@ -414,8 +414,25 @@ vertex buffers at runtime. There are **no external mesh files** for any
 game content — dioramas, actors, decorations, and overworld geometry are
 all constructed in code.
 
+The mesh builder uses **freeform box placement** — each box (axis-aligned
+cuboid) has an arbitrary position and arbitrary dimensions. Boxes are not
+snapped to any voxel grid. This allows artistic control: walls composed of
+irregularly sized stone blocks with jitter, thin grass slivers just above
+the floor, tiny pebbles at arbitrary positions, etc.
+
+After all boxes are placed, the builder rasterizes them into a **coarse
+occupancy grid** (~8 subdivisions per game tile) used for:
+
+1. **Hidden face culling** — skip faces fully occluded by neighboring geometry
+2. **Baked ambient occlusion** — sample 3 neighboring occupancy cells per
+   vertex corner, darken vertex colors at seams and overhangs
+
+The occupancy grid is discarded after mesh construction. The final vertex
+format is: position + normal + color (with AO baked into color). See
+[02 -- Visual Style](02-visual-style.md) §2.1.1 for details.
+
 Decoration prefabs (voxel clusters for floor scatter, wall decorations,
-lantern pillars, etc.) are defined as **positioned voxel arrays** in the
+lantern pillars, etc.) are defined as **positioned box arrays** in the
 biome's procgen configuration (JSON). The engine interprets these definitions
 and generates vertex data at level load time.
 

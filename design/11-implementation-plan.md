@@ -89,15 +89,20 @@ Tween-based animation framework with input buffering. Game logic resolves instan
 
 ## Step 4 — 3D Rendering Foundation
 
-Switch from 2D rectangles to actual 3D voxel rendering. Orthographic projection, depth buffer, basic lighting.
+Switch from 2D rectangles to actual 3D voxel rendering. Freeform box placement, orthographic projection, depth buffer, basic lighting, baked ambient occlusion.
 
 **Files:**
 - `src/render/camera.h / .c` — Orthographic camera positioned for isometric-style diorama view. Handles viewport sizing (square sub-region on mobile). View + projection matrices.
-- `src/render/voxel_mesh.h / .c` — Voxel mesh builder. Accumulates colored cubes into a single VBO (position + normal + color per vertex). Greedy meshing to merge coplanar faces. `voxel_mesh_begin()`, `voxel_mesh_add_cube(x, y, z, size, color)`, `voxel_mesh_build()` → VAO/VBO. `voxel_mesh_draw()`.
+- `src/render/voxel_mesh.h / .c` — Freeform box mesh builder. Accumulates axis-aligned boxes at arbitrary positions and dimensions into a single VBO (position + normal + color per vertex). API: `voxel_mesh_begin()`, `voxel_mesh_add_box(pos, size, color)` (any float coordinates, any dimensions — not grid-snapped), `voxel_mesh_build()` → VAO/VBO, `voxel_mesh_draw()`. During `build()`:
+  1. Rasterizes all placed boxes into a coarse occupancy grid (~8 subdivisions per game tile)
+  2. Emits vertices for each box face, skipping faces fully occluded by the occupancy grid (hidden face culling)
+  3. For each emitted vertex, samples 3 neighboring occupancy cells at that corner to compute a baked AO multiplier (0.0–1.0), multiplied into the vertex color
+  4. Uploads final vertex data to GPU; discards occupancy grid
+- `src/render/occupancy_grid.h / .c` — Coarse boolean grid used during mesh build for face culling and AO. Allocated at `voxel_mesh_build()` time, populated by rasterizing all placed boxes, queried per face/vertex, then freed. Resolution is tunable (~8 subdivisions per game tile = 128×128×32 for a 16×16 level).
 - `src/render/lighting.h / .c` — Simple directional light + up to N point lights (lanterns). Passed as uniforms to the voxel shader.
-- Voxel vertex/fragment shaders (embedded in `shader.c` or new file): position + normal + color → lit output with ambient + diffuse + optional point lights.
+- Voxel vertex/fragment shaders (embedded in `shader.c` or new file): position + normal + color (with baked AO) → lit output with ambient + diffuse + optional point lights.
 
-**Verification:** Render a single hardcoded 4×4 diorama with checkerboard floor, a few walls, and two colored cubes for actors. Rotatable camera optional but not required — fixed view angle is fine.
+**Verification:** Render a single hardcoded 4×4 diorama with checkerboard floor, a few wall blocks with slight position jitter, and two colored cubes for actors. Verify: (1) AO darkening at wall-floor seams and box corners, (2) hidden faces are culled (check vertex count), (3) boxes placed at non-grid-aligned positions render correctly.
 
 ---
 
@@ -119,6 +124,7 @@ Generate full diorama meshes from level data + biome config, following the 12-st
   10. Lantern pillars (tall columns with glow source)
   11. Exit god-light effect (vertical amber beam)
   12. Edge border / cliff geometry
+  13. **Bake ambient occlusion** — after all geometry is placed, run the AO pass over the entire mesh. Samples neighboring voxel occupancy per vertex and darkens vertex colors at corners, seams, and overhangs. This is the final step before `voxel_mesh_build()` uploads to GPU.
 - `src/data/biome_config.h / .c` — Load biome JSON config (palette, procgen params, prefab lists)
 - `assets/biomes/stone_labyrinth.json` — First biome config
 - `assets/biomes/dark_forest.json` — Second biome config
@@ -129,18 +135,24 @@ Generate full diorama meshes from level data + biome config, following the 12-st
 
 ## Step 6 — Actor Rendering and Animation
 
-Procedural actor models with proper animations.
+Procedural actor models with proper animations, including per-cause death animations with undo reversal.
 
 **Files:**
-- `src/render/actor_render.h / .c` — Generates Theseus and Minotaur voxel models. Theseus: beveled golden cube (~40-50% tile). Minotaur: larger dark red cube (~75% tile) with white horn nubs and face detail. Renders at interpolated animation position each frame.
+- `src/render/actor_render.h / .c` — Generates Theseus and Minotaur voxel models. Theseus: beveled golden cube (~40-50% tile), composed of individual boxes that can separate for death animations. Minotaur: larger dark red cube (~75% tile) with white horn nubs and face detail. Renders at interpolated animation position each frame.
 - Update `src/engine/anim_queue.c` with actor-specific animations:
-  - Theseus: parabolic hop (no rotation)
+  - Theseus: parabolic hop (no rotation), lean into jump, squash on landing
   - Minotaur: 90° roll per step (horns retract before roll, extend after)
   - Ground shake on heavy landing (Minotaur)
-  - Death animation (Theseus shrinks/fades)
   - Win animation (Theseus spins/glows at exit)
+- `src/render/death_anim.h / .c` — Per-cause death animations (see design doc §02 §7.7). Each animation decomposes Theseus into individual voxel boxes and animates them differently. All animations are reversible for undo:
+  - **Minotaur squish** (§7.7.1): Minotaur rolls onto Theseus, voxels flatten and scatter outward from impact. Extra ground shake.
+  - **Walk into Minotaur** (§7.7.2): Theseus hop cuts short mid-arc, voxels shatter on impact and scatter backward. Minotaur recoil pulse.
+  - **Spike impale** (§7.7.3): Spikes launch through tile, Theseus voxels pop upward and scatter. Gold voxels remain impaled on spike tips.
+  - **Medusa petrification** (§7.7.4): Grey color wave sweeps across voxels, Theseus freezes mid-motion, then cracks and crumbles into rubble.
+  - **Pit fall** (§7.7.5): Voxels drop coherently into hole with tumble rotation, shrink toward vanishing point. Lava variant: voxels glow orange/red and dissolve.
+- Each death animation stores enough state to play in reverse when undo is triggered (voxel positions, colors, timing keyframes).
 
-**Verification:** Theseus hops between tiles with arc motion. Minotaur rolls with horn retraction. Animations play smoothly and fast-forward on early input.
+**Verification:** Trigger each death type and verify: (1) animation plays correctly, (2) undo from death reverses the animation smoothly (voxels reconstitute), (3) Theseus is playable again after undo. Also verify movement animations (hop, roll) play correctly with input buffering.
 
 ---
 
