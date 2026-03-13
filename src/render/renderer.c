@@ -49,11 +49,80 @@ static const char* s_ui_tex_frag_src =
     "    FragColor = vec4(u_color.rgb, u_color.a * a);\n"
     "}\n";
 
+/* ---------- Voxel shader sources ---------- */
+
+static const char* s_voxel_vert_src =
+    "#version 330 core\n"
+    "layout(location = 0) in vec3 a_position;\n"
+    "layout(location = 1) in vec3 a_normal;\n"
+    "layout(location = 2) in vec4 a_color;\n"
+    "\n"
+    "uniform mat4 u_vp;\n"           /* view-projection */
+    "uniform mat4 u_model;\n"        /* model transform */
+    "\n"
+    "out vec3 v_world_pos;\n"
+    "out vec3 v_normal;\n"
+    "out vec4 v_color;\n"
+    "\n"
+    "void main() {\n"
+    "    vec4 world = u_model * vec4(a_position, 1.0);\n"
+    "    v_world_pos = world.xyz;\n"
+    "    v_normal = mat3(u_model) * a_normal;\n"
+    "    v_color = a_color;\n"
+    "    gl_Position = u_vp * world;\n"
+    "}\n";
+
+static const char* s_voxel_frag_src =
+    "#version 330 core\n"
+    "\n"
+    "in vec3 v_world_pos;\n"
+    "in vec3 v_normal;\n"
+    "in vec4 v_color;\n"
+    "\n"
+    "out vec4 FragColor;\n"
+    "\n"
+    "/* Directional light */\n"
+    "uniform vec4 u_light_dir;\n"      /* xyz = direction TO light */
+    "uniform vec4 u_light_color;\n"    /* rgb = color */
+    "uniform vec4 u_ambient_color;\n"  /* rgb = ambient */
+    "\n"
+    "/* Point lights */\n"
+    "uniform int  u_point_count;\n"
+    "uniform vec4 u_point_pos[8];\n"
+    "uniform vec4 u_point_color[8];\n"
+    "uniform float u_point_radius[8];\n"
+    "\n"
+    "void main() {\n"
+    "    vec3 N = normalize(v_normal);\n"
+    "    vec3 base_color = v_color.rgb;\n"
+    "\n"
+    "    /* Ambient */\n"
+    "    vec3 lit = u_ambient_color.rgb * base_color;\n"
+    "\n"
+    "    /* Directional diffuse (half-Lambert for softer look) */\n"
+    "    float ndl = dot(N, u_light_dir.xyz);\n"
+    "    float diffuse = ndl * 0.5 + 0.5;\n"  /* half-Lambert */
+    "    lit += u_light_color.rgb * base_color * diffuse;\n"
+    "\n"
+    "    /* Point lights */\n"
+    "    for (int i = 0; i < u_point_count; i++) {\n"
+    "        vec3 to_light = u_point_pos[i].xyz - v_world_pos;\n"
+    "        float dist = length(to_light);\n"
+    "        float atten = max(0.0, 1.0 - dist / u_point_radius[i]);\n"
+    "        atten *= atten;\n"  /* quadratic falloff */
+    "        float pndl = max(0.0, dot(N, normalize(to_light)));\n"
+    "        lit += u_point_color[i].rgb * base_color * pndl * atten;\n"
+    "    }\n"
+    "\n"
+    "    FragColor = vec4(lit, v_color.a);\n"
+    "}\n";
+
 /* ---------- State ---------- */
 
 static struct {
     GLuint ui_shader;
     GLuint ui_tex_shader;
+    GLuint voxel_shader;
     GLuint quad_vao;
     GLuint quad_vbo;
     float  projection[16];
@@ -171,9 +240,13 @@ void renderer_init(void) {
     /* Compile shaders */
     s_renderer.ui_shader = shader_compile(s_ui_vert_src, s_ui_frag_src);
     s_renderer.ui_tex_shader = shader_compile(s_ui_tex_vert_src, s_ui_tex_frag_src);
+    s_renderer.voxel_shader = shader_compile(s_voxel_vert_src, s_voxel_frag_src);
 
     if (!s_renderer.ui_shader || !s_renderer.ui_tex_shader) {
         LOG_ERROR("Failed to compile UI shaders");
+    }
+    if (!s_renderer.voxel_shader) {
+        LOG_ERROR("Failed to compile voxel shader");
     }
 
     LOG_INFO("Renderer initialized");
@@ -182,6 +255,7 @@ void renderer_init(void) {
 void renderer_shutdown(void) {
     if (s_renderer.ui_shader)     glDeleteProgram(s_renderer.ui_shader);
     if (s_renderer.ui_tex_shader) glDeleteProgram(s_renderer.ui_tex_shader);
+    if (s_renderer.voxel_shader)  glDeleteProgram(s_renderer.voxel_shader);
     if (s_renderer.quad_vao)      glDeleteVertexArrays(1, &s_renderer.quad_vao);
     if (s_renderer.quad_vbo)      glDeleteBuffers(1, &s_renderer.quad_vbo);
     memset(&s_renderer, 0, sizeof(s_renderer));
@@ -242,4 +316,8 @@ GLuint renderer_get_ui_tex_shader(void) {
 
 GLuint renderer_get_quad_vao(void) {
     return s_renderer.quad_vao;
+}
+
+GLuint renderer_get_voxel_shader(void) {
+    return s_renderer.voxel_shader;
 }

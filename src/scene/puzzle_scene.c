@@ -6,6 +6,10 @@
 #include "render/renderer.h"
 #include "render/ui_draw.h"
 #include "render/text_render.h"
+#include "render/shader.h"
+#include "render/voxel_mesh.h"
+#include "render/camera.h"
+#include "render/lighting.h"
 #include "input/input_manager.h"
 #include "data/strings.h"
 #include "data/settings.h"
@@ -121,6 +125,13 @@ typedef struct {
 
     /* Reverse undo animation: grid restore is deferred until anim completes */
     bool        undo_anim_pending;    /* true during reverse undo animation */
+
+    /* 3D diorama rendering (Step 4 verification) */
+    bool            render_3d;       /* 'C' toggles between 2D and 3D view */
+    bool            diorama_built;
+    VoxelMesh       diorama_mesh;
+    DioramaCamera   diorama_cam;
+    LightingState   diorama_light;
 } PuzzleScene;
 
 /* ---------- Layout calculation ---------- */
@@ -653,6 +664,36 @@ static void render_hud(const PuzzleScene* ps, int vw, int vh) {
     }
 }
 
+static void render_debug_labels(const PuzzleScene* ps, int vw, int vh) {
+    Color label_color = color_rgba(0.5f, 0.5f, 0.5f, 0.8f);
+    float x = vw - 15.0f;
+    float y = 60.0f;
+    float line_h = 18.0f;
+
+    /* Render mode */
+    text_render_draw(ps->render_3d ? "[C] 3D" : "[C] 2D",
+                     x, y, TEXT_SIZE_SMALL, label_color, TEXT_ALIGN_RIGHT);
+    y += line_h;
+
+    /* Projection mode */
+    text_render_draw(g_settings.camera_perspective ? "[V] Perspective" : "[V] Orthographic",
+                     x, y, TEXT_SIZE_SMALL, label_color, TEXT_ALIGN_RIGHT);
+    y += line_h;
+
+    /* Camera pitch */
+    char pitch_buf[64];
+    snprintf(pitch_buf, sizeof(pitch_buf), "[I/K] Pitch: %.0f\xC2\xB0",
+             ps->diorama_cam.pitch);
+    text_render_draw(pitch_buf, x, y, TEXT_SIZE_SMALL, label_color, TEXT_ALIGN_RIGHT);
+    y += line_h;
+
+    /* FOV */
+    char fov_buf[64];
+    snprintf(fov_buf, sizeof(fov_buf), "[O/L] FOV: %.0f\xC2\xB0",
+             g_settings.camera_fov);
+    text_render_draw(fov_buf, x, y, TEXT_SIZE_SMALL, label_color, TEXT_ALIGN_RIGHT);
+}
+
 static void render_result_overlay(const PuzzleScene* ps, int vw, int vh) {
     if (!ps->show_result) return;
 
@@ -696,6 +737,194 @@ static void render_result_overlay(const PuzzleScene* ps, int vw, int vh) {
     }
 }
 
+/* ---------- 3D Diorama (Step 4 verification) ---------- */
+
+/*
+ * Build a hardcoded test diorama from the current grid:
+ *   - Checkerboard floor tiles (slight height variation)
+ *   - Wall blocks
+ *   - Theseus and Minotaur as colored cubes
+ * All in world units where 1 unit = 1 tile.
+ */
+static void build_test_diorama(PuzzleScene* ps) {
+    if (ps->diorama_built) {
+        voxel_mesh_destroy(&ps->diorama_mesh);
+    }
+
+    voxel_mesh_begin(&ps->diorama_mesh);
+
+    int cols = ps->grid->cols;
+    int rows = ps->grid->rows;
+
+    /* Floor height and thickness */
+    float floor_h = 0.15f;
+    float floor_y = -floor_h;
+
+    /* Floor tiles — checkerboard with slight color variation */
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            const Cell* cell = grid_cell_const(ps->grid, c, r);
+            if (cell->impassable) {
+                /* Impassable: dark block filling the whole tile height */
+                voxel_mesh_add_box(&ps->diorama_mesh,
+                                    (float)c, floor_y, (float)r,
+                                    1.0f, floor_h + 0.5f, 1.0f,
+                                    0.12f, 0.13f, 0.11f, 1.0f);
+                continue;
+            }
+
+            float shade;
+            if ((c + r) % 2 == 0) {
+                shade = 0.35f;
+            } else {
+                shade = 0.42f;
+            }
+            /* Slight height jitter for visual interest */
+            float jitter = ((c * 7 + r * 13) % 5) * 0.005f;
+            voxel_mesh_add_box(&ps->diorama_mesh,
+                                (float)c, floor_y - jitter, (float)r,
+                                1.0f, floor_h + jitter, 1.0f,
+                                shade, shade * 1.05f, shade * 0.95f, 1.0f);
+        }
+    }
+
+    /* Walls — rendered as tall thin blocks on cell edges */
+    float wall_w = 0.08f;   /* wall thickness */
+    float wall_h = 0.6f;    /* wall height above floor */
+
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            /* North wall (between row r and r+1) */
+            if (grid_has_wall(ps->grid, c, r, DIR_NORTH)) {
+                /* Skip exit wall */
+                if (!(c == ps->grid->exit_col && r == ps->grid->exit_row &&
+                      ps->grid->exit_side == DIR_NORTH)) {
+                    voxel_mesh_add_box(&ps->diorama_mesh,
+                                        (float)c, 0.0f, (float)(r + 1) - wall_w * 0.5f,
+                                        1.0f, wall_h, wall_w,
+                                        0.55f, 0.50f, 0.42f, 1.0f);
+                }
+            }
+            /* South wall */
+            if (grid_has_wall(ps->grid, c, r, DIR_SOUTH)) {
+                if (!(c == ps->grid->exit_col && r == ps->grid->exit_row &&
+                      ps->grid->exit_side == DIR_SOUTH)) {
+                    voxel_mesh_add_box(&ps->diorama_mesh,
+                                        (float)c, 0.0f, (float)r - wall_w * 0.5f,
+                                        1.0f, wall_h, wall_w,
+                                        0.55f, 0.50f, 0.42f, 1.0f);
+                }
+            }
+            /* West wall */
+            if (grid_has_wall(ps->grid, c, r, DIR_WEST)) {
+                if (!(c == ps->grid->exit_col && r == ps->grid->exit_row &&
+                      ps->grid->exit_side == DIR_WEST)) {
+                    voxel_mesh_add_box(&ps->diorama_mesh,
+                                        (float)c - wall_w * 0.5f, 0.0f, (float)r,
+                                        wall_w, wall_h, 1.0f,
+                                        0.55f, 0.50f, 0.42f, 1.0f);
+                }
+            }
+            /* East wall */
+            if (grid_has_wall(ps->grid, c, r, DIR_EAST)) {
+                if (!(c == ps->grid->exit_col && r == ps->grid->exit_row &&
+                      ps->grid->exit_side == DIR_EAST)) {
+                    voxel_mesh_add_box(&ps->diorama_mesh,
+                                        (float)(c + 1) - wall_w * 0.5f, 0.0f, (float)r,
+                                        wall_w, wall_h, 1.0f,
+                                        0.55f, 0.50f, 0.42f, 1.0f);
+                }
+            }
+        }
+    }
+
+    /* Theseus — blue cube */
+    {
+        float size = 0.45f;
+        float offset = (1.0f - size) * 0.5f;
+        voxel_mesh_add_box(&ps->diorama_mesh,
+                            (float)ps->grid->theseus_col + offset,
+                            0.0f,
+                            (float)ps->grid->theseus_row + offset,
+                            size, size, size,
+                            80.0f/255.0f, 168.0f/255.0f, 251.0f/255.0f, 1.0f);
+    }
+
+    /* Minotaur — red cube */
+    {
+        float size = 0.65f;
+        float offset = (1.0f - size) * 0.5f;
+        voxel_mesh_add_box(&ps->diorama_mesh,
+                            (float)ps->grid->minotaur_col + offset,
+                            0.0f,
+                            (float)ps->grid->minotaur_row + offset,
+                            size, size * 0.8f, size,
+                            239.0f/255.0f, 34.0f/255.0f, 34.0f/255.0f, 1.0f);
+    }
+
+    /* Exit marker — golden floor inlay */
+    {
+        float inset = 0.15f;
+        voxel_mesh_add_box(&ps->diorama_mesh,
+                            (float)ps->grid->exit_col + inset,
+                            0.0f,
+                            (float)ps->grid->exit_row + inset,
+                            1.0f - 2.0f * inset, 0.02f, 1.0f - 2.0f * inset,
+                            0.85f, 0.75f, 0.40f, 1.0f);
+    }
+
+    /* Build the mesh with occupancy grid cell size = 1/8 tile */
+    voxel_mesh_build(&ps->diorama_mesh, 0.125f);
+
+    /* Set up camera */
+    diorama_camera_init(&ps->diorama_cam, cols, rows);
+    diorama_camera_set_target(&ps->diorama_cam,
+                               cols * 0.5f, 0.0f, rows * 0.5f);
+
+    /* Set up lighting */
+    lighting_init(&ps->diorama_light);
+
+    ps->diorama_built = true;
+
+    LOG_INFO("Test diorama built: %d vertices",
+             voxel_mesh_get_vertex_count(&ps->diorama_mesh));
+}
+
+static void render_diorama(PuzzleScene* ps, int vw, int vh) {
+    if (!ps->diorama_built) return;
+
+    GLuint shader = renderer_get_voxel_shader();
+    if (!shader) return;
+
+    /* Update camera for current viewport */
+    diorama_camera_update(&ps->diorama_cam, vw, vh);
+
+    /* Enable depth test for 3D rendering */
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glClear(GL_DEPTH_BUFFER_BIT);
+
+    shader_use(shader);
+
+    /* Set VP matrix */
+    shader_set_mat4(shader, "u_vp", diorama_camera_get_vp(&ps->diorama_cam));
+
+    /* Model matrix = identity (diorama is in world space) */
+    float identity[16];
+    memset(identity, 0, sizeof(identity));
+    identity[0] = identity[5] = identity[10] = identity[15] = 1.0f;
+    shader_set_mat4(shader, "u_model", identity);
+
+    /* Apply lighting */
+    lighting_apply(&ps->diorama_light, shader);
+
+    /* Draw the mesh */
+    voxel_mesh_draw(&ps->diorama_mesh);
+
+    /* Restore state for 2D UI rendering */
+    glDisable(GL_DEPTH_TEST);
+}
+
 /* ---------- State callbacks ---------- */
 
 static void puzzle_on_enter(State* self) {
@@ -725,6 +954,11 @@ static void puzzle_on_enter(State* self) {
     anim_queue_init(&ps->anim);
     input_buffer_init(&ps->input_buf);
 
+    /* Build 3D diorama for verification */
+    ps->render_3d = false;
+    ps->diorama_built = false;
+    build_test_diorama(ps);
+
     input_manager_set_context(INPUT_CONTEXT_PUZZLE);
 
     LOG_INFO("Puzzle scene: loaded '%s' (%s) — %dx%d grid",
@@ -735,6 +969,10 @@ static void puzzle_on_enter(State* self) {
 static void puzzle_on_exit(State* self) {
     PuzzleScene* ps = (PuzzleScene*)self;
     undo_clear(&ps->undo);
+    if (ps->diorama_built) {
+        voxel_mesh_destroy(&ps->diorama_mesh);
+        ps->diorama_built = false;
+    }
     if (ps->grid) {
         grid_destroy(ps->grid);
         ps->grid = NULL;
@@ -755,12 +993,43 @@ static void puzzle_handle_action(State* self, SemanticAction action) {
         return;
     }
 
-    /* Debug: toggle camera projection mode */
+    /* Debug: 'C' toggles between 2D and 3D rendering */
     if (action == ACTION_DEBUG_TOGGLE_CAMERA) {
+        ps->render_3d = !ps->render_3d;
+        LOG_INFO("Render mode: %s", ps->render_3d ? "3D diorama" : "2D flat");
+        return;
+    }
+
+    /* Debug: 'V' toggles between orthographic and perspective projection */
+    if (action == ACTION_DEBUG_TOGGLE_PROJECTION) {
         g_settings.camera_perspective = !g_settings.camera_perspective;
-        LOG_INFO("Camera mode: %s (FOV %.0f°)",
+        LOG_INFO("Projection: %s (FOV %.0f°)",
                  g_settings.camera_perspective ? "perspective" : "orthographic",
                  g_settings.camera_fov);
+        return;
+    }
+
+    /* Debug: 'I'/'K' adjust camera pitch */
+    if (action == ACTION_DEBUG_PITCH_UP) {
+        ps->diorama_cam.pitch = CLAMP(ps->diorama_cam.pitch + 5.0f, 5.0f, 85.0f);
+        LOG_INFO("Camera pitch: %.0f°", ps->diorama_cam.pitch);
+        return;
+    }
+    if (action == ACTION_DEBUG_PITCH_DOWN) {
+        ps->diorama_cam.pitch = CLAMP(ps->diorama_cam.pitch - 5.0f, 5.0f, 85.0f);
+        LOG_INFO("Camera pitch: %.0f°", ps->diorama_cam.pitch);
+        return;
+    }
+
+    /* Debug: 'O'/'L' adjust FOV */
+    if (action == ACTION_DEBUG_FOV_UP) {
+        g_settings.camera_fov = CLAMP(g_settings.camera_fov + 1.0f, 5.0f, 90.0f);
+        LOG_INFO("FOV: %.0f°", g_settings.camera_fov);
+        return;
+    }
+    if (action == ACTION_DEBUG_FOV_DOWN) {
+        g_settings.camera_fov = CLAMP(g_settings.camera_fov - 1.0f, 5.0f, 90.0f);
+        LOG_INFO("FOV: %.0f°", g_settings.camera_fov);
         return;
     }
 
@@ -878,12 +1147,19 @@ static void puzzle_render(State* self) {
 
     renderer_clear(COLOR_BG);
 
-    /* Draw layers bottom-up */
-    render_floor(ps);
-    render_doors(ps);
-    render_features(ps);
-    render_walls(ps);
-    render_actors(ps);
+    /* Render 3D diorama when 'C' toggle is active */
+    if (ps->render_3d) {
+        render_diorama(ps, vw, vh);
+    }
+
+    /* Draw 2D layers when not in 3D mode */
+    if (!ps->render_3d) {
+        render_floor(ps);
+        render_doors(ps);
+        render_features(ps);
+        render_walls(ps);
+        render_actors(ps);
+    }
 
     /* Rewind overlay during reverse (undo) animation */
     if (anim_queue_is_reversing(&ps->anim) && anim_queue_is_playing(&ps->anim)) {
@@ -901,12 +1177,16 @@ static void puzzle_render(State* self) {
     }
 
     render_hud(ps, vw, vh);
+    render_debug_labels(ps, vw, vh);
     render_result_overlay(ps, vw, vh);
 }
 
 static void puzzle_destroy(State* self) {
     PuzzleScene* ps = (PuzzleScene*)self;
     undo_clear(&ps->undo);
+    if (ps->diorama_built) {
+        voxel_mesh_destroy(&ps->diorama_mesh);
+    }
     if (ps->grid) {
         grid_destroy(ps->grid);
     }

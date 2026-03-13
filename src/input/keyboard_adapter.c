@@ -23,6 +23,11 @@ SemanticAction keyboard_adapter_map(SDL_Scancode scancode, InputContext context)
         case SDL_SCANCODE_SPACE: return ACTION_UI_CONFIRM;
         case SDL_SCANCODE_ESCAPE:return ACTION_UI_BACK;
         case SDL_SCANCODE_C:     return ACTION_DEBUG_TOGGLE_CAMERA;
+        case SDL_SCANCODE_V:     return ACTION_DEBUG_TOGGLE_PROJECTION;
+        case SDL_SCANCODE_I:     return ACTION_DEBUG_PITCH_UP;
+        case SDL_SCANCODE_K:     return ACTION_DEBUG_PITCH_DOWN;
+        case SDL_SCANCODE_O:     return ACTION_DEBUG_FOV_UP;
+        case SDL_SCANCODE_L:     return ACTION_DEBUG_FOV_DOWN;
         default: break;
         }
         break;
@@ -42,6 +47,11 @@ SemanticAction keyboard_adapter_map(SDL_Scancode scancode, InputContext context)
         case SDL_SCANCODE_R:     return ACTION_RESET;
         case SDL_SCANCODE_ESCAPE:return ACTION_PAUSE;
         case SDL_SCANCODE_C:     return ACTION_DEBUG_TOGGLE_CAMERA;
+        case SDL_SCANCODE_V:     return ACTION_DEBUG_TOGGLE_PROJECTION;
+        case SDL_SCANCODE_I:     return ACTION_DEBUG_PITCH_UP;
+        case SDL_SCANCODE_K:     return ACTION_DEBUG_PITCH_DOWN;
+        case SDL_SCANCODE_O:     return ACTION_DEBUG_FOV_UP;
+        case SDL_SCANCODE_L:     return ACTION_DEBUG_FOV_DOWN;
         default: break;
         }
         break;
@@ -60,6 +70,11 @@ SemanticAction keyboard_adapter_map(SDL_Scancode scancode, InputContext context)
         case SDL_SCANCODE_SPACE: return ACTION_OW_ENTER;
         case SDL_SCANCODE_ESCAPE:return ACTION_OW_BACK;
         case SDL_SCANCODE_C:     return ACTION_DEBUG_TOGGLE_CAMERA;
+        case SDL_SCANCODE_V:     return ACTION_DEBUG_TOGGLE_PROJECTION;
+        case SDL_SCANCODE_I:     return ACTION_DEBUG_PITCH_UP;
+        case SDL_SCANCODE_K:     return ACTION_DEBUG_PITCH_DOWN;
+        case SDL_SCANCODE_O:     return ACTION_DEBUG_FOV_UP;
+        case SDL_SCANCODE_L:     return ACTION_DEBUG_FOV_DOWN;
         default: break;
         }
         break;

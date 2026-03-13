@@ -32,4 +32,7 @@ GLuint renderer_get_ui_tex_shader(void);
 /* Get the shared quad VAO (unit quad 0,0 to 1,1). */
 GLuint renderer_get_quad_vao(void);
 
+/* Get the voxel shader program (position + normal + color → lit output). */
+GLuint renderer_get_voxel_shader(void);
+
 #endif /* RENDERER_H */

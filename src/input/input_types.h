@@ -36,7 +36,12 @@ typedef enum {
     ACTION_OW_BACK,
 
     /* Debug / development */
-    ACTION_DEBUG_TOGGLE_CAMERA,
+    ACTION_DEBUG_TOGGLE_CAMERA,      /* 'C' — switch between 2D and 3D rendering */
+    ACTION_DEBUG_TOGGLE_PROJECTION,  /* 'V' — switch between ortho and perspective */
+    ACTION_DEBUG_PITCH_UP,           /* 'I' — increase camera pitch */
+    ACTION_DEBUG_PITCH_DOWN,         /* 'K' — decrease camera pitch */
+    ACTION_DEBUG_FOV_UP,             /* 'O' — increase FOV */
+    ACTION_DEBUG_FOV_DOWN,           /* 'L' — decrease FOV */
 
     ACTION_COUNT
 } SemanticAction;
