@@ -94,18 +94,24 @@ static void at_on_environment_phase(Feature* self, Grid* grid) {
         }
     }
 
-    /* Move actors on the 4 tiles */
+    /* Move actors on the 4 tiles.
+     * Snapshot positions first to avoid cascading moves. */
+    int theseus_src_col = grid->theseus_col;
+    int theseus_src_row = grid->theseus_row;
+    int minotaur_src_col = grid->minotaur_col;
+    int minotaur_src_row = grid->minotaur_row;
+
     for (int i = 0; i < 4; i++) {
         int dest_idx = d->clockwise ? (i + 1) % 4 : (i + 3) % 4;
 
-        if (grid->theseus_col == tiles[i][0] &&
-            grid->theseus_row == tiles[i][1]) {
+        if (theseus_src_col == tiles[i][0] &&
+            theseus_src_row == tiles[i][1]) {
             grid->theseus_col = tiles[dest_idx][0];
             grid->theseus_row = tiles[dest_idx][1];
         }
 
-        if (grid->minotaur_col == tiles[i][0] &&
-            grid->minotaur_row == tiles[i][1]) {
+        if (minotaur_src_col == tiles[i][0] &&
+            minotaur_src_row == tiles[i][1]) {
             grid->minotaur_col = tiles[dest_idx][0];
             grid->minotaur_row = tiles[dest_idx][1];
         }

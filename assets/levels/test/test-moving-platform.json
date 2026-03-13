@@ -1,0 +1,54 @@
+{
+  "id": "test-moving-platform",
+  "name": "Moving Platform Test",
+  "biome": "sunken_ruins",
+  "difficulty": 1,
+  "optimal_turns": 99,
+  "grid": { "width": 8, "height": 8 },
+  "entrance": { "col": 0, "row": 0, "side": "south" },
+  "exit":     { "col": 7, "row": 0, "side": "east" },
+  "theseus":  { "col": 0, "row": 0 },
+  "minotaur": { "col": 7, "row": 7 },
+  "walls": [
+    { "col": 7, "row": 7, "side": "south" },
+    { "col": 7, "row": 7, "side": "west" }
+  ],
+  "impassable": [
+    { "col": 2, "row": 3 },
+    { "col": 3, "row": 3 },
+    { "col": 4, "row": 3 },
+    { "col": 5, "row": 3 },
+    { "col": 4, "row": 5 },
+    { "col": 4, "row": 6 },
+    { "col": 4, "row": 7 }
+  ],
+  "features": [
+    {
+      "type": "moving_platform",
+      "position": { "col": 2, "row": 3 },
+      "config": {
+        "mode": "pingpong",
+        "initial_index": 0,
+        "path": [
+          { "col": 2, "row": 3 },
+          { "col": 3, "row": 3 },
+          { "col": 4, "row": 3 },
+          { "col": 5, "row": 3 }
+        ]
+      }
+    },
+    {
+      "type": "moving_platform",
+      "position": { "col": 4, "row": 5 },
+      "config": {
+        "mode": "loop",
+        "initial_index": 0,
+        "path": [
+          { "col": 4, "row": 5 },
+          { "col": 4, "row": 6 },
+          { "col": 4, "row": 7 }
+        ]
+      }
+    }
+  ]
+}

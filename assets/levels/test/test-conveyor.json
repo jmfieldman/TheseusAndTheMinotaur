@@ -1,0 +1,29 @@
+{
+  "id": "test-conveyor",
+  "name": "Conveyor Test",
+  "biome": "mechanical_halls",
+  "difficulty": 1,
+  "optimal_turns": 99,
+  "grid": { "width": 8, "height": 8 },
+  "entrance": { "col": 0, "row": 0, "side": "south" },
+  "exit":     { "col": 7, "row": 0, "side": "east" },
+  "theseus":  { "col": 0, "row": 0 },
+  "minotaur": { "col": 7, "row": 7 },
+  "walls": [
+    { "col": 7, "row": 7, "side": "south" },
+    { "col": 7, "row": 7, "side": "west" }
+  ],
+  "impassable": [],
+  "features": [
+    { "type": "conveyor", "position": { "col": 2, "row": 3 }, "config": { "direction": "east" } },
+    { "type": "conveyor", "position": { "col": 3, "row": 3 }, "config": { "direction": "east" } },
+    { "type": "conveyor", "position": { "col": 4, "row": 3 }, "config": { "direction": "east" } },
+    { "type": "conveyor", "position": { "col": 5, "row": 3 }, "config": { "direction": "east" } },
+
+    { "type": "conveyor", "position": { "col": 3, "row": 5 }, "config": { "direction": "north" } },
+    { "type": "conveyor", "position": { "col": 3, "row": 6 }, "config": { "direction": "north" } },
+
+    { "type": "conveyor", "position": { "col": 5, "row": 5 }, "config": { "direction": "south" } },
+    { "type": "conveyor", "position": { "col": 5, "row": 6 }, "config": { "direction": "south" } }
+  ]
+}

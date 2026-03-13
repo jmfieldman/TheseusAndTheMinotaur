@@ -18,6 +18,7 @@ Built-in environmental feature implementations. Each feature is a self-contained
 | `medusa_wall.h / medusa_wall.c` | Wall-mounted face with line-of-sight. Kills Theseus if he moves toward the Medusa while in its sightline. Walls block sightline. Minotaur immune. |
 | `ice_tile.h / ice_tile.c` | Slippery tile. Theseus slides in move direction until hitting a wall or non-ice tile (all within one Theseus phase). Minotaur moves normally on ice. |
 | `groove_box.h / groove_box.c` | Heavy box in a fixed groove track. Theseus can push it along the groove. Blocks both actors. Minotaur cannot push. |
+| `conveyor.h / conveyor.c` | Directional tile that pushes any actor one step in its direction during the environment phase. Both actors are affected. No chaining within a single turn. |
 
 ## Adding a New Feature
 

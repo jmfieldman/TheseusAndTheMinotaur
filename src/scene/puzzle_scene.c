@@ -74,6 +74,8 @@ static const Color COLOR_ICE        = {0.55f, 0.75f, 0.85f, 0.6f};
 static const Color COLOR_GROOVE_BOX = {0.55f, 0.40f, 0.25f, 1.0f};
 /* Turnstile */
 static const Color COLOR_TURNSTILE  = {0.60f, 0.50f, 0.20f, 1.0f};
+/* Conveyor */
+static const Color COLOR_CONVEYOR   = {0.45f, 0.55f, 0.35f, 0.8f};
 /* Background */
 static const Color COLOR_BG         = {0.07f, 0.07f, 0.09f, 1.0f};
 /* HUD text */
@@ -372,6 +374,36 @@ static void render_features(const PuzzleScene* ps) {
             float gi = ts * 0.35f;
             ui_draw_rect(sx + gi, sy + gi, ts - 2.0f * gi, ts - 2.0f * gi,
                          COLOR_TURNSTILE);
+        } else if (strcmp(name, "conveyor") == 0) {
+            /* Colored tile with directional arrow using small rects */
+            float ci = ts * 0.05f;
+            ui_draw_rect(sx + ci, sy + ci, ts - 2.0f * ci, ts - 2.0f * ci,
+                         COLOR_CONVEYOR);
+
+            /* Peek at direction to draw arrow indicator */
+            typedef struct { Direction dir; } ConvPeek;
+            ConvPeek* cd = (ConvPeek*)f->data;
+            float cx = sx + ts * 0.5f;
+            float cy = sy + ts * 0.5f;
+            float aw = ts * 0.08f;  /* arrow element width */
+            float al = ts * 0.25f;  /* arrow shaft length */
+            Color ac = {0.25f, 0.35f, 0.20f, 1.0f};
+
+            /* Shaft */
+            if (cd->dir == DIR_EAST || cd->dir == DIR_WEST) {
+                ui_draw_rect(cx - al, cy - aw * 0.5f, al * 2.0f, aw, ac);
+            } else {
+                ui_draw_rect(cx - aw * 0.5f, cy - al, aw, al * 2.0f, ac);
+            }
+
+            /* Arrowhead (small square at the leading edge) */
+            float ah = ts * 0.12f;
+            float hx = cx, hy = cy;
+            if (cd->dir == DIR_EAST)  hx = cx + al;
+            if (cd->dir == DIR_WEST)  hx = cx - al;
+            if (cd->dir == DIR_NORTH) hy = cy - al;  /* screen up = north */
+            if (cd->dir == DIR_SOUTH) hy = cy + al;
+            ui_draw_rect(hx - ah * 0.5f, hy - ah * 0.5f, ah, ah, ac);
         }
     }
 }

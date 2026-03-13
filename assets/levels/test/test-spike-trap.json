@@ -1,0 +1,26 @@
+{
+  "id": "test-spike-trap",
+  "name": "Spike Trap Test",
+  "biome": "stone_labyrinth",
+  "difficulty": 1,
+  "optimal_turns": 99,
+  "grid": { "width": 8, "height": 8 },
+  "entrance": { "col": 0, "row": 0, "side": "south" },
+  "exit":     { "col": 7, "row": 0, "side": "east" },
+  "theseus":  { "col": 0, "row": 0 },
+  "minotaur": { "col": 7, "row": 7 },
+  "walls": [
+    { "col": 7, "row": 7, "side": "south" },
+    { "col": 7, "row": 7, "side": "west" }
+  ],
+  "impassable": [],
+  "features": [
+    { "type": "spike_trap", "position": { "col": 2, "row": 2 }, "config": { "initial_active": false } },
+    { "type": "spike_trap", "position": { "col": 3, "row": 2 }, "config": { "initial_active": false } },
+    { "type": "spike_trap", "position": { "col": 4, "row": 2 }, "config": { "initial_active": true } },
+    { "type": "spike_trap", "position": { "col": 2, "row": 5 }, "config": { "initial_active": true } },
+    { "type": "spike_trap", "position": { "col": 3, "row": 5 }, "config": { "initial_active": false } },
+    { "type": "spike_trap", "position": { "col": 5, "row": 4 }, "config": { "initial_active": false } },
+    { "type": "spike_trap", "position": { "col": 5, "row": 5 }, "config": { "initial_active": true } }
+  ]
+}

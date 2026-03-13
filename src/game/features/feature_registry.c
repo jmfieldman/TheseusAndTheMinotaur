@@ -11,6 +11,7 @@
 #include "medusa_wall.h"
 #include "ice_tile.h"
 #include "groove_box.h"
+#include "conveyor.h"
 
 /*
  * Register all built-in feature types.
@@ -33,4 +34,5 @@ void feature_registry_init(void) {
     level_loader_register_feature("medusa_wall",      medusa_wall_create);
     level_loader_register_feature("ice_tile",         ice_tile_create);
     level_loader_register_feature("groove_box",       groove_box_create);
+    level_loader_register_feature("conveyor",         conveyor_create);
 }
