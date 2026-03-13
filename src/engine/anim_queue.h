@@ -93,6 +93,12 @@ typedef struct {
     int              effect_event_idx;    /* index into record.events for current effect/env event */
     Tween            phase_tween;         /* generic progress tween for current event */
 
+    /* Environment phase actor position tracking.
+     * Updated progressively as env events complete, so actors don't
+     * snap back to pre-environment positions between events. */
+    float            env_theseus_col, env_theseus_row;
+    float            env_minotaur_col, env_minotaur_row;
+
     /* ── Minotaur phase ────────────────────────── */
     Tween            mino_x;
     Tween            mino_y;

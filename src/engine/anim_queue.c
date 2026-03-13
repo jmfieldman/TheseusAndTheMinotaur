@@ -214,6 +214,14 @@ static bool start_environment_phase(AnimQueue* aq) {
 
     aq->phase = ANIM_PHASE_ENVIRONMENT;
 
+    /* Initialize actor tracking positions for the environment phase.
+     * These start at pre-environment positions and get updated as
+     * env events move actors, preventing snap-back between events. */
+    aq->env_theseus_col  = (float)aq->record.theseus_to_col;
+    aq->env_theseus_row  = (float)aq->record.theseus_to_row;
+    aq->env_minotaur_col = (float)aq->record.minotaur_start_col;
+    aq->env_minotaur_row = (float)aq->record.minotaur_start_row;
+
     if (idx < 0) {
         /* No environment events — minimum pause */
         aq->effect_event_idx = -1;
@@ -233,18 +241,24 @@ static void start_minotaur_step1(AnimQueue* aq) {
     const TurnRecord* r = &aq->record;
     aq->phase = ANIM_PHASE_MINOTAUR_STEP1;
 
+    /* Use env_minotaur tracking position as the start, since env events
+     * may have moved the minotaur (conveyor, platform, auto-turnstile)
+     * after minotaur_start_col/row was recorded. */
+    float start_col = aq->env_minotaur_col;
+    float start_row = aq->env_minotaur_row;
+
     if (r->minotaur_steps >= 1) {
-        tween_init(&aq->mino_x, (float)r->minotaur_start_col,
+        tween_init(&aq->mino_x, start_col,
                    (float)r->minotaur_after1_col,
                    ANIM_MINOTAUR_DURATION, ease_in_out_quad);
-        tween_init(&aq->mino_y, (float)r->minotaur_start_row,
+        tween_init(&aq->mino_y, start_row,
                    (float)r->minotaur_after1_row,
                    ANIM_MINOTAUR_DURATION, ease_in_out_quad);
     } else {
-        tween_init(&aq->mino_x, (float)r->minotaur_start_col,
-                   (float)r->minotaur_start_col, 0.001f, ease_linear);
-        tween_init(&aq->mino_y, (float)r->minotaur_start_row,
-                   (float)r->minotaur_start_row, 0.001f, ease_linear);
+        tween_init(&aq->mino_x, start_col,
+                   start_col, 0.001f, ease_linear);
+        tween_init(&aq->mino_y, start_row,
+                   start_row, 0.001f, ease_linear);
     }
 }
 
@@ -264,6 +278,45 @@ static void start_minotaur_step2(AnimQueue* aq) {
                    (float)r->minotaur_after1_col, 0.001f, ease_linear);
         tween_init(&aq->mino_y, (float)r->minotaur_after1_row,
                    (float)r->minotaur_after1_row, 0.001f, ease_linear);
+    }
+}
+
+/*
+ * Update env_theseus/minotaur tracking positions after the current
+ * env event finishes animating.  This prevents actors from snapping
+ * back to their pre-environment positions between events.
+ */
+static void update_env_tracking(AnimQueue* aq) {
+    const AnimEvent* e = anim_queue_current_event(aq);
+    if (!e) return;
+
+    if (e->type == ANIM_EVT_CONVEYOR_PUSH) {
+        if (e->entity == ENTITY_THESEUS) {
+            aq->env_theseus_col = (float)e->to_col;
+            aq->env_theseus_row = (float)e->to_row;
+        }
+        if (e->entity == ENTITY_MINOTAUR) {
+            aq->env_minotaur_col = (float)e->to_col;
+            aq->env_minotaur_row = (float)e->to_row;
+        }
+    } else if (e->type == ANIM_EVT_PLATFORM_MOVE) {
+        if (e->platform.theseus_riding) {
+            aq->env_theseus_col = (float)e->platform.platform_to_col;
+            aq->env_theseus_row = (float)e->platform.platform_to_row;
+        }
+        if (e->platform.minotaur_riding) {
+            aq->env_minotaur_col = (float)e->platform.platform_to_col;
+            aq->env_minotaur_row = (float)e->platform.platform_to_row;
+        }
+    } else if (e->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE) {
+        if (e->turnstile.actor_moved[0]) {
+            aq->env_theseus_col = (float)e->turnstile.actor_to_col[0];
+            aq->env_theseus_row = (float)e->turnstile.actor_to_row[0];
+        }
+        if (e->turnstile.actor_moved[1]) {
+            aq->env_minotaur_col = (float)e->turnstile.actor_to_col[1];
+            aq->env_minotaur_row = (float)e->turnstile.actor_to_row[1];
+        }
     }
 }
 
@@ -464,6 +517,8 @@ void anim_queue_update(AnimQueue* aq, float dt) {
             }
         }
         if (aq->phase_tween.finished) {
+            /* Lock in actor positions from completed event before advancing */
+            update_env_tracking(aq);
             bool has_more = (aq->effect_event_idx >= 0) && advance_env_event(aq);
             if (!has_more) {
                 TurnResult res = aq->record.result;
@@ -539,7 +594,9 @@ void anim_queue_theseus_pos(const AnimQueue* aq,
             *out_hop = tween_value(&aq->hop) * ANIM_HOP_HEIGHT;
         }
     } else if (aq->playing && aq->phase == ANIM_PHASE_ENVIRONMENT) {
-        /* During environment, Theseus might be moved by env effects */
+        /* During environment, Theseus might be moved by env effects.
+         * Use env_theseus tracking position as default (updated
+         * progressively as env events complete). */
         const AnimEvent* cur = anim_queue_current_event(aq);
         if (cur) {
             if (cur->type == ANIM_EVT_PLATFORM_MOVE && cur->platform.theseus_riding) {
@@ -568,10 +625,17 @@ void anim_queue_theseus_pos(const AnimQueue* aq,
                 return;
             }
         }
-        *out_col = (float)aq->record.theseus_to_col;
-        *out_row = (float)aq->record.theseus_to_row;
+        *out_col = aq->env_theseus_col;
+        *out_row = aq->env_theseus_row;
+        *out_hop = 0.0f;
+    } else if (aq->playing && (aq->phase == ANIM_PHASE_MINOTAUR_STEP1 ||
+                                aq->phase == ANIM_PHASE_MINOTAUR_STEP2)) {
+        /* Post-environment position — env tracking has been finalized */
+        *out_col = aq->env_theseus_col;
+        *out_row = aq->env_theseus_row;
         *out_hop = 0.0f;
     } else {
+        /* THESEUS_EFFECTS, IDLE, or not playing — pre-env position is correct */
         *out_col = (float)aq->record.theseus_to_col;
         *out_row = (float)aq->record.theseus_to_row;
         *out_hop = 0.0f;
@@ -594,6 +658,8 @@ void anim_queue_minotaur_pos(const AnimQueue* aq,
         break;
 
     case ANIM_PHASE_ENVIRONMENT: {
+        /* Use env_minotaur tracking position as default (updated
+         * progressively as env events complete). */
         const AnimEvent* cur = anim_queue_current_event(aq);
         if (cur) {
             if (cur->type == ANIM_EVT_PLATFORM_MOVE && cur->platform.minotaur_riding) {
@@ -619,8 +685,8 @@ void anim_queue_minotaur_pos(const AnimQueue* aq,
                 return;
             }
         }
-        *out_col = (float)aq->record.minotaur_start_col;
-        *out_row = (float)aq->record.minotaur_start_row;
+        *out_col = aq->env_minotaur_col;
+        *out_row = aq->env_minotaur_row;
         break;
     }
 
