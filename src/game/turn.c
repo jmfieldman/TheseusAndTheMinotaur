@@ -44,23 +44,19 @@ static PreMoveResult run_pre_move_hooks(const Grid* grid,
 /* ── Push check ────────────────────────────────────────── */
 
 /*
- * When Theseus's move is blocked, check if any feature at the target
- * cell (or source cell) has an on_push hook that consumes the action.
- * Returns true if a push was consumed (Theseus's turn is spent).
+ * When Theseus's move is blocked, check if any feature in the grid
+ * has an on_push hook that consumes the action.
+ *
+ * We check ALL features (not just those at source/target) because some
+ * features (e.g. manual turnstile) may respond to pushes from tiles
+ * other than the one the feature is placed on.
  */
 static bool try_push(Grid* grid, int from_col, int from_row, Direction dir) {
-    int tc = from_col + direction_dcol(dir);
-    int tr = from_row + direction_drow(dir);
-
-    /* Check features at the target cell */
-    Cell* target = grid_cell(grid, tc, tr);
-    if (target) {
-        for (int i = 0; i < target->feature_count; i++) {
-            Feature* f = target->features[i];
-            if (f->vt->on_push &&
-                f->vt->on_push(f, grid, from_col, from_row, dir)) {
-                return true;
-            }
+    for (int i = 0; i < grid->feature_count; i++) {
+        Feature* f = grid->features[i];
+        if (f->vt->on_push &&
+            f->vt->on_push(f, grid, from_col, from_row, dir)) {
+            return true;
         }
     }
 
@@ -169,6 +165,12 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir) {
                 grid->level_lost = true;
                 grid->turn_count++;
                 return TURN_RESULT_LOSS_COLLISION;
+            }
+
+            if (grid_theseus_on_hazard(grid)) {
+                grid->level_lost = true;
+                grid->turn_count++;
+                return TURN_RESULT_LOSS_HAZARD;
             }
         }
     }

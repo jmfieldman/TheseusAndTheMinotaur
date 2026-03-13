@@ -12,22 +12,31 @@
   "walls": [
     { "col": 7, "row": 7, "side": "south" },
     { "col": 7, "row": 7, "side": "west" },
-    { "col": 3, "row": 3, "side": "east" },
-    { "col": 3, "row": 3, "side": "south" },
-    { "col": 5, "row": 5, "side": "east" },
-    { "col": 6, "row": 5, "side": "south" }
+
+    { "col": 1, "row": 2, "side": "east" },
+    { "col": 1, "row": 2, "side": "south" },
+
+    { "col": 4, "row": 2, "side": "east" },
+
+    { "col": 4, "row": 6, "side": "east" },
+    { "col": 4, "row": 5, "side": "east" }
   ],
   "impassable": [],
   "features": [
     {
       "type": "manual_turnstile",
-      "position": { "col": 3, "row": 3 },
-      "config": { "junction_col": 4, "junction_row": 3 }
+      "position": { "col": 1, "row": 2 },
+      "config": { "junction_col": 2, "junction_row": 2 }
     },
     {
       "type": "manual_turnstile",
-      "position": { "col": 5, "row": 5 },
-      "config": { "junction_col": 6, "junction_row": 5 }
+      "position": { "col": 4, "row": 2 },
+      "config": { "junction_col": 5, "junction_row": 2 }
+    },
+    {
+      "type": "manual_turnstile",
+      "position": { "col": 4, "row": 6 },
+      "config": { "junction_col": 5, "junction_row": 6 }
     }
   ]
 }

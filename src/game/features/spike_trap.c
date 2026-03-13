@@ -6,10 +6,26 @@
 #include <string.h>
 
 typedef struct {
-    bool active;            /* true = spikes up (deadly, blocks minotaur) */
-    bool armed;             /* true = will activate next environment phase */
-    bool theseus_present;   /* true = Theseus is currently on this tile */
+    int  up_turns;          /* config: how many env phases spikes stay up */
+    int  active_remaining;  /* countdown while spikes are up; 0 = retracted */
+    int  arm_turn;          /* turn_count when armed; -1 = not armed */
 } SpikeTrapData;
+
+/*
+ * Spike trap lifecycle:
+ *
+ * 1. RETRACTED (active_remaining == 0, arm_turn == -1)
+ *    - Safe to walk on.  Theseus stepping on arms the trap.
+ *
+ * 2. ARMED (active_remaining == 0, arm_turn >= 0)
+ *    - Still safe this turn.  On the NEXT turn's environment phase the
+ *      spikes fire regardless of who is standing there.
+ *
+ * 3. ACTIVE (active_remaining > 0)
+ *    - Deadly (is_hazardous) and blocks the Minotaur.
+ *    - Each environment phase decrements active_remaining.
+ *    - When it reaches 0 the spikes retract → RETRACTED.
+ */
 
 /* ── Vtable hooks ──────────────────────────────────────── */
 
@@ -23,51 +39,41 @@ static bool spike_blocks_movement(const Feature* self, const Grid* grid,
     if (who != ENTITY_MINOTAUR) return false;
 
     const SpikeTrapData* d = (const SpikeTrapData*)self->data;
-    if (!d->active) return false;
+    if (d->active_remaining <= 0) return false;
 
-    /* Block if the minotaur is trying to enter this tile */
     return (to_col == self->col && to_row == self->row);
 }
 
 static void spike_on_enter(Feature* self, Grid* grid, EntityID who,
                             int col, int row) {
-    (void)grid; (void)col; (void)row;
+    (void)col; (void)row;
     SpikeTrapData* d = (SpikeTrapData*)self->data;
 
-    if (who == ENTITY_THESEUS) {
-        d->theseus_present = true;
-    }
-    /* Minotaur entering does NOT arm the trap */
-}
+    if (who != ENTITY_THESEUS) return;
 
-static void spike_on_leave(Feature* self, Grid* grid, EntityID who,
-                            int col, int row) {
-    (void)grid; (void)col; (void)row;
-    SpikeTrapData* d = (SpikeTrapData*)self->data;
-
-    if (who == ENTITY_THESEUS) {
-        d->theseus_present = false;
-        /* Theseus leaving arms the trap (spikes will go up next env phase) */
-        if (!d->active) {
-            d->armed = true;
-        }
+    /* Arm the trap if it's currently retracted and not already armed */
+    if (d->active_remaining <= 0 && d->arm_turn < 0) {
+        d->arm_turn = grid->turn_count;
+        LOG_INFO("spike_trap(%d,%d): armed on turn %d",
+                 self->col, self->row, grid->turn_count);
     }
 }
 
 static void spike_on_environment_phase(Feature* self, Grid* grid) {
-    (void)grid;
     SpikeTrapData* d = (SpikeTrapData*)self->data;
 
-    if (d->active) {
-        /* Spikes were up — retract after one turn */
-        d->active = false;
-    } else if (d->armed) {
-        /* Armed — spikes shoot up */
-        d->active = true;
-        d->armed = false;
-    } else if (d->theseus_present) {
-        /* Theseus waited on the tile (didn't leave) — arm and fire */
-        d->active = true;
+    if (d->active_remaining > 0) {
+        /* Spikes are up — count down */
+        d->active_remaining--;
+        if (d->active_remaining <= 0) {
+            LOG_INFO("spike_trap(%d,%d): retracted", self->col, self->row);
+        }
+    } else if (d->arm_turn >= 0 && grid->turn_count > d->arm_turn) {
+        /* Armed on a previous turn — fire! */
+        d->active_remaining = d->up_turns;
+        d->arm_turn = -1;
+        LOG_INFO("spike_trap(%d,%d): FIRED, up for %d turn(s)",
+                 self->col, self->row, d->up_turns);
     }
 }
 
@@ -75,7 +81,7 @@ static bool spike_is_hazardous(const Feature* self, const Grid* grid,
                                 int col, int row) {
     (void)grid; (void)col; (void)row;
     const SpikeTrapData* d = (const SpikeTrapData*)self->data;
-    return d->active;
+    return d->active_remaining > 0;
 }
 
 static size_t spike_snapshot_size(const Feature* self) {
@@ -101,7 +107,7 @@ static const FeatureVTable spike_trap_vt = {
     .blocks_movement       = spike_blocks_movement,
     .on_pre_move           = NULL,
     .on_enter              = spike_on_enter,
-    .on_leave              = spike_on_leave,
+    .on_leave              = NULL,
     .on_push               = NULL,
     .on_environment_phase  = spike_on_environment_phase,
     .is_hazardous          = spike_is_hazardous,
@@ -123,16 +129,25 @@ Feature* spike_trap_create(int col, int row, const cJSON* config) {
         return NULL;
     }
 
-    /* Defaults: spikes down, not armed */
-    d->active          = false;
-    d->armed           = false;
-    d->theseus_present = false;
+    /* Defaults */
+    d->up_turns         = 1;
+    d->active_remaining = 0;
+    d->arm_turn         = -1;
 
     /* Parse config */
     if (config) {
         const cJSON* active_item = cJSON_GetObjectItemCaseSensitive(config, "initial_active");
-        if (cJSON_IsBool(active_item)) {
-            d->active = cJSON_IsTrue(active_item);
+        if (cJSON_IsBool(active_item) && cJSON_IsTrue(active_item)) {
+            d->active_remaining = d->up_turns;
+        }
+
+        const cJSON* up_item = cJSON_GetObjectItemCaseSensitive(config, "up_turns");
+        if (cJSON_IsNumber(up_item) && up_item->valueint >= 1) {
+            d->up_turns = up_item->valueint;
+            /* Re-apply if initially active so it uses the configured value */
+            if (d->active_remaining > 0) {
+                d->active_remaining = d->up_turns;
+            }
         }
     }
 
