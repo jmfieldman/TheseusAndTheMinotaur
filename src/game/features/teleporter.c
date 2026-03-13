@@ -1,5 +1,6 @@
 #include "teleporter.h"
 #include "../grid.h"
+#include "../turn.h"
 #include "../../engine/utils.h"
 #include <cJSON.h>
 #include <stdlib.h>
@@ -32,6 +33,20 @@ static void tp_on_enter(Feature* self, Grid* grid, EntityID who,
         /* Found the pair — teleport the actor */
         d->teleporting = true;
         od->teleporting = true;
+
+        /* Record teleport animation event */
+        if (who == ENTITY_THESEUS) {
+            AnimEvent evt = {
+                .type     = ANIM_EVT_THESEUS_TELEPORT,
+                .phase    = ANIM_EVENT_PHASE_THESEUS,
+                .from_col = self->col,
+                .from_row = self->row,
+                .to_col   = other->col,
+                .to_row   = other->row,
+                .entity   = ENTITY_THESEUS,
+            };
+            turn_record_push_event(grid->active_record, &evt);
+        }
 
         grid_set_entity_pos(grid, who, other->col, other->row);
 

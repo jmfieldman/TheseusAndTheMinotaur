@@ -82,8 +82,11 @@ static bool tile_has_ice(const Grid* grid, int col, int row) {
 /*
  * Slide Theseus across ice tiles in the given direction.
  * Called after Theseus has already moved onto an ice tile.
+ * If ice_evt is non-NULL, records each slide position as a waypoint
+ * for animation playback (ice_evt already has the first waypoint).
  */
-static TurnResult ice_slide(Grid* grid, Direction dir) {
+static TurnResult ice_slide_with_waypoints(Grid* grid, Direction dir,
+                                            AnimEvent* ice_evt) {
     while (tile_has_ice(grid, grid->theseus_col, grid->theseus_row)) {
         if (!grid_can_move(grid, ENTITY_THESEUS,
                            grid->theseus_col, grid->theseus_row, dir)) {
@@ -91,6 +94,15 @@ static TurnResult ice_slide(Grid* grid, Direction dir) {
         }
 
         grid_move_entity(grid, ENTITY_THESEUS, dir);
+
+        /* Record waypoint for animation */
+        if (ice_evt &&
+            ice_evt->ice_slide.waypoint_count < ICE_SLIDE_MAX_WAYPOINTS) {
+            int idx = ice_evt->ice_slide.waypoint_count;
+            ice_evt->ice_slide.waypoint_cols[idx] = grid->theseus_col;
+            ice_evt->ice_slide.waypoint_rows[idx] = grid->theseus_row;
+            ice_evt->ice_slide.waypoint_count++;
+        }
 
         if (grid_entities_collide(grid)) {
             grid->level_lost = true;
@@ -132,6 +144,8 @@ static void record_minotaur_nomove(TurnRecord* record, const Grid* grid) {
 /* ── Main turn resolution ──────────────────────────────── */
 
 TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
+    TurnResult result;
+
     /* Initialize record if provided */
     if (record) {
         memset(record, 0, sizeof(*record));
@@ -140,6 +154,9 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
         record->minotaur_start_col = grid->minotaur_col;
         record->minotaur_start_row = grid->minotaur_row;
     }
+
+    /* Set active_record so features can push animation events */
+    grid->active_record = record;
 
     /* ── Phase 1: Theseus ── */
 
@@ -154,7 +171,8 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
                 record_minotaur_nomove(record, grid);
                 record->result = TURN_RESULT_WIN;
             }
-            return TURN_RESULT_WIN;
+            result = TURN_RESULT_WIN;
+            goto done;
         }
 
         int tc = grid->theseus_col + direction_dcol(player_dir);
@@ -174,7 +192,8 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
                 record_minotaur_nomove(record, grid);
                 record->result = TURN_RESULT_LOSS_HAZARD;
             }
-            return TURN_RESULT_LOSS_HAZARD;
+            result = TURN_RESULT_LOSS_HAZARD;
+            goto done;
         }
 
         /* Try to move */
@@ -194,10 +213,11 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
                     record->theseus_moved  = false;
                     record->result = TURN_RESULT_BLOCKED;
                 }
-                return TURN_RESULT_BLOCKED;
+                result = TURN_RESULT_BLOCKED;
+                goto done;
             }
         } else {
-            /* Move succeeded */
+            /* Move succeeded — record normal hop event */
             if (record) {
                 record->theseus_to_col = grid->theseus_col;
                 record->theseus_to_row = grid->theseus_row;
@@ -205,7 +225,26 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
             }
 
             if (pre == PREMOVE_SLIDE) {
-                TurnResult slide_result = ice_slide(grid, player_dir);
+                /* Record ice slide event with waypoints */
+                AnimEvent ice_evt = {
+                    .type  = ANIM_EVT_THESEUS_ICE_SLIDE,
+                    .phase = ANIM_EVENT_PHASE_THESEUS,
+                    .from_col = record ? record->theseus_from_col : grid->theseus_col,
+                    .from_row = record ? record->theseus_from_row : grid->theseus_row,
+                    .entity   = ENTITY_THESEUS,
+                };
+                /* First waypoint: the tile Theseus hopped to (first ice tile) */
+                ice_evt.ice_slide.waypoint_cols[0] = grid->theseus_col;
+                ice_evt.ice_slide.waypoint_rows[0] = grid->theseus_row;
+                ice_evt.ice_slide.waypoint_count = 1;
+
+                TurnResult slide_result = ice_slide_with_waypoints(grid, player_dir, &ice_evt);
+
+                /* Final position after slide */
+                ice_evt.to_col = grid->theseus_col;
+                ice_evt.to_row = grid->theseus_row;
+                turn_record_push_event(record, &ice_evt);
+
                 if (slide_result != TURN_RESULT_CONTINUE) {
                     grid->turn_count++;
                     if (record) {
@@ -214,12 +253,25 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
                         record_minotaur_nomove(record, grid);
                         record->result = slide_result;
                     }
-                    return slide_result;
+                    result = slide_result;
+                    goto done;
                 }
                 if (record) {
                     record->theseus_to_col = grid->theseus_col;
                     record->theseus_to_row = grid->theseus_row;
                 }
+            } else {
+                /* Normal hop — push a hop event */
+                AnimEvent hop_evt = {
+                    .type     = ANIM_EVT_THESEUS_HOP,
+                    .phase    = ANIM_EVENT_PHASE_THESEUS,
+                    .from_col = record ? record->theseus_from_col : 0,
+                    .from_row = record ? record->theseus_from_row : 0,
+                    .to_col   = grid->theseus_col,
+                    .to_row   = grid->theseus_row,
+                    .entity   = ENTITY_THESEUS,
+                };
+                turn_record_push_event(record, &hop_evt);
             }
 
             if (grid_entities_collide(grid)) {
@@ -229,7 +281,8 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
                     record_minotaur_nomove(record, grid);
                     record->result = TURN_RESULT_LOSS_COLLISION;
                 }
-                return TURN_RESULT_LOSS_COLLISION;
+                result = TURN_RESULT_LOSS_COLLISION;
+                goto done;
             }
 
             if (grid_theseus_on_hazard(grid)) {
@@ -239,7 +292,8 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
                     record_minotaur_nomove(record, grid);
                     record->result = TURN_RESULT_LOSS_HAZARD;
                 }
-                return TURN_RESULT_LOSS_HAZARD;
+                result = TURN_RESULT_LOSS_HAZARD;
+                goto done;
             }
         }
     } else {
@@ -262,7 +316,8 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
             record_minotaur_nomove(record, grid);
             record->result = TURN_RESULT_LOSS_HAZARD;
         }
-        return TURN_RESULT_LOSS_HAZARD;
+        result = TURN_RESULT_LOSS_HAZARD;
+        goto done;
     }
 
     if (grid_entities_collide(grid)) {
@@ -272,7 +327,8 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
             record_minotaur_nomove(record, grid);
             record->result = TURN_RESULT_LOSS_COLLISION;
         }
-        return TURN_RESULT_LOSS_COLLISION;
+        result = TURN_RESULT_LOSS_COLLISION;
+        goto done;
     }
 
     /* ── Phase 3: Minotaur (decomposed for animation recording) ── */
@@ -298,7 +354,8 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
             record->minotaur_steps = mino_steps;
             record->result = TURN_RESULT_LOSS_COLLISION;
         }
-        return TURN_RESULT_LOSS_COLLISION;
+        result = TURN_RESULT_LOSS_COLLISION;
+        goto done;
     }
 
     /* Step 2 */
@@ -318,12 +375,17 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
         if (record) {
             record->result = TURN_RESULT_LOSS_COLLISION;
         }
-        return TURN_RESULT_LOSS_COLLISION;
+        result = TURN_RESULT_LOSS_COLLISION;
+        goto done;
     }
 
     grid->turn_count++;
     if (record) {
         record->result = TURN_RESULT_CONTINUE;
     }
-    return TURN_RESULT_CONTINUE;
+    result = TURN_RESULT_CONTINUE;
+
+done:
+    grid->active_record = NULL;
+    return result;
 }

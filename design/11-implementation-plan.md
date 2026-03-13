@@ -66,12 +66,27 @@ self-contained `.c` file + registration in the feature registry.
 
 ## Step 3 — Animation System
 
-Tween-based animation framework with input buffering. Game logic resolves instantly; animations play out fully (never fast-forwarded). New input is accepted only during a specific buffer window. See [01 -- Core Mechanics](01-core-mechanics.md) §10 for the full input buffering specification.
+Tween-based animation framework with event-driven per-feature playback and input buffering. Game logic resolves instantly and records typed animation events (`AnimEvent`) into the `TurnRecord`. The animation queue replays these events with per-feature visual effects. Animations always play out fully (never fast-forwarded or skipped). New input is accepted only during a specific buffer window. See [01 -- Core Mechanics](01-core-mechanics.md) §10 for the full input buffering specification.
 
 **Files:**
-- `src/engine/tween.h / .c` — Tween primitives: lerp position, lerp rotation, lerp color, easing functions (linear, ease-in-out, parabolic arc for hop). Tween struct with start/end values, duration, elapsed, easing function pointer.
-- `src/engine/anim_queue.h / .c` — Turn animation sequencer. Plays the turn's animation steps in order: Theseus move → environment phase → Minotaur step 1 → Minotaur step 2. Tracks current phase for input buffer window logic. `anim_queue_push()`, `anim_queue_update(dt)`, `anim_queue_is_playing()`, `anim_queue_phase()`.
+- `src/engine/tween.h / .c` — Tween primitives: lerp position, lerp rotation, lerp color, easing functions (linear, ease-in-out, parabolic arc for hop, out-back, quad, cubic). Tween struct with start/end values, duration, elapsed, easing function pointer.
+- `src/game/anim_event.h` — Animation event types. Defines `AnimEventType` enum (13 event types), `AnimEventPhase` enum (Theseus / Theseus-effect / Environment), and `AnimEvent` tagged union with type-specific data (positions, waypoints, directions, actor flags). Events are recorded during `turn_resolve()` and replayed by the animation queue. Max 32 events per turn.
+- `src/engine/anim_queue.h / .c` — Turn animation sequencer. Plays the turn's animation in a 5-phase sequence: Theseus move → Theseus on-leave effects → Environment phase → Minotaur step 1 → Minotaur step 2. Scans `TurnRecord` events to determine animation type and dispatches to sub-phase logic:
+  - **Normal hop:** Parabolic arc (0.15s)
+  - **Ice slide:** Hop to first tile (0.15s) + constant-velocity slide through waypoints (0.06s/tile)
+  - **Teleport:** Scale/fade out (0.10s) + scale/fade in (0.10s)
+  - **Push:** Concurrent tweens for box slide + Theseus step (0.15s)
+  - **Turnstile rotation:** Walls rotate 90° + Theseus slides (0.20s)
+  - **On-leave effects:** Sequential playback of crumble (0.15s), gate lock (0.12s), plate toggle (0.10s)
+  - **Environment events:** Sequential playback of spike change (0.12s), auto-turnstile (0.25s), platform move (0.20s), conveyor push (0.15s)
+  - Provides query functions for renderers: teleport progress, aux position (box/platform), rotation progress, current event, ice-slide state.
 - `src/engine/input_buffer.h / .c` — Single-slot input buffer. Accepts a fresh key press (not held) during the Minotaur's last step animation. Last press wins. Commit on animation complete. Distinguishes held keys (ignored) from fresh presses (buffered).
+
+**AnimEvent recording mechanism:**
+- `Grid` holds a transient `active_record` pointer (set at start of `turn_resolve()`, cleared at end)
+- Features push events from existing vtable hooks via `turn_record_push_event()` — no vtable signature changes needed
+- `turn.c` records `THESEUS_HOP` for normal moves and `THESEUS_ICE_SLIDE` with waypoint data for ice slides
+- Each feature file adds ~10 lines of event recording in its hook (on_enter, on_leave, on_push, on_environment_phase)
 
 **Input buffer rules:**
 - Buffer window opens at start of Minotaur's **last** step animation (step 2 if 2 steps, step 1 if 1 step, no window if 0 steps)
@@ -83,7 +98,7 @@ Tween-based animation framework with input buffering. Game logic resolves instan
 - On death: movement blocked, but Undo and Reset still available
 - Undo from death plays death animation in reverse (e.g. voxels reconstitute)
 
-**Verification:** Hook into puzzle scene — Theseus square slides smoothly between tiles instead of teleporting. Verify: (1) held key does not fire during animation, (2) fresh press during Minotaur's last step queues next turn, (3) no input accepted during Theseus/environment animations, (4) undo from death works.
+**Verification:** Hook into puzzle scene — Theseus square slides smoothly between tiles instead of teleporting. Verify: (1) held key does not fire during animation, (2) fresh press during Minotaur's last step queues next turn, (3) no input accepted during Theseus/environment animations, (4) undo from death works. Additionally verify per-feature animations: ice slide shows hop then slide, teleport shows fade out/in, groove box push shows concurrent motion, environment phase shows sequential spike/turnstile/platform/conveyor animations.
 
 ---
 

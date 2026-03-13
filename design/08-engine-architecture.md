@@ -208,8 +208,9 @@ smooth interpolation of the **orthographic projection bounds**:
     leading bottom edge (roll). Horn retract/extend tweens at roll start/end.
     Localized ground-shake effect on landing (camera micro-shake + optional
     impact visual). Drop-in animation (fall from above onto starting tile).
-- **State-driven** animation for environmental features (e.g. spike trap up/down
-  transitions).
+- **Event-driven** animation for environmental features. Each feature records
+  typed animation events during turn resolution; the animation queue replays
+  them with per-type visual effects and timing (see §3.4.2).
 - **Level lifecycle animations:**
   - **Level start:** Minotaur drop-in → Theseus entrance hop → door lock.
   - **Level reset:** Actors lift off-screen → environment reset → Minotaur
@@ -221,22 +222,74 @@ smooth interpolation of the **orthographic projection bounds**:
 
 #### 3.4.1 Non-Blocking Animation Queue
 
-The animation system maintains a **queue of pending visual transitions**. Key
-behavior:
+The animation system plays back each turn as a **five-phase sequence**:
+
+1. **Theseus phase** — Theseus move animation (hop, ice slide, teleport, or
+   push). The animation type is determined by the `AnimEvent` recorded during
+   turn resolution. Multi-part moves use sub-phases (e.g. ice slide: hop to
+   first tile → constant-velocity slide through remaining waypoints).
+2. **Theseus effects phase** — On-leave effects that fire after Theseus exits
+   a tile (crumbling floor collapse, locking gate slam, pressure plate toggle).
+   Events play sequentially with type-specific durations.
+3. **Environment phase** — Environment events play sequentially (spike
+   extend/retract, auto-turnstile rotation, platform movement, conveyor push).
+   Each event has its own duration. If no events exist, a minimal 0.10s pause
+   preserves turn rhythm.
+4. **Minotaur step 1** — First Minotaur move animation.
+5. **Minotaur step 2** — Second Minotaur move animation (if applicable).
+
+Key behavior:
 
 - When the player commits an action, the game logic resolves the full turn
-  immediately (Theseus + environment + Minotaur) and enqueues the resulting
-  animation sequence.
-- If the player inputs another action **while animations are still playing**:
-  - All pending animations are **fast-forwarded** to their end states.
-  - Actors and features snap to their resolved positions.
-  - The new turn resolves and its animations are enqueued.
+  immediately (Theseus + environment + Minotaur) and records the resulting
+  animation events into the `TurnRecord`.
+- Animations always play out fully -- they are never fast-forwarded or skipped.
+- The **input buffer window** opens during the Minotaur's last step animation.
+  Only fresh key-down events are accepted (held keys ignored); last press wins.
 - If the resolved state is a **death**, the animation queue plays through to
   the death moment, then blocks further gameplay input. (See
   [01 -- Core Mechanics](01-core-mechanics.md) §10.)
 
-This ensures the game feels **responsive at any pace** -- experienced players
-can rapid-fire moves without waiting, while casual players see full animations.
+#### 3.4.2 AnimEvent System
+
+Game logic resolves turns instantly. During resolution, features record **typed
+animation events** (`AnimEvent`) into a flat array on the `TurnRecord`. This
+decouples game logic from animation -- features describe *what happened*; the
+animation queue decides *how it looks*.
+
+**Recording mechanism:** The `Grid` struct holds a transient `active_record`
+pointer (set at the start of `turn_resolve()`, cleared at the end). Features
+push events from their existing vtable hooks (on_enter, on_leave, on_push,
+on_environment_phase) via `turn_record_push_event()` -- no vtable signature
+changes are needed. Maximum 32 events per turn.
+
+**Event types and phases:**
+
+| Phase | Event Type | Source Feature | Duration |
+|-------|-----------|---------------|----------|
+| Theseus | `THESEUS_HOP` | Normal move (turn.c) | 0.15s |
+| Theseus | `THESEUS_ICE_SLIDE` | Ice tile (turn.c) | 0.15s hop + 0.06s/tile slide |
+| Theseus | `THESEUS_TELEPORT` | Teleporter | 0.10s out + 0.10s in |
+| Theseus | `BOX_SLIDE` + `THESEUS_PUSH_MOVE` | Groove box | 0.15s (concurrent) |
+| Theseus | `TURNSTILE_ROTATE` | Manual turnstile | 0.20s |
+| Theseus effect | `FLOOR_CRUMBLE` | Crumbling floor | 0.15s |
+| Theseus effect | `GATE_LOCK` | Locking gate | 0.12s |
+| Theseus effect | `PLATE_TOGGLE` | Pressure plate | 0.10s |
+| Environment | `SPIKE_CHANGE` | Spike trap | 0.12s |
+| Environment | `AUTO_TURNSTILE_ROTATE` | Auto-turnstile | 0.25s |
+| Environment | `PLATFORM_MOVE` | Moving platform | 0.20s |
+| Environment | `CONVEYOR_PUSH` | Conveyor | 0.15s |
+
+Each event carries type-specific data (positions, waypoints, direction flags,
+actor riding flags, etc.) as a tagged union. The animation queue reads these
+events and sets up appropriate tweens for visual playback.
+
+**Theseus sub-phases** for multi-part moves:
+- **Ice slide:** (1) Parabolic hop to first ice tile, (2) constant-velocity
+  linear slide through recorded waypoints (no hop during slide).
+- **Teleport:** (1) Scale/fade out at source, (2) scale/fade in at destination.
+- **Push:** Box slides to new position while Theseus steps into vacated tile
+  (concurrent tweens).
 
 ### 3.5 Game Logic Module
 

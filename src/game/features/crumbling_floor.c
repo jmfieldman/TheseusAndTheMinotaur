@@ -1,5 +1,6 @@
 #include "crumbling_floor.h"
 #include "../grid.h"
+#include "../turn.h"
 #include "../../engine/utils.h"
 #include <cJSON.h>
 #include <stdlib.h>
@@ -55,6 +56,17 @@ static void cf_on_leave(Feature* self, Grid* grid, EntityID who,
         d->state = CF_COLLAPSED;
         Cell* cell = grid_cell(grid, self->col, self->row);
         if (cell) cell->impassable = true;
+
+        /* Record crumble animation event */
+        AnimEvent evt = {
+            .type     = ANIM_EVT_FLOOR_CRUMBLE,
+            .phase    = ANIM_EVENT_PHASE_THESEUS_EFFECT,
+            .from_col = self->col,
+            .from_row = self->row,
+            .to_col   = self->col,
+            .to_row   = self->row,
+        };
+        turn_record_push_event(grid->active_record, &evt);
     }
 }
 

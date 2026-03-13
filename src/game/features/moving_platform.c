@@ -1,5 +1,6 @@
 #include "moving_platform.h"
 #include "../grid.h"
+#include "../turn.h"
 #include "../../engine/utils.h"
 #include <cJSON.h>
 #include <stdlib.h>
@@ -123,13 +124,35 @@ static void mp_on_environment_phase(Feature* self, Grid* grid) {
     self->row = new_row;
 
     /* Move any actor that was on the old platform position to the new one */
-    if (grid->theseus_col == old_col && grid->theseus_row == old_row) {
+    bool theseus_riding  = (grid->theseus_col == old_col && grid->theseus_row == old_row);
+    bool minotaur_riding = (grid->minotaur_col == old_col && grid->minotaur_row == old_row);
+
+    if (theseus_riding) {
         grid->theseus_col = new_col;
         grid->theseus_row = new_row;
     }
-    if (grid->minotaur_col == old_col && grid->minotaur_row == old_row) {
+    if (minotaur_riding) {
         grid->minotaur_col = new_col;
         grid->minotaur_row = new_row;
+    }
+
+    /* Record platform move animation event */
+    {
+        AnimEvent evt = {
+            .type     = ANIM_EVT_PLATFORM_MOVE,
+            .phase    = ANIM_EVENT_PHASE_ENVIRONMENT,
+            .from_col = old_col,
+            .from_row = old_row,
+            .to_col   = new_col,
+            .to_row   = new_row,
+        };
+        evt.platform.platform_from_col = old_col;
+        evt.platform.platform_from_row = old_row;
+        evt.platform.platform_to_col   = new_col;
+        evt.platform.platform_to_row   = new_row;
+        evt.platform.theseus_riding    = theseus_riding;
+        evt.platform.minotaur_riding   = minotaur_riding;
+        turn_record_push_event(grid->active_record, &evt);
     }
 
     /* Rebuild feature links since platform moved */

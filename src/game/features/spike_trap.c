@@ -1,5 +1,6 @@
 #include "spike_trap.h"
 #include "../grid.h"
+#include "../turn.h"
 #include "../../engine/utils.h"
 #include <cJSON.h>
 #include <stdlib.h>
@@ -67,6 +68,18 @@ static void spike_on_environment_phase(Feature* self, Grid* grid) {
         d->active_remaining--;
         if (d->active_remaining <= 0) {
             LOG_INFO("spike_trap(%d,%d): retracted", self->col, self->row);
+
+            /* Record spike retraction event */
+            AnimEvent evt = {
+                .type     = ANIM_EVT_SPIKE_CHANGE,
+                .phase    = ANIM_EVENT_PHASE_ENVIRONMENT,
+                .from_col = self->col,
+                .from_row = self->row,
+                .to_col   = self->col,
+                .to_row   = self->row,
+            };
+            evt.spike.extended = false;
+            turn_record_push_event(grid->active_record, &evt);
         }
     } else if (d->arm_turn >= 0 && grid->turn_count > d->arm_turn) {
         /* Armed on a previous turn — fire! */
@@ -74,6 +87,18 @@ static void spike_on_environment_phase(Feature* self, Grid* grid) {
         d->arm_turn = -1;
         LOG_INFO("spike_trap(%d,%d): FIRED, up for %d turn(s)",
                  self->col, self->row, d->up_turns);
+
+        /* Record spike extension event */
+        AnimEvent evt = {
+            .type     = ANIM_EVT_SPIKE_CHANGE,
+            .phase    = ANIM_EVENT_PHASE_ENVIRONMENT,
+            .from_col = self->col,
+            .from_row = self->row,
+            .to_col   = self->col,
+            .to_row   = self->row,
+        };
+        evt.spike.extended = true;
+        turn_record_push_event(grid->active_record, &evt);
     }
 }
 

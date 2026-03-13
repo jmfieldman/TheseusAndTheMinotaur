@@ -3,6 +3,7 @@
 
 #include "engine/tween.h"
 #include "game/turn.h"
+#include "game/anim_event.h"
 #include <stdbool.h>
 
 /*
@@ -10,10 +11,11 @@
  *
  * Game logic resolves instantly (all phases computed immediately).
  * The anim queue then plays back the visual sequence in order:
- *   1. Theseus move animation
- *   2. Environment phase (brief pause for visual updates)
- *   3. Minotaur step 1 animation
- *   4. Minotaur step 2 animation (if applicable)
+ *   1. Theseus move animation (hop / ice-slide / teleport / push)
+ *   2. On-leave effects (crumble, gate lock, plate toggle)
+ *   3. Environment phase (sequential per-event animations)
+ *   4. Minotaur step 1 animation
+ *   5. Minotaur step 2 animation (if applicable)
  *
  * Animations are never fast-forwarded or skipped.
  *
@@ -22,33 +24,78 @@
  */
 
 typedef enum {
-    ANIM_PHASE_IDLE,              /* not playing, waiting for input */
-    ANIM_PHASE_THESEUS,           /* Theseus move animation */
-    ANIM_PHASE_ENVIRONMENT,       /* environment phase visual pause */
-    ANIM_PHASE_MINOTAUR_STEP1,    /* Minotaur step 1 */
-    ANIM_PHASE_MINOTAUR_STEP2,    /* Minotaur step 2 */
+    ANIM_PHASE_IDLE,                  /* not playing, waiting for input */
+    ANIM_PHASE_THESEUS,              /* Theseus move animation */
+    ANIM_PHASE_THESEUS_EFFECTS,      /* on-leave effects (crumble, gate, plate) */
+    ANIM_PHASE_ENVIRONMENT,          /* environment phase per-event animations */
+    ANIM_PHASE_MINOTAUR_STEP1,       /* Minotaur step 1 */
+    ANIM_PHASE_MINOTAUR_STEP2,       /* Minotaur step 2 */
 } AnimPhase;
+
+/* Theseus sub-phase for multi-part moves */
+typedef enum {
+    THESEUS_SUB_HOP,          /* normal hop or first hop of ice slide */
+    THESEUS_SUB_ICE_SLIDE,    /* constant-velocity slide across ice waypoints */
+    THESEUS_SUB_TELEPORT_OUT, /* shrink/fade at source */
+    THESEUS_SUB_TELEPORT_IN,  /* grow/fade at destination */
+    THESEUS_SUB_PUSH,         /* push move (box slides, Theseus steps) */
+} TheseusSubPhase;
 
 /* Animation timing constants (seconds) */
 #define ANIM_THESEUS_DURATION    0.15f
 #define ANIM_ENVIRONMENT_DURATION 0.10f
 #define ANIM_MINOTAUR_DURATION   0.15f
-/* Hop height as fraction of tile size */
 #define ANIM_HOP_HEIGHT          0.3f
 
+/* Per-event-type durations */
+#define ANIM_ICE_SLIDE_PER_TILE  0.06f
+#define ANIM_TELEPORT_HALF       0.10f
+#define ANIM_PUSH_DURATION       0.15f
+#define ANIM_CRUMBLE_DURATION    0.15f
+#define ANIM_GATE_LOCK_DURATION  0.12f
+#define ANIM_PLATE_DURATION      0.10f
+#define ANIM_SPIKE_DURATION      0.12f
+#define ANIM_AUTO_TURNSTILE_DURATION 0.25f
+#define ANIM_PLATFORM_DURATION   0.20f
+#define ANIM_CONVEYOR_DURATION   0.15f
+#define ANIM_TURNSTILE_DURATION  0.20f
+#define ANIM_ENV_MIN_PAUSE       0.10f
+
 typedef struct {
-    AnimPhase   phase;
-    TurnRecord  record;
-    bool        playing;
+    AnimPhase        phase;
+    TurnRecord       record;
+    bool             playing;
 
-    /* Current phase tween (position interpolation) */
-    Tween       move_x;       /* grid-space X (column) */
-    Tween       move_y;       /* grid-space Y (row) */
-    Tween       hop;          /* parabolic arc height (for Theseus) */
+    /* ── Theseus phase ─────────────────────────── */
+    AnimEventType    theseus_event_type;   /* what kind of move */
+    TheseusSubPhase  theseus_sub;
+    Tween            move_x;              /* grid-space X (column) */
+    Tween            move_y;              /* grid-space Y (row) */
+    Tween            hop;                 /* parabolic arc height */
 
-    /* Minotaur position tweens */
-    Tween       mino_x;
-    Tween       mino_y;
+    /* Ice slide: waypoint tracking */
+    int              ice_wp_index;        /* current waypoint being slid to */
+    int              ice_wp_count;        /* total waypoints */
+    int              ice_wp_cols[ICE_SLIDE_MAX_WAYPOINTS];
+    int              ice_wp_rows[ICE_SLIDE_MAX_WAYPOINTS];
+
+    /* Teleport effect progress (0→1 for each half) */
+    Tween            effect;
+
+    /* Push: secondary object (box) tweens */
+    Tween            aux_x;
+    Tween            aux_y;
+
+    /* Turnstile rotation progress */
+    Tween            rotation;
+
+    /* ── Theseus effects / Environment phase ──── */
+    int              effect_event_idx;    /* index into record.events for current effect/env event */
+    Tween            phase_tween;         /* generic progress tween for current event */
+
+    /* ── Minotaur phase ────────────────────────── */
+    Tween            mino_x;
+    Tween            mino_y;
 } AnimQueue;
 
 /* Initialize the animation queue (idle state). */
@@ -93,5 +140,31 @@ void anim_queue_theseus_pos(const AnimQueue* aq,
  */
 void anim_queue_minotaur_pos(const AnimQueue* aq,
                              float* out_col, float* out_row);
+
+/* ── Query functions for per-event rendering ─────── */
+
+/* What type of Theseus move is currently animating? */
+AnimEventType anim_queue_theseus_event_type(const AnimQueue* aq);
+
+/* Teleport effect progress: 0→1 for fade-out, 0→1 for fade-in.
+ * Returns -1 if not in teleport animation.
+ * out_phase: 0 = fading out, 1 = fading in */
+float anim_queue_teleport_progress(const AnimQueue* aq, int* out_phase);
+
+/* Secondary object position (box during push, platform during move) */
+void anim_queue_aux_pos(const AnimQueue* aq,
+                        float* out_col, float* out_row);
+
+/* Rotation angle progress (0→1 for 90° rotation) */
+float anim_queue_rotation_progress(const AnimQueue* aq);
+
+/* Environment/effect event progress (0→1 for current event) */
+float anim_queue_effect_progress(const AnimQueue* aq);
+
+/* Current environment/effect event being animated (or NULL) */
+const AnimEvent* anim_queue_current_event(const AnimQueue* aq);
+
+/* Is the Theseus phase in ice-slide sub-phase (no hop)? */
+bool anim_queue_is_ice_sliding(const AnimQueue* aq);
 
 #endif /* ENGINE_ANIM_QUEUE_H */

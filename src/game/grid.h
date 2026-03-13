@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include "feature.h"
+#include "anim_event.h"
 
 /*
  * Grid — the logical game board.
@@ -30,9 +31,15 @@ typedef struct {
     int feature_count;
 } Cell;
 
+/* Forward declaration — TurnRecord defined in turn.h */
+struct TurnRecord;
+
 typedef struct Grid {
     int cols, rows;
     Cell* cells;                        /* cols * rows, row-major: cells[row * cols + col] */
+
+    /* Active turn record pointer (set during turn_resolve for feature event recording) */
+    struct TurnRecord* active_record;
 
     /* Entity positions */
     int theseus_col,  theseus_row;

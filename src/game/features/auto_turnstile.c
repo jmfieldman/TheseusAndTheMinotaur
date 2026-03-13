@@ -1,5 +1,6 @@
 #include "auto_turnstile.h"
 #include "../grid.h"
+#include "../turn.h"
 #include "../../engine/utils.h"
 #include <cJSON.h>
 #include <stdlib.h>
@@ -101,6 +102,21 @@ static void at_on_environment_phase(Feature* self, Grid* grid) {
     int minotaur_src_col = grid->minotaur_col;
     int minotaur_src_row = grid->minotaur_row;
 
+    /* Prepare animation event */
+    AnimEvent evt = {
+        .type     = ANIM_EVT_AUTO_TURNSTILE_ROTATE,
+        .phase    = ANIM_EVENT_PHASE_ENVIRONMENT,
+        .from_col = d->jc,
+        .from_row = d->jr,
+        .to_col   = d->jc,
+        .to_row   = d->jr,
+    };
+    evt.turnstile.junction_col = d->jc;
+    evt.turnstile.junction_row = d->jr;
+    evt.turnstile.clockwise    = d->clockwise;
+    evt.turnstile.actor_moved[0] = false;
+    evt.turnstile.actor_moved[1] = false;
+
     for (int i = 0; i < 4; i++) {
         int dest_idx = d->clockwise ? (i + 1) % 4 : (i + 3) % 4;
 
@@ -108,14 +124,26 @@ static void at_on_environment_phase(Feature* self, Grid* grid) {
             theseus_src_row == tiles[i][1]) {
             grid->theseus_col = tiles[dest_idx][0];
             grid->theseus_row = tiles[dest_idx][1];
+            evt.turnstile.actor_from_col[0] = tiles[i][0];
+            evt.turnstile.actor_from_row[0] = tiles[i][1];
+            evt.turnstile.actor_to_col[0]   = tiles[dest_idx][0];
+            evt.turnstile.actor_to_row[0]   = tiles[dest_idx][1];
+            evt.turnstile.actor_moved[0]    = true;
         }
 
         if (minotaur_src_col == tiles[i][0] &&
             minotaur_src_row == tiles[i][1]) {
             grid->minotaur_col = tiles[dest_idx][0];
             grid->minotaur_row = tiles[dest_idx][1];
+            evt.turnstile.actor_from_col[1] = tiles[i][0];
+            evt.turnstile.actor_from_row[1] = tiles[i][1];
+            evt.turnstile.actor_to_col[1]   = tiles[dest_idx][0];
+            evt.turnstile.actor_to_row[1]   = tiles[dest_idx][1];
+            evt.turnstile.actor_moved[1]    = true;
         }
     }
+
+    turn_record_push_event(grid->active_record, &evt);
 
     /* Move features on the 4 tiles (except this turnstile itself) */
     for (int fi = 0; fi < grid->feature_count; fi++) {

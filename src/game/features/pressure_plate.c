@@ -1,5 +1,6 @@
 #include "pressure_plate.h"
 #include "../grid.h"
+#include "../turn.h"
 #include "../../engine/utils.h"
 #include <cJSON.h>
 #include <stdlib.h>
@@ -75,6 +76,18 @@ static void pp_on_enter(Feature* self, Grid* grid, EntityID who,
     }
 
     apply_targets(d, grid);
+
+    /* Record plate toggle animation event */
+    AnimEvent evt = {
+        .type     = ANIM_EVT_PLATE_TOGGLE,
+        .phase    = ANIM_EVENT_PHASE_THESEUS_EFFECT,
+        .from_col = self->col,
+        .from_row = self->row,
+        .to_col   = self->col,
+        .to_row   = self->row,
+    };
+    evt.plate.toggled = d->toggled;
+    turn_record_push_event(grid->active_record, &evt);
 }
 
 static size_t pp_snapshot_size(const Feature* self) {

@@ -1,102 +1,325 @@
 #include "engine/anim_queue.h"
+#include <string.h>
 
-/* ── Helpers ───────────────────────────────────────────── */
+/* ── Helpers: find events by phase ────────────────────── */
+
+/*
+ * Find the next event of the given phase starting at start_idx.
+ * Returns the event index, or -1 if none found.
+ */
+static int find_next_event(const TurnRecord* r, AnimEventPhase phase, int start_idx) {
+    for (int i = start_idx; i < r->event_count; i++) {
+        if (r->events[i].phase == phase) return i;
+    }
+    return -1;
+}
+
+/*
+ * Find the first Theseus-phase event that determines the move type.
+ */
+static const AnimEvent* find_theseus_move_event(const TurnRecord* r) {
+    for (int i = 0; i < r->event_count; i++) {
+        const AnimEvent* e = &r->events[i];
+        if (e->phase != ANIM_EVENT_PHASE_THESEUS) continue;
+        switch (e->type) {
+        case ANIM_EVT_THESEUS_HOP:
+        case ANIM_EVT_THESEUS_ICE_SLIDE:
+        case ANIM_EVT_THESEUS_TELEPORT:
+        case ANIM_EVT_THESEUS_PUSH_MOVE:
+        case ANIM_EVT_BOX_SLIDE:
+        case ANIM_EVT_TURNSTILE_ROTATE:
+            return e;
+        default:
+            break;
+        }
+    }
+    return NULL;
+}
+
+static const AnimEvent* find_event_of_type(const TurnRecord* r, AnimEventType type) {
+    for (int i = 0; i < r->event_count; i++) {
+        if (r->events[i].type == type) return &r->events[i];
+    }
+    return NULL;
+}
+
+/* ── Phase starters ───────────────────────────────────── */
 
 static void start_theseus_phase(AnimQueue* aq) {
     const TurnRecord* r = &aq->record;
-
     aq->phase = ANIM_PHASE_THESEUS;
 
-    if (r->theseus_moved) {
-        tween_init(&aq->move_x,
-                   (float)r->theseus_from_col,
-                   (float)r->theseus_to_col,
+    /* Determine Theseus move type from events */
+    const AnimEvent* move_evt = find_theseus_move_event(r);
+
+    if (!r->theseus_moved && !r->theseus_pushed) {
+        /* Wait — no movement, skip through instantly */
+        aq->theseus_event_type = ANIM_EVT_NONE;
+        tween_init(&aq->move_x, (float)r->theseus_from_col,
+                   (float)r->theseus_to_col, 0.001f, ease_linear);
+        tween_init(&aq->move_y, (float)r->theseus_from_row,
+                   (float)r->theseus_to_row, 0.001f, ease_linear);
+        tween_init(&aq->hop, 0.0f, 0.0f, 0.001f, ease_linear);
+        return;
+    }
+
+    if (move_evt && move_evt->type == ANIM_EVT_THESEUS_ICE_SLIDE) {
+        /* Ice slide: hop to first ice tile, then slide through waypoints */
+        aq->theseus_event_type = ANIM_EVT_THESEUS_ICE_SLIDE;
+        aq->theseus_sub = THESEUS_SUB_HOP;
+
+        /* Copy waypoints */
+        aq->ice_wp_count = move_evt->ice_slide.waypoint_count;
+        memcpy(aq->ice_wp_cols, move_evt->ice_slide.waypoint_cols,
+               sizeof(int) * (size_t)aq->ice_wp_count);
+        memcpy(aq->ice_wp_rows, move_evt->ice_slide.waypoint_rows,
+               sizeof(int) * (size_t)aq->ice_wp_count);
+        aq->ice_wp_index = 0;
+
+        /* Phase 1: hop to first ice tile (waypoint 0) */
+        tween_init(&aq->move_x, (float)r->theseus_from_col,
+                   (float)aq->ice_wp_cols[0],
                    ANIM_THESEUS_DURATION, ease_out_cubic);
-        tween_init(&aq->move_y,
-                   (float)r->theseus_from_row,
-                   (float)r->theseus_to_row,
+        tween_init(&aq->move_y, (float)r->theseus_from_row,
+                   (float)aq->ice_wp_rows[0],
                    ANIM_THESEUS_DURATION, ease_out_cubic);
-        /* Hop arc: 0 → peak → 0 */
         tween_init(&aq->hop, 0.0f, 1.0f,
                    ANIM_THESEUS_DURATION, ease_parabolic_arc);
-    } else {
-        /* No movement — zero-duration "animation" */
-        tween_init(&aq->move_x,
-                   (float)r->theseus_from_col,
-                   (float)r->theseus_to_col,
-                   0.001f, ease_linear);
-        tween_init(&aq->move_y,
-                   (float)r->theseus_from_row,
-                   (float)r->theseus_to_row,
-                   0.001f, ease_linear);
+        return;
+    }
+
+    if (move_evt && move_evt->type == ANIM_EVT_THESEUS_TELEPORT) {
+        /* Teleport: fade out then fade in */
+        aq->theseus_event_type = ANIM_EVT_THESEUS_TELEPORT;
+        aq->theseus_sub = THESEUS_SUB_TELEPORT_OUT;
+        tween_init(&aq->effect, 0.0f, 1.0f, ANIM_TELEPORT_HALF, ease_in_quad);
+        /* Position stays at source during fade out */
+        tween_init(&aq->move_x, (float)move_evt->from_col,
+                   (float)move_evt->from_col, ANIM_TELEPORT_HALF, ease_linear);
+        tween_init(&aq->move_y, (float)move_evt->from_row,
+                   (float)move_evt->from_row, ANIM_TELEPORT_HALF, ease_linear);
         tween_init(&aq->hop, 0.0f, 0.0f, 0.001f, ease_linear);
+        return;
+    }
+
+    if (r->theseus_pushed) {
+        /* Push — check what kind */
+        const AnimEvent* box_evt = find_event_of_type(r, ANIM_EVT_BOX_SLIDE);
+        const AnimEvent* push_evt = find_event_of_type(r, ANIM_EVT_THESEUS_PUSH_MOVE);
+        const AnimEvent* ts_evt = find_event_of_type(r, ANIM_EVT_TURNSTILE_ROTATE);
+
+        if (ts_evt) {
+            /* Manual turnstile rotation */
+            aq->theseus_event_type = ANIM_EVT_TURNSTILE_ROTATE;
+            aq->theseus_sub = THESEUS_SUB_PUSH;
+            float dur = ANIM_TURNSTILE_DURATION;
+            tween_init(&aq->move_x, (float)ts_evt->from_col,
+                       (float)ts_evt->to_col, dur, ease_in_out_quad);
+            tween_init(&aq->move_y, (float)ts_evt->from_row,
+                       (float)ts_evt->to_row, dur, ease_in_out_quad);
+            tween_init(&aq->hop, 0.0f, 0.0f, 0.001f, ease_linear);
+            tween_init(&aq->rotation, 0.0f, 1.0f, dur, ease_in_out_quad);
+            return;
+        }
+
+        if (box_evt && push_evt) {
+            /* Groove box push */
+            aq->theseus_event_type = ANIM_EVT_BOX_SLIDE;
+            aq->theseus_sub = THESEUS_SUB_PUSH;
+            float dur = ANIM_PUSH_DURATION;
+            tween_init(&aq->move_x, (float)push_evt->from_col,
+                       (float)push_evt->to_col, dur, ease_out_cubic);
+            tween_init(&aq->move_y, (float)push_evt->from_row,
+                       (float)push_evt->to_row, dur, ease_out_cubic);
+            tween_init(&aq->hop, 0.0f, 0.0f, 0.001f, ease_linear);
+            tween_init(&aq->aux_x, (float)box_evt->box.box_from_col,
+                       (float)box_evt->box.box_to_col, dur, ease_out_cubic);
+            tween_init(&aq->aux_y, (float)box_evt->box.box_from_row,
+                       (float)box_evt->box.box_to_row, dur, ease_out_cubic);
+            return;
+        }
+
+        /* Fallback for unknown push */
+        aq->theseus_event_type = ANIM_EVT_NONE;
+        tween_init(&aq->move_x, (float)r->theseus_from_col,
+                   (float)r->theseus_to_col, 0.001f, ease_linear);
+        tween_init(&aq->move_y, (float)r->theseus_from_row,
+                   (float)r->theseus_to_row, 0.001f, ease_linear);
+        tween_init(&aq->hop, 0.0f, 0.0f, 0.001f, ease_linear);
+        return;
+    }
+
+    /* Normal hop */
+    aq->theseus_event_type = ANIM_EVT_THESEUS_HOP;
+    aq->theseus_sub = THESEUS_SUB_HOP;
+    tween_init(&aq->move_x, (float)r->theseus_from_col,
+               (float)r->theseus_to_col,
+               ANIM_THESEUS_DURATION, ease_out_cubic);
+    tween_init(&aq->move_y, (float)r->theseus_from_row,
+               (float)r->theseus_to_row,
+               ANIM_THESEUS_DURATION, ease_out_cubic);
+    tween_init(&aq->hop, 0.0f, 1.0f,
+               ANIM_THESEUS_DURATION, ease_parabolic_arc);
+}
+
+static bool start_theseus_effects_phase(AnimQueue* aq) {
+    int idx = find_next_event(&aq->record, ANIM_EVENT_PHASE_THESEUS_EFFECT, 0);
+    if (idx < 0) return false;
+
+    aq->phase = ANIM_PHASE_THESEUS_EFFECTS;
+    aq->effect_event_idx = idx;
+
+    const AnimEvent* e = &aq->record.events[idx];
+    float dur = ANIM_CRUMBLE_DURATION;
+    switch (e->type) {
+    case ANIM_EVT_FLOOR_CRUMBLE: dur = ANIM_CRUMBLE_DURATION; break;
+    case ANIM_EVT_GATE_LOCK:     dur = ANIM_GATE_LOCK_DURATION; break;
+    case ANIM_EVT_PLATE_TOGGLE:  dur = ANIM_PLATE_DURATION; break;
+    default: break;
+    }
+    tween_init(&aq->phase_tween, 0.0f, 1.0f, dur, ease_linear);
+    return true;
+}
+
+static float env_event_duration(const AnimEvent* e) {
+    switch (e->type) {
+    case ANIM_EVT_SPIKE_CHANGE:          return ANIM_SPIKE_DURATION;
+    case ANIM_EVT_AUTO_TURNSTILE_ROTATE: return ANIM_AUTO_TURNSTILE_DURATION;
+    case ANIM_EVT_PLATFORM_MOVE:         return ANIM_PLATFORM_DURATION;
+    case ANIM_EVT_CONVEYOR_PUSH:         return ANIM_CONVEYOR_DURATION;
+    default:                             return ANIM_ENVIRONMENT_DURATION;
     }
 }
 
-static void start_environment_phase(AnimQueue* aq) {
+static void setup_env_event_tweens(AnimQueue* aq, const AnimEvent* e, float dur) {
+    tween_init(&aq->phase_tween, 0.0f, 1.0f, dur, ease_linear);
+
+    if (e->type == ANIM_EVT_PLATFORM_MOVE) {
+        tween_init(&aq->aux_x, (float)e->platform.platform_from_col,
+                   (float)e->platform.platform_to_col, dur, ease_in_out_quad);
+        tween_init(&aq->aux_y, (float)e->platform.platform_from_row,
+                   (float)e->platform.platform_to_row, dur, ease_in_out_quad);
+    } else if (e->type == ANIM_EVT_CONVEYOR_PUSH) {
+        tween_init(&aq->aux_x, (float)e->from_col, (float)e->to_col,
+                   dur, ease_linear);
+        tween_init(&aq->aux_y, (float)e->from_row, (float)e->to_row,
+                   dur, ease_linear);
+    } else if (e->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE) {
+        tween_init(&aq->rotation, 0.0f, 1.0f, dur, ease_in_out_quad);
+    }
+}
+
+static bool start_environment_phase(AnimQueue* aq) {
+    int idx = find_next_event(&aq->record, ANIM_EVENT_PHASE_ENVIRONMENT, 0);
+
     aq->phase = ANIM_PHASE_ENVIRONMENT;
-    /* Brief pause so environment changes are visible */
-    tween_init(&aq->move_x, 0.0f, 1.0f,
-               ANIM_ENVIRONMENT_DURATION, ease_linear);
+
+    if (idx < 0) {
+        /* No environment events — minimum pause */
+        aq->effect_event_idx = -1;
+        tween_init(&aq->phase_tween, 0.0f, 1.0f,
+                   ANIM_ENV_MIN_PAUSE, ease_linear);
+        return true;
+    }
+
+    aq->effect_event_idx = idx;
+    const AnimEvent* e = &aq->record.events[idx];
+    float dur = env_event_duration(e);
+    setup_env_event_tweens(aq, e, dur);
+    return true;
 }
 
 static void start_minotaur_step1(AnimQueue* aq) {
     const TurnRecord* r = &aq->record;
-
     aq->phase = ANIM_PHASE_MINOTAUR_STEP1;
 
     if (r->minotaur_steps >= 1) {
-        tween_init(&aq->mino_x,
-                   (float)r->minotaur_start_col,
+        tween_init(&aq->mino_x, (float)r->minotaur_start_col,
                    (float)r->minotaur_after1_col,
                    ANIM_MINOTAUR_DURATION, ease_in_out_quad);
-        tween_init(&aq->mino_y,
-                   (float)r->minotaur_start_row,
+        tween_init(&aq->mino_y, (float)r->minotaur_start_row,
                    (float)r->minotaur_after1_row,
                    ANIM_MINOTAUR_DURATION, ease_in_out_quad);
     } else {
-        /* Minotaur didn't move — skip instantly */
-        tween_init(&aq->mino_x,
-                   (float)r->minotaur_start_col,
-                   (float)r->minotaur_start_col,
-                   0.001f, ease_linear);
-        tween_init(&aq->mino_y,
-                   (float)r->minotaur_start_row,
-                   (float)r->minotaur_start_row,
-                   0.001f, ease_linear);
+        tween_init(&aq->mino_x, (float)r->minotaur_start_col,
+                   (float)r->minotaur_start_col, 0.001f, ease_linear);
+        tween_init(&aq->mino_y, (float)r->minotaur_start_row,
+                   (float)r->minotaur_start_row, 0.001f, ease_linear);
     }
 }
 
 static void start_minotaur_step2(AnimQueue* aq) {
     const TurnRecord* r = &aq->record;
-
     aq->phase = ANIM_PHASE_MINOTAUR_STEP2;
 
     if (r->minotaur_steps >= 2) {
-        tween_init(&aq->mino_x,
-                   (float)r->minotaur_after1_col,
+        tween_init(&aq->mino_x, (float)r->minotaur_after1_col,
                    (float)r->minotaur_after2_col,
                    ANIM_MINOTAUR_DURATION, ease_in_out_quad);
-        tween_init(&aq->mino_y,
-                   (float)r->minotaur_after1_row,
+        tween_init(&aq->mino_y, (float)r->minotaur_after1_row,
                    (float)r->minotaur_after2_row,
                    ANIM_MINOTAUR_DURATION, ease_in_out_quad);
     } else {
-        /* Minotaur didn't take step 2 — skip instantly */
-        tween_init(&aq->mino_x,
-                   (float)r->minotaur_after1_col,
-                   (float)r->minotaur_after1_col,
-                   0.001f, ease_linear);
-        tween_init(&aq->mino_y,
-                   (float)r->minotaur_after1_row,
-                   (float)r->minotaur_after1_row,
-                   0.001f, ease_linear);
+        tween_init(&aq->mino_x, (float)r->minotaur_after1_col,
+                   (float)r->minotaur_after1_col, 0.001f, ease_linear);
+        tween_init(&aq->mino_y, (float)r->minotaur_after1_row,
+                   (float)r->minotaur_after1_row, 0.001f, ease_linear);
     }
+}
+
+/* Advance to next environment event, or return false if done */
+static bool advance_env_event(AnimQueue* aq) {
+    int next = find_next_event(&aq->record, ANIM_EVENT_PHASE_ENVIRONMENT,
+                               aq->effect_event_idx + 1);
+    if (next < 0) return false;
+
+    aq->effect_event_idx = next;
+    const AnimEvent* e = &aq->record.events[next];
+    float dur = env_event_duration(e);
+    setup_env_event_tweens(aq, e, dur);
+    return true;
+}
+
+/* Advance to next theseus-effect event, or return false if done */
+static bool advance_effect_event(AnimQueue* aq) {
+    int next = find_next_event(&aq->record, ANIM_EVENT_PHASE_THESEUS_EFFECT,
+                               aq->effect_event_idx + 1);
+    if (next < 0) return false;
+
+    aq->effect_event_idx = next;
+    const AnimEvent* e = &aq->record.events[next];
+    float dur = ANIM_CRUMBLE_DURATION;
+    switch (e->type) {
+    case ANIM_EVT_FLOOR_CRUMBLE: dur = ANIM_CRUMBLE_DURATION; break;
+    case ANIM_EVT_GATE_LOCK:     dur = ANIM_GATE_LOCK_DURATION; break;
+    case ANIM_EVT_PLATE_TOGGLE:  dur = ANIM_PLATE_DURATION; break;
+    default: break;
+    }
+    tween_init(&aq->phase_tween, 0.0f, 1.0f, dur, ease_linear);
+    return true;
+}
+
+/* ── Ice slide sub-phase transition ──────────────────── */
+
+static void start_ice_slide_sub(AnimQueue* aq) {
+    aq->theseus_sub = THESEUS_SUB_ICE_SLIDE;
+    aq->ice_wp_index = 1;
+
+    if (aq->ice_wp_count <= 1) return;
+
+    tween_init(&aq->move_x, (float)aq->ice_wp_cols[0],
+               (float)aq->ice_wp_cols[1],
+               ANIM_ICE_SLIDE_PER_TILE, ease_linear);
+    tween_init(&aq->move_y, (float)aq->ice_wp_rows[0],
+               (float)aq->ice_wp_rows[1],
+               ANIM_ICE_SLIDE_PER_TILE, ease_linear);
+    tween_init(&aq->hop, 0.0f, 0.0f, 0.001f, ease_linear);
 }
 
 /* ── Public API ────────────────────────────────────────── */
 
 void anim_queue_init(AnimQueue* aq) {
+    memset(aq, 0, sizeof(*aq));
     aq->phase   = ANIM_PHASE_IDLE;
     aq->playing = false;
 }
@@ -104,8 +327,8 @@ void anim_queue_init(AnimQueue* aq) {
 void anim_queue_start(AnimQueue* aq, const TurnRecord* record) {
     aq->record  = *record;
     aq->playing = true;
+    aq->effect_event_idx = -1;
 
-    /* Begin with Theseus phase */
     start_theseus_phase(aq);
 }
 
@@ -113,54 +336,146 @@ void anim_queue_update(AnimQueue* aq, float dt) {
     if (!aq->playing) return;
 
     switch (aq->phase) {
-    case ANIM_PHASE_THESEUS:
+    case ANIM_PHASE_THESEUS: {
+        /* Handle sub-phases for complex moves */
+        if (aq->theseus_event_type == ANIM_EVT_THESEUS_ICE_SLIDE) {
+            if (aq->theseus_sub == THESEUS_SUB_HOP) {
+                tween_update(&aq->move_x, dt);
+                tween_update(&aq->move_y, dt);
+                tween_update(&aq->hop, dt);
+                if (aq->move_x.finished && aq->move_y.finished) {
+                    start_ice_slide_sub(aq);
+                    if (aq->ice_wp_count <= 1) goto theseus_done;
+                }
+            } else {
+                tween_update(&aq->move_x, dt);
+                tween_update(&aq->move_y, dt);
+                if (aq->move_x.finished && aq->move_y.finished) {
+                    aq->ice_wp_index++;
+                    if (aq->ice_wp_index >= aq->ice_wp_count) {
+                        goto theseus_done;
+                    }
+                    int prev = aq->ice_wp_index - 1;
+                    int curr = aq->ice_wp_index;
+                    tween_init(&aq->move_x,
+                               (float)aq->ice_wp_cols[prev],
+                               (float)aq->ice_wp_cols[curr],
+                               ANIM_ICE_SLIDE_PER_TILE, ease_linear);
+                    tween_init(&aq->move_y,
+                               (float)aq->ice_wp_rows[prev],
+                               (float)aq->ice_wp_rows[curr],
+                               ANIM_ICE_SLIDE_PER_TILE, ease_linear);
+                }
+            }
+            break;
+        }
+
+        if (aq->theseus_event_type == ANIM_EVT_THESEUS_TELEPORT) {
+            tween_update(&aq->effect, dt);
+            tween_update(&aq->move_x, dt);
+            tween_update(&aq->move_y, dt);
+            if (aq->effect.finished) {
+                if (aq->theseus_sub == THESEUS_SUB_TELEPORT_OUT) {
+                    const AnimEvent* tp = find_event_of_type(&aq->record,
+                                                             ANIM_EVT_THESEUS_TELEPORT);
+                    aq->theseus_sub = THESEUS_SUB_TELEPORT_IN;
+                    tween_init(&aq->effect, 0.0f, 1.0f,
+                               ANIM_TELEPORT_HALF, ease_out_quad);
+                    if (tp) {
+                        tween_init(&aq->move_x, (float)tp->to_col,
+                                   (float)tp->to_col, ANIM_TELEPORT_HALF, ease_linear);
+                        tween_init(&aq->move_y, (float)tp->to_row,
+                                   (float)tp->to_row, ANIM_TELEPORT_HALF, ease_linear);
+                    }
+                } else {
+                    goto theseus_done;
+                }
+            }
+            break;
+        }
+
+        if (aq->theseus_event_type == ANIM_EVT_BOX_SLIDE ||
+            aq->theseus_event_type == ANIM_EVT_TURNSTILE_ROTATE) {
+            tween_update(&aq->move_x, dt);
+            tween_update(&aq->move_y, dt);
+            if (aq->theseus_event_type == ANIM_EVT_BOX_SLIDE) {
+                tween_update(&aq->aux_x, dt);
+                tween_update(&aq->aux_y, dt);
+            }
+            if (aq->theseus_event_type == ANIM_EVT_TURNSTILE_ROTATE) {
+                tween_update(&aq->rotation, dt);
+            }
+            if (aq->move_x.finished && aq->move_y.finished) {
+                goto theseus_done;
+            }
+            break;
+        }
+
+        /* Normal hop or NONE */
         tween_update(&aq->move_x, dt);
         tween_update(&aq->move_y, dt);
         tween_update(&aq->hop, dt);
         if (aq->move_x.finished && aq->move_y.finished) {
-            /* Early termination: if result was determined during Theseus
-             * phase (win, loss from walking into minotaur/hazard), or
-             * if it was a push (no env/mino needed for visual), skip
-             * to environment. */
+            goto theseus_done;
+        }
+        break;
+
+    theseus_done:
+        {
             TurnResult res = aq->record.result;
-            if (res == TURN_RESULT_WIN ||
-                res == TURN_RESULT_LOSS_COLLISION ||
+            if (aq->record.minotaur_steps == 0 &&
+                (res == TURN_RESULT_WIN || res == TURN_RESULT_LOSS_COLLISION)) {
+                aq->playing = false;
+                aq->phase = ANIM_PHASE_IDLE;
+                return;
+            }
+        }
+        if (!start_theseus_effects_phase(aq)) {
+            TurnResult res = aq->record.result;
+            if (aq->record.minotaur_steps == 0 &&
                 res == TURN_RESULT_LOSS_HAZARD) {
-                /* Check if loss/win happened during Theseus phase
-                 * (minotaur_steps == 0 means no minotaur phase ran) */
-                if (aq->record.minotaur_steps == 0 &&
-                    (res == TURN_RESULT_WIN ||
-                     res == TURN_RESULT_LOSS_COLLISION ||
-                     res == TURN_RESULT_LOSS_HAZARD)) {
-                    /* Still run environment visual pause for hazard deaths
-                     * that occur during env phase. For collision/win during
-                     * Theseus phase, skip env too. */
-                    if (res == TURN_RESULT_WIN ||
-                        res == TURN_RESULT_LOSS_COLLISION) {
-                        /* Death/win during Theseus phase — done */
-                        aq->playing = false;
-                        aq->phase   = ANIM_PHASE_IDLE;
-                        return;
-                    }
-                }
+                /* Hazard death during Theseus phase — still show env */
             }
             start_environment_phase(aq);
         }
         break;
+    }
+
+    case ANIM_PHASE_THESEUS_EFFECTS:
+        tween_update(&aq->phase_tween, dt);
+        if (aq->phase_tween.finished) {
+            if (!advance_effect_event(aq)) {
+                start_environment_phase(aq);
+            }
+        }
+        break;
 
     case ANIM_PHASE_ENVIRONMENT:
-        tween_update(&aq->move_x, dt);
-        if (aq->move_x.finished) {
-            TurnResult res = aq->record.result;
-            /* If env phase caused death, end here */
-            if (aq->record.minotaur_steps == 0 &&
-                (res == TURN_RESULT_LOSS_HAZARD ||
-                 res == TURN_RESULT_LOSS_COLLISION)) {
-                aq->playing = false;
-                aq->phase   = ANIM_PHASE_IDLE;
-                return;
+        tween_update(&aq->phase_tween, dt);
+        if (aq->effect_event_idx >= 0 &&
+            aq->effect_event_idx < aq->record.event_count) {
+            const AnimEvent* e = &aq->record.events[aq->effect_event_idx];
+            if (e->type == ANIM_EVT_PLATFORM_MOVE ||
+                e->type == ANIM_EVT_CONVEYOR_PUSH) {
+                tween_update(&aq->aux_x, dt);
+                tween_update(&aq->aux_y, dt);
+            } else if (e->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE) {
+                tween_update(&aq->rotation, dt);
             }
-            start_minotaur_step1(aq);
+        }
+        if (aq->phase_tween.finished) {
+            bool has_more = (aq->effect_event_idx >= 0) && advance_env_event(aq);
+            if (!has_more) {
+                TurnResult res = aq->record.result;
+                if (aq->record.minotaur_steps == 0 &&
+                    (res == TURN_RESULT_LOSS_HAZARD ||
+                     res == TURN_RESULT_LOSS_COLLISION)) {
+                    aq->playing = false;
+                    aq->phase = ANIM_PHASE_IDLE;
+                    return;
+                }
+                start_minotaur_step1(aq);
+            }
         }
         break;
 
@@ -168,11 +483,10 @@ void anim_queue_update(AnimQueue* aq, float dt) {
         tween_update(&aq->mino_x, dt);
         tween_update(&aq->mino_y, dt);
         if (aq->mino_x.finished && aq->mino_y.finished) {
-            /* If collision after step 1 and no step 2, end */
             if (aq->record.minotaur_steps <= 1 &&
                 aq->record.result == TURN_RESULT_LOSS_COLLISION) {
                 aq->playing = false;
-                aq->phase   = ANIM_PHASE_IDLE;
+                aq->phase = ANIM_PHASE_IDLE;
                 return;
             }
             start_minotaur_step2(aq);
@@ -184,7 +498,7 @@ void anim_queue_update(AnimQueue* aq, float dt) {
         tween_update(&aq->mino_y, dt);
         if (aq->mino_x.finished && aq->mino_y.finished) {
             aq->playing = false;
-            aq->phase   = ANIM_PHASE_IDLE;
+            aq->phase = ANIM_PHASE_IDLE;
         }
         break;
 
@@ -203,22 +517,10 @@ AnimPhase anim_queue_phase(const AnimQueue* aq) {
 
 bool anim_queue_in_buffer_window(const AnimQueue* aq) {
     if (!aq->playing) return false;
-
     const TurnRecord* r = &aq->record;
 
-    /*
-     * Buffer window opens during the Minotaur's LAST step:
-     * - 2 steps: window during step 2
-     * - 1 step:  window during step 1 (it is the last step)
-     * - 0 steps: no window
-     */
     if (r->minotaur_steps == 0) return false;
-
-    if (r->minotaur_steps == 2) {
-        return aq->phase == ANIM_PHASE_MINOTAUR_STEP2;
-    }
-
-    /* 1 step: step 1 is the last step */
+    if (r->minotaur_steps == 2) return aq->phase == ANIM_PHASE_MINOTAUR_STEP2;
     return aq->phase == ANIM_PHASE_MINOTAUR_STEP1;
 }
 
@@ -228,9 +530,48 @@ void anim_queue_theseus_pos(const AnimQueue* aq,
     if (aq->playing && aq->phase == ANIM_PHASE_THESEUS) {
         *out_col = tween_value(&aq->move_x);
         *out_row = tween_value(&aq->move_y);
-        *out_hop = tween_value(&aq->hop) * ANIM_HOP_HEIGHT;
+
+        if (aq->theseus_sub == THESEUS_SUB_ICE_SLIDE ||
+            aq->theseus_event_type == ANIM_EVT_THESEUS_TELEPORT ||
+            aq->theseus_sub == THESEUS_SUB_PUSH) {
+            *out_hop = 0.0f;
+        } else {
+            *out_hop = tween_value(&aq->hop) * ANIM_HOP_HEIGHT;
+        }
+    } else if (aq->playing && aq->phase == ANIM_PHASE_ENVIRONMENT) {
+        /* During environment, Theseus might be moved by env effects */
+        const AnimEvent* cur = anim_queue_current_event(aq);
+        if (cur) {
+            if (cur->type == ANIM_EVT_PLATFORM_MOVE && cur->platform.theseus_riding) {
+                *out_col = tween_value(&aq->aux_x);
+                *out_row = tween_value(&aq->aux_y);
+                *out_hop = 0.0f;
+                return;
+            }
+            if (cur->type == ANIM_EVT_CONVEYOR_PUSH &&
+                cur->entity == ENTITY_THESEUS) {
+                *out_col = tween_value(&aq->aux_x);
+                *out_row = tween_value(&aq->aux_y);
+                *out_hop = 0.0f;
+                return;
+            }
+            if (cur->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
+                cur->turnstile.actor_moved[0]) {
+                float t = tween_value(&aq->rotation);
+                *out_col = (float)cur->turnstile.actor_from_col[0] +
+                           ((float)cur->turnstile.actor_to_col[0] -
+                            (float)cur->turnstile.actor_from_col[0]) * t;
+                *out_row = (float)cur->turnstile.actor_from_row[0] +
+                           ((float)cur->turnstile.actor_to_row[0] -
+                            (float)cur->turnstile.actor_from_row[0]) * t;
+                *out_hop = 0.0f;
+                return;
+            }
+        }
+        *out_col = (float)aq->record.theseus_to_col;
+        *out_row = (float)aq->record.theseus_to_row;
+        *out_hop = 0.0f;
     } else {
-        /* After Theseus phase, use final position */
         *out_col = (float)aq->record.theseus_to_col;
         *out_row = (float)aq->record.theseus_to_row;
         *out_hop = 0.0f;
@@ -247,11 +588,41 @@ void anim_queue_minotaur_pos(const AnimQueue* aq,
 
     switch (aq->phase) {
     case ANIM_PHASE_THESEUS:
-    case ANIM_PHASE_ENVIRONMENT:
-        /* Minotaur hasn't moved yet */
+    case ANIM_PHASE_THESEUS_EFFECTS:
         *out_col = (float)aq->record.minotaur_start_col;
         *out_row = (float)aq->record.minotaur_start_row;
         break;
+
+    case ANIM_PHASE_ENVIRONMENT: {
+        const AnimEvent* cur = anim_queue_current_event(aq);
+        if (cur) {
+            if (cur->type == ANIM_EVT_PLATFORM_MOVE && cur->platform.minotaur_riding) {
+                *out_col = tween_value(&aq->aux_x);
+                *out_row = tween_value(&aq->aux_y);
+                return;
+            }
+            if (cur->type == ANIM_EVT_CONVEYOR_PUSH &&
+                cur->entity == ENTITY_MINOTAUR) {
+                *out_col = tween_value(&aq->aux_x);
+                *out_row = tween_value(&aq->aux_y);
+                return;
+            }
+            if (cur->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
+                cur->turnstile.actor_moved[1]) {
+                float t = tween_value(&aq->rotation);
+                *out_col = (float)cur->turnstile.actor_from_col[1] +
+                           ((float)cur->turnstile.actor_to_col[1] -
+                            (float)cur->turnstile.actor_from_col[1]) * t;
+                *out_row = (float)cur->turnstile.actor_from_row[1] +
+                           ((float)cur->turnstile.actor_to_row[1] -
+                            (float)cur->turnstile.actor_from_row[1]) * t;
+                return;
+            }
+        }
+        *out_col = (float)aq->record.minotaur_start_col;
+        *out_row = (float)aq->record.minotaur_start_row;
+        break;
+    }
 
     case ANIM_PHASE_MINOTAUR_STEP1:
     case ANIM_PHASE_MINOTAUR_STEP2:
@@ -264,4 +635,51 @@ void anim_queue_minotaur_pos(const AnimQueue* aq,
         *out_row = (float)aq->record.minotaur_after2_row;
         break;
     }
+}
+
+/* ── Query functions ─────────────────────────────────── */
+
+AnimEventType anim_queue_theseus_event_type(const AnimQueue* aq) {
+    return aq->theseus_event_type;
+}
+
+float anim_queue_teleport_progress(const AnimQueue* aq, int* out_phase) {
+    if (aq->theseus_event_type != ANIM_EVT_THESEUS_TELEPORT ||
+        aq->phase != ANIM_PHASE_THESEUS) {
+        if (out_phase) *out_phase = -1;
+        return -1.0f;
+    }
+    if (out_phase) {
+        *out_phase = (aq->theseus_sub == THESEUS_SUB_TELEPORT_OUT) ? 0 : 1;
+    }
+    return tween_value(&aq->effect);
+}
+
+void anim_queue_aux_pos(const AnimQueue* aq,
+                        float* out_col, float* out_row) {
+    *out_col = tween_value(&aq->aux_x);
+    *out_row = tween_value(&aq->aux_y);
+}
+
+float anim_queue_rotation_progress(const AnimQueue* aq) {
+    return tween_value(&aq->rotation);
+}
+
+float anim_queue_effect_progress(const AnimQueue* aq) {
+    return tween_value(&aq->phase_tween);
+}
+
+const AnimEvent* anim_queue_current_event(const AnimQueue* aq) {
+    if (aq->effect_event_idx < 0 ||
+        aq->effect_event_idx >= aq->record.event_count) {
+        return NULL;
+    }
+    return &aq->record.events[aq->effect_event_idx];
+}
+
+bool anim_queue_is_ice_sliding(const AnimQueue* aq) {
+    return (aq->playing &&
+            aq->phase == ANIM_PHASE_THESEUS &&
+            aq->theseus_event_type == ANIM_EVT_THESEUS_ICE_SLIDE &&
+            aq->theseus_sub == THESEUS_SUB_ICE_SLIDE);
 }

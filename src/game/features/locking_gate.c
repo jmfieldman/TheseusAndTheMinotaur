@@ -1,5 +1,6 @@
 #include "locking_gate.h"
 #include "../grid.h"
+#include "../turn.h"
 #include "../../engine/utils.h"
 #include <cJSON.h>
 #include <stdlib.h>
@@ -60,6 +61,18 @@ static void lg_on_leave(Feature* self, Grid* grid, EntityID who,
     if (left_through_gate) {
         d->locked = true;
         grid_set_wall(grid, self->col, self->row, d->gate_side, true);
+
+        /* Record gate lock animation event */
+        AnimEvent evt = {
+            .type     = ANIM_EVT_GATE_LOCK,
+            .phase    = ANIM_EVENT_PHASE_THESEUS_EFFECT,
+            .from_col = self->col,
+            .from_row = self->row,
+            .to_col   = self->col,
+            .to_row   = self->row,
+        };
+        evt.gate.gate_side = d->gate_side;
+        turn_record_push_event(grid->active_record, &evt);
     }
 }
 

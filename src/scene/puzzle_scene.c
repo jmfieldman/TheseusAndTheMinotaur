@@ -546,12 +546,45 @@ static void render_actors(const PuzzleScene* ps) {
             grid_to_screen_f(ps, tcol, trow, &sx, &sy);
             /* Apply hop offset (negative Y = upward in screen space) */
             sy -= thop * ts;
+
+            /* Teleport effect: scale Theseus based on progress */
+            int tp_phase;
+            float tp_prog = anim_queue_teleport_progress(&ps->anim, &tp_phase);
+            if (tp_prog >= 0.0f) {
+                float scale;
+                if (tp_phase == 0) {
+                    /* Fading out: scale 1→0 */
+                    scale = 1.0f - tp_prog;
+                } else {
+                    /* Fading in: scale 0→1 */
+                    scale = tp_prog;
+                }
+                float scaled_size = tsize * scale;
+                float offset = (ts - scaled_size) * 0.5f;
+                Color tc = COLOR_THESEUS;
+                tc.a = scale;
+                ui_draw_rect(sx + offset, sy + offset, scaled_size, scaled_size, tc);
+            } else {
+                float offset = (ts - tsize) * 0.5f;
+                ui_draw_rect(sx + offset, sy + offset, tsize, tsize, COLOR_THESEUS);
+            }
         } else {
             grid_to_screen(ps, ps->grid->theseus_col, ps->grid->theseus_row, &sx, &sy);
+            float offset = (ts - tsize) * 0.5f;
+            ui_draw_rect(sx + offset, sy + offset, tsize, tsize, COLOR_THESEUS);
         }
+    }
 
-        float offset = (ts - tsize) * 0.5f;
-        ui_draw_rect(sx + offset, sy + offset, tsize, tsize, COLOR_THESEUS);
+    /* Groove box during push animation */
+    if (animating && anim_queue_theseus_event_type(&ps->anim) == ANIM_EVT_BOX_SLIDE &&
+        anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS) {
+        float bcol, brow;
+        anim_queue_aux_pos(&ps->anim, &bcol, &brow);
+        float bsx, bsy;
+        grid_to_screen_f(ps, bcol, brow, &bsx, &bsy);
+        float bi = ts * 0.12f;
+        ui_draw_rect(bsx + bi, bsy + bi, ts - 2.0f * bi, ts - 2.0f * bi,
+                     COLOR_GROOVE_BOX);
     }
 }
 

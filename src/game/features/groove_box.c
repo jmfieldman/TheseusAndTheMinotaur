@@ -1,5 +1,6 @@
 #include "groove_box.h"
 #include "../grid.h"
+#include "../turn.h"
 #include "../../engine/utils.h"
 #include <cJSON.h>
 #include <stdlib.h>
@@ -82,6 +83,35 @@ static bool gb_on_push(Feature* self, Grid* grid,
                 return false;   /* another box in the way */
             }
         }
+    }
+
+    /* Record animation events before the move */
+    {
+        AnimEvent box_evt = {
+            .type     = ANIM_EVT_BOX_SLIDE,
+            .phase    = ANIM_EVENT_PHASE_THESEUS,
+            .from_col = d->box_col,
+            .from_row = d->box_row,
+            .to_col   = box_dest_col,
+            .to_row   = box_dest_row,
+            .entity   = ENTITY_THESEUS,
+        };
+        box_evt.box.box_from_col = d->box_col;
+        box_evt.box.box_from_row = d->box_row;
+        box_evt.box.box_to_col   = box_dest_col;
+        box_evt.box.box_to_row   = box_dest_row;
+        turn_record_push_event(grid->active_record, &box_evt);
+
+        AnimEvent push_evt = {
+            .type     = ANIM_EVT_THESEUS_PUSH_MOVE,
+            .phase    = ANIM_EVENT_PHASE_THESEUS,
+            .from_col = from_col,
+            .from_row = from_row,
+            .to_col   = push_target_col,
+            .to_row   = push_target_row,
+            .entity   = ENTITY_THESEUS,
+        };
+        turn_record_push_event(grid->active_record, &push_evt);
     }
 
     /* Push succeeds — move the box */

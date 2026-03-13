@@ -428,6 +428,41 @@ feel:
 - State-change animations should be clear and predictable (see
   [03 -- Level Design](03-level-design.md) §3.1).
 
+#### 7.3.1 Per-Feature Animation Details
+
+Each environmental feature records typed animation events during turn resolution
+(see [08 -- Engine Architecture](08-engine-architecture.md) §3.4.2). The
+animation queue plays these back with feature-specific visuals:
+
+**Theseus move variants:**
+
+| Feature | Animation | Timing |
+|---------|-----------|--------|
+| Normal move | Parabolic hop from A to B | 0.15s |
+| Ice slide | Hop to first ice tile, then constant-velocity linear slide through remaining tiles (no hop during slide) | 0.15s + 0.06s/tile |
+| Teleporter | Scale down / fade out at source, then scale up / fade in at destination | 0.10s + 0.10s |
+| Groove box push | Box slides one tile (linear) while Theseus steps into vacated tile — both animate concurrently | 0.15s |
+| Manual turnstile | Walls rotate 90° smoothly around junction pivot; Theseus slides to destination tile concurrently | 0.20s |
+
+**On-leave effects** (play after Theseus move completes):
+
+| Feature | Animation | Timing |
+|---------|-----------|--------|
+| Crumbling floor | Tile darkens and visually collapses into a pit | 0.15s |
+| Locking gate | Wall/bars appear with a slam effect (scale from 0→1) | 0.12s |
+| Pressure plate | Target walls appear/disappear with brief flash | 0.10s |
+
+**Environment phase** (play sequentially, replacing any static pause):
+
+| Feature | Animation | Timing |
+|---------|-----------|--------|
+| Spike trap | Spikes extend upward (armed→active) or retract (active→inactive) with color interpolation | 0.12s |
+| Auto-turnstile | Walls rotate 90° smoothly; actors on junction tiles slide to new positions concurrently | 0.25s |
+| Moving platform | Platform tile slides from old to new path position; riding actors move together | 0.20s |
+| Conveyor | Actor slides one tile in conveyor direction (linear, no hop) | 0.15s |
+
+If no environment events exist, a minimal 0.10s pause maintains turn rhythm.
+
 ### 7.4 Transitions
 
 - **Level enter (from overworld):** Camera **zooms in** from the overworld

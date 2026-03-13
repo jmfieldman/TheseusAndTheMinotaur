@@ -3,6 +3,7 @@
 
 #include "grid.h"
 #include "feature.h"
+#include "anim_event.h"
 
 /*
  * Turn resolution — the fixed game loop that never changes.
@@ -36,8 +37,12 @@ typedef enum {
  *
  * Game logic resolves instantly; the renderer plays back the visual
  * sequence using the positions recorded here.
+ *
+ * The events[] array captures per-feature animation events (ice slide
+ * waypoints, teleport, push effects, environment effects, etc.) for
+ * rich visual playback beyond simple position interpolation.
  */
-typedef struct {
+typedef struct TurnRecord {
     /* Theseus phase */
     int  theseus_from_col, theseus_from_row;
     int  theseus_to_col,   theseus_to_row;
@@ -52,7 +57,23 @@ typedef struct {
 
     /* Result */
     TurnResult result;
+
+    /* Animation events — per-feature visual changes */
+    AnimEvent events[ANIM_EVENT_MAX];
+    int       event_count;
 } TurnRecord;
+
+/*
+ * Push an animation event onto the record's event list.
+ * Safe to call with NULL record (no-op). Silently drops events
+ * if the array is full (ANIM_EVENT_MAX).
+ */
+static inline void turn_record_push_event(TurnRecord* record,
+                                           const AnimEvent* evt) {
+    if (!record) return;
+    if (record->event_count >= ANIM_EVENT_MAX) return;
+    record->events[record->event_count++] = *evt;
+}
 
 /*
  * Execute a full turn given the player's chosen direction.

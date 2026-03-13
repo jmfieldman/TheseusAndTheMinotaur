@@ -1,5 +1,6 @@
 #include "conveyor.h"
 #include "../grid.h"
+#include "../turn.h"
 #include "../../engine/utils.h"
 #include <cJSON.h>
 #include <stdlib.h>
@@ -29,8 +30,21 @@ static void conv_on_environment_phase(Feature* self, Grid* grid) {
     if (grid->theseus_col == self->col && grid->theseus_row == self->row &&
         s_theseus_conveyed_turn != grid->turn_count) {
         if (grid_can_move(grid, ENTITY_THESEUS, self->col, self->row, dir)) {
+            int from_c = grid->theseus_col, from_r = grid->theseus_row;
             grid_move_entity(grid, ENTITY_THESEUS, dir);
             s_theseus_conveyed_turn = grid->turn_count;
+
+            AnimEvent evt = {
+                .type     = ANIM_EVT_CONVEYOR_PUSH,
+                .phase    = ANIM_EVENT_PHASE_ENVIRONMENT,
+                .from_col = from_c,
+                .from_row = from_r,
+                .to_col   = grid->theseus_col,
+                .to_row   = grid->theseus_row,
+                .entity   = ENTITY_THESEUS,
+            };
+            evt.conveyor.direction = dir;
+            turn_record_push_event(grid->active_record, &evt);
         }
     }
 
@@ -38,8 +52,21 @@ static void conv_on_environment_phase(Feature* self, Grid* grid) {
     if (grid->minotaur_col == self->col && grid->minotaur_row == self->row &&
         s_minotaur_conveyed_turn != grid->turn_count) {
         if (grid_can_move(grid, ENTITY_MINOTAUR, self->col, self->row, dir)) {
+            int from_c = grid->minotaur_col, from_r = grid->minotaur_row;
             grid_move_entity(grid, ENTITY_MINOTAUR, dir);
             s_minotaur_conveyed_turn = grid->turn_count;
+
+            AnimEvent evt = {
+                .type     = ANIM_EVT_CONVEYOR_PUSH,
+                .phase    = ANIM_EVENT_PHASE_ENVIRONMENT,
+                .from_col = from_c,
+                .from_row = from_r,
+                .to_col   = grid->minotaur_col,
+                .to_row   = grid->minotaur_row,
+                .entity   = ENTITY_MINOTAUR,
+            };
+            evt.conveyor.direction = dir;
+            turn_record_push_event(grid->active_record, &evt);
         }
     }
 }

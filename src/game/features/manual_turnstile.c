@@ -1,5 +1,6 @@
 #include "manual_turnstile.h"
 #include "../grid.h"
+#include "../turn.h"
 #include "../../engine/utils.h"
 #include <cJSON.h>
 #include <stdlib.h>
@@ -168,6 +169,29 @@ static bool mt_on_push(Feature* self, Grid* grid,
     int dest_idx;
     bool clockwise;
     if (!resolve_push(tile_idx, dir, &dest_idx, &clockwise)) return false;
+
+    /* Record turnstile rotation event */
+    {
+        AnimEvent evt = {
+            .type     = ANIM_EVT_TURNSTILE_ROTATE,
+            .phase    = ANIM_EVENT_PHASE_THESEUS,
+            .from_col = from_col,
+            .from_row = from_row,
+            .to_col   = tiles[dest_idx][0],
+            .to_row   = tiles[dest_idx][1],
+            .entity   = ENTITY_THESEUS,
+        };
+        evt.turnstile.junction_col = d->jc;
+        evt.turnstile.junction_row = d->jr;
+        evt.turnstile.clockwise    = clockwise;
+        evt.turnstile.actor_from_col[0] = from_col;
+        evt.turnstile.actor_from_row[0] = from_row;
+        evt.turnstile.actor_to_col[0]   = tiles[dest_idx][0];
+        evt.turnstile.actor_to_row[0]   = tiles[dest_idx][1];
+        evt.turnstile.actor_moved[0]    = true;
+        evt.turnstile.actor_moved[1]    = false;
+        turn_record_push_event(grid->active_record, &evt);
+    }
 
     /* Rotate all junction walls */
     rotate_junction_walls(grid, d->jc, d->jr, clockwise);
