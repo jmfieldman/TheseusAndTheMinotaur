@@ -4,12 +4,14 @@
 #include <stdbool.h>
 
 typedef struct {
-    float music_volume;    /* 0.0 - 1.0 */
-    float sfx_volume;      /* 0.0 - 1.0 */
-    float anim_speed;      /* 1.0 - 4.0: fast-forward multiplier when input is buffered */
+    float music_volume;        /* 0.0 - 1.0 */
+    float sfx_volume;          /* 0.0 - 1.0 */
+    float anim_speed;          /* 1.0 - 4.0: fast-forward multiplier when input is buffered */
     bool  fullscreen;
     int   resolution_w;
     int   resolution_h;
+    bool  camera_perspective;  /* false=orthographic, true=perspective */
+    float camera_fov;          /* 5.0 - 90.0: vertical FOV in degrees (perspective mode) */
 } Settings;
 
 /* Global settings instance. */

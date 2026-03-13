@@ -35,6 +35,9 @@ typedef enum {
     ACTION_OW_ENTER,
     ACTION_OW_BACK,
 
+    /* Debug / development */
+    ACTION_DEBUG_TOGGLE_CAMERA,
+
     ACTION_COUNT
 } SemanticAction;
 

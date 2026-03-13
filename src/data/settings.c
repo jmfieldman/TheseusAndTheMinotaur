@@ -14,6 +14,8 @@ void settings_default(void) {
     g_settings.fullscreen    = false;
     g_settings.resolution_w  = 1280;
     g_settings.resolution_h  = 720;
+    g_settings.camera_perspective = false;
+    g_settings.camera_fov    = 20.0f;
 }
 
 void settings_load(const char* path) {
@@ -62,6 +64,10 @@ void settings_load(const char* path) {
                     g_settings.resolution_w = atoi(val);
                 else if (strcmp(current_key, "resolution_h") == 0)
                     g_settings.resolution_h = atoi(val);
+                else if (strcmp(current_key, "camera_perspective") == 0)
+                    g_settings.camera_perspective = (strcmp(val, "true") == 0);
+                else if (strcmp(current_key, "camera_fov") == 0)
+                    g_settings.camera_fov = CLAMP((float)atof(val), 5.0f, 90.0f);
 
                 current_key[0] = '\0';
             }
@@ -93,6 +99,8 @@ void settings_save(const char* path) {
     fprintf(f, "fullscreen: %s\n",     g_settings.fullscreen ? "true" : "false");
     fprintf(f, "resolution_w: %d\n",   g_settings.resolution_w);
     fprintf(f, "resolution_h: %d\n",   g_settings.resolution_h);
+    fprintf(f, "camera_perspective: %s\n", g_settings.camera_perspective ? "true" : "false");
+    fprintf(f, "camera_fov: %.1f\n",   g_settings.camera_fov);
 
     fclose(f);
     LOG_INFO("Settings saved to %s", path);

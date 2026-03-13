@@ -22,9 +22,9 @@ void renderer_clear(Color color);
 /* Get the current viewport dimensions in pixels. */
 void renderer_get_viewport(int* w, int* h);
 
-/* Get the UI shader program and ortho projection matrix. */
+/* Get the UI shader program and projection matrix (ortho or perspective). */
 GLuint renderer_get_ui_shader(void);
-const float* renderer_get_ortho_matrix(void);
+const float* renderer_get_projection_matrix(void);
 
 /* Get the textured UI shader program (for text rendering). */
 GLuint renderer_get_ui_tex_shader(void);

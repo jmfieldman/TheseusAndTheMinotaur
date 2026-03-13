@@ -17,6 +17,7 @@ typedef enum {
     SETTING_MUSIC_VOLUME,
     SETTING_SFX_VOLUME,
     SETTING_ANIM_SPEED,
+    SETTING_CAMERA_FOV,
     SETTING_FULLSCREEN,
     SETTING_COUNT
 } SettingItem;
@@ -34,6 +35,7 @@ static void rebuild_visible(SettingsScene* ss) {
     ss->visible_items[ss->visible_count++] = SETTING_MUSIC_VOLUME;
     ss->visible_items[ss->visible_count++] = SETTING_SFX_VOLUME;
     ss->visible_items[ss->visible_count++] = SETTING_ANIM_SPEED;
+    ss->visible_items[ss->visible_count++] = SETTING_CAMERA_FOV;
     if (!platform_is_mobile()) {
         ss->visible_items[ss->visible_count++] = SETTING_FULLSCREEN;
     }
@@ -87,6 +89,11 @@ static void settings_handle_action(State* self, SemanticAction action) {
             g_settings.anim_speed = CLAMP(g_settings.anim_speed + delta, 1.0f, 4.0f);
             break;
         }
+        case SETTING_CAMERA_FOV: {
+            float delta = (action == ACTION_UI_RIGHT) ? 5.0f : -5.0f;
+            g_settings.camera_fov = CLAMP(g_settings.camera_fov + delta, 5.0f, 90.0f);
+            break;
+        }
         case SETTING_FULLSCREEN:
             g_settings.fullscreen = !g_settings.fullscreen;
             /* TODO: actually toggle fullscreen via SDL */
@@ -127,7 +134,7 @@ static void settings_render(State* self) {
 
     /* Panel */
     float panel_w = fminf(500.0f, vw * 0.8f);
-    float panel_h = 355.0f;
+    float panel_h = 410.0f;
     float panel_x = cx - panel_w * 0.5f;
     float panel_y = vh * 0.5f - panel_h * 0.5f;
 
@@ -181,6 +188,10 @@ static void settings_render(State* self) {
             label = strings_get("settings_anim_speed");
             snprintf(value_str, sizeof(value_str), "%.1fx", g_settings.anim_speed);
             break;
+        case SETTING_CAMERA_FOV:
+            label = strings_get("settings_camera_fov");
+            snprintf(value_str, sizeof(value_str), "%.0f\xC2\xB0", g_settings.camera_fov);
+            break;
         case SETTING_FULLSCREEN:
             label = strings_get("settings_fullscreen");
             snprintf(value_str, sizeof(value_str), "%s",
@@ -199,7 +210,7 @@ static void settings_render(State* self) {
 
         /* Slider bar for adjustable items */
         if (item == SETTING_MUSIC_VOLUME || item == SETTING_SFX_VOLUME ||
-            item == SETTING_ANIM_SPEED) {
+            item == SETTING_ANIM_SPEED || item == SETTING_CAMERA_FOV) {
             float bar_x = panel_x + panel_w * 0.45f;
             float bar_w = panel_w * 0.35f;
             float bar_y = y + 10.0f;
@@ -207,6 +218,8 @@ static void settings_render(State* self) {
             float fill;
             if (item == SETTING_ANIM_SPEED)
                 fill = (g_settings.anim_speed - 1.0f) / 3.0f;
+            else if (item == SETTING_CAMERA_FOV)
+                fill = (g_settings.camera_fov - 5.0f) / 85.0f;
             else if (item == SETTING_MUSIC_VOLUME)
                 fill = g_settings.music_volume;
             else

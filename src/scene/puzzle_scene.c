@@ -8,6 +8,7 @@
 #include "render/text_render.h"
 #include "input/input_manager.h"
 #include "data/strings.h"
+#include "data/settings.h"
 #include "game/game.h"
 
 #include <stdlib.h>
@@ -751,6 +752,15 @@ static void puzzle_handle_action(State* self, SemanticAction action) {
     /* Pause/back always works immediately, even during animation */
     if (action == ACTION_PAUSE) {
         engine_pop_state();
+        return;
+    }
+
+    /* Debug: toggle camera projection mode */
+    if (action == ACTION_DEBUG_TOGGLE_CAMERA) {
+        g_settings.camera_perspective = !g_settings.camera_perspective;
+        LOG_INFO("Camera mode: %s (FOV %.0f°)",
+                 g_settings.camera_perspective ? "perspective" : "orthographic",
+                 g_settings.camera_fov);
         return;
     }
 

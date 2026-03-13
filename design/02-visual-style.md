@@ -361,7 +361,30 @@ not require touching any other constants -- everything adapts automatically.
 - Large grids (16x16): May need to zoom out. Must ensure tiles remain large
   enough to read on all target screen sizes (especially mobile).
 
-### 6.3 iOS Layout Constraint
+### 6.3 Projection Mode — Open Question
+
+> **Status:** Under evaluation. Toggle at runtime with 'C' key; FOV adjustable in Settings.
+
+The default projection is **orthographic**, which preserves grid readability and
+ensures tiles appear the same size everywhere on screen. However, the zoom
+transition between the overworld map and the puzzle diorama may look unnatural
+with orthographic projection — objects scale uniformly with no depth cues.
+
+A **perspective projection** with a very narrow FOV (e.g. 20°) looks nearly
+identical to orthographic during normal gameplay, but produces a more natural
+zoom-in/zoom-out feel when the camera distance changes. The trade-off is subtle
+perspective distortion at screen edges that increases with wider FOV.
+
+**Runtime toggle:** Press 'C' to switch between orthographic and perspective
+projection. The vertical FOV is configurable in Settings (5°–90°, default 20°).
+Both settings persist to `settings.yml` (`camera_perspective`, `camera_fov`).
+
+**Decision criteria:**
+- If zoom transitions look acceptable with ortho, keep ortho for simplicity
+- If perspective zoom is clearly better, switch default to perspective with a
+  narrow FOV (~15–25°) that minimizes edge distortion
+
+### 6.4 iOS Layout Constraint
 
 On iOS/iPadOS (portrait only), the game engine renders into a **square
 viewport** at the top of the screen (see [06 -- Input](06-input.md) §5).

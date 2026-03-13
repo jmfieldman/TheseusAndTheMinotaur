@@ -1,8 +1,10 @@
 #include "render/renderer.h"
 #include "render/shader.h"
 #include "engine/engine.h"
+#include "data/settings.h"
 
 #include <string.h>
+#include <math.h>
 
 /* ---------- Shader sources ---------- */
 
@@ -54,7 +56,7 @@ static struct {
     GLuint ui_tex_shader;
     GLuint quad_vao;
     GLuint quad_vbo;
-    float  ortho[16];
+    float  projection[16];
 } s_renderer;
 
 /* Build an orthographic projection matrix (column-major). */
@@ -69,6 +71,78 @@ static void build_ortho(float* out, float left, float right,
     out[13] = -(top + bottom) / (top - bottom);
     out[14] = -(far + near) / (far - near);
     out[15] = 1.0f;
+}
+
+/*
+ * Build a combined perspective × view matrix that matches the ortho view at z=0.
+ *
+ * Camera sits at (w/2, h/2, D) looking at (w/2, h/2, 0), where
+ * D = (h/2) / tan(fov/2). At z=0, this covers exactly the same region
+ * as the orthographic projection, so all existing 2D content renders
+ * pixel-identically. The perspective effect only becomes visible when
+ * geometry has varying Z depth (e.g. zoom transitions).
+ *
+ * The view matrix flips Y to match screen-space convention (Y-down,
+ * origin at top-left), matching the ortho matrix behavior.
+ */
+static void build_perspective_view(float* out, float w, float h, float fov_deg) {
+    float fov_rad = fov_deg * ((float)M_PI / 180.0f);
+    float half_fov = fov_rad * 0.5f;
+    float cam_dist = (h * 0.5f) / tanf(half_fov);
+
+    float aspect = w / h;
+    float near_z = 1.0f;
+    float far_z  = cam_dist * 2.0f;
+
+    /* ── Perspective matrix P (column-major) ─────────────── */
+    float f = 1.0f / tanf(half_fov);
+    float P[16];
+    memset(P, 0, sizeof(P));
+    P[0]  = f / aspect;
+    P[5]  = f;
+    P[10] = -(far_z + near_z) / (far_z - near_z);
+    P[11] = -1.0f;
+    P[14] = -(2.0f * far_z * near_z) / (far_z - near_z);
+
+    /* ── View matrix V (column-major) ────────────────────── */
+    /*
+     * Camera at eye = (w/2, h/2, cam_dist), looking at center = (w/2, h/2, 0).
+     * Forward = (0, 0, -1), Right = (1, 0, 0), Up = (0, 1, 0).
+     *
+     * But our screen convention is Y-down (origin top-left), so we flip
+     * the Y axis: Up = (0, -1, 0). This makes the view matrix:
+     *
+     *   R:  (1,  0, 0)    T: (-w/2)
+     *   U:  (0, -1, 0)    T: ( h/2)
+     *   F:  (0,  0, 1)    T: (-cam_dist)
+     *
+     * Column-major layout:
+     *   col0 = (Rx, Ux, -Fx, 0) = (1, 0, 0, 0)
+     *   col1 = (Ry, Uy, -Fy, 0) = (0, -1, 0, 0)
+     *   col2 = (Rz, Uz, -Fz, 0) = (0, 0, -1, 0)
+     *   col3 = (-dot(R,eye), -dot(U,eye), dot(F,eye), 1)
+     *        = (-w/2, h/2, -cam_dist, 1)
+     */
+    float V[16];
+    memset(V, 0, sizeof(V));
+    V[0]  = 1.0f;                    /* col0.x */
+    V[5]  = -1.0f;                   /* col1.y (Y flip) */
+    V[10] = -1.0f;                   /* col2.z */
+    V[12] = -(w * 0.5f);            /* col3.x: -dot(R, eye) */
+    V[13] = h * 0.5f;               /* col3.y: -dot(U, eye), U=(0,-1,0) so -(-h/2) = h/2 */
+    V[14] = -cam_dist;              /* col3.z: dot(F, eye), but F points at -Z, so -(cam_dist) */
+    V[15] = 1.0f;
+
+    /* ── Multiply P × V → out (column-major) ────────────── */
+    for (int c = 0; c < 4; c++) {
+        for (int r = 0; r < 4; r++) {
+            float sum = 0.0f;
+            for (int k = 0; k < 4; k++) {
+                sum += P[k * 4 + r] * V[c * 4 + k];
+            }
+            out[c * 4 + r] = sum;
+        }
+    }
 }
 
 void renderer_init(void) {
@@ -120,11 +194,19 @@ void renderer_begin_frame(void) {
 
     glViewport(0, 0, w, h);
 
-    /* Build ortho: screen-space pixels, origin at top-left */
-    build_ortho(s_renderer.ortho, 0.0f, (float)w, (float)h, 0.0f, -1.0f, 1.0f);
+    /* Build projection matrix based on camera mode */
+    if (g_settings.camera_perspective && h > 0) {
+        build_perspective_view(s_renderer.projection, (float)w, (float)h,
+                               g_settings.camera_fov);
+        glEnable(GL_DEPTH_TEST);
+    } else {
+        /* Ortho: screen-space pixels, origin at top-left */
+        build_ortho(s_renderer.projection, 0.0f, (float)w, (float)h, 0.0f, -1.0f, 1.0f);
+        glDisable(GL_DEPTH_TEST);
+    }
 
     glClearColor(0.08f, 0.08f, 0.10f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
 void renderer_end_frame(void) {
@@ -145,8 +227,8 @@ GLuint renderer_get_ui_shader(void) {
     return s_renderer.ui_shader;
 }
 
-const float* renderer_get_ortho_matrix(void) {
-    return s_renderer.ortho;
+const float* renderer_get_projection_matrix(void) {
+    return s_renderer.projection;
 }
 
 GLuint renderer_get_ui_tex_shader(void) {

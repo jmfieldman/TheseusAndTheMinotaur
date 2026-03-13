@@ -8,7 +8,7 @@
 void ui_draw_rect(float x, float y, float w, float h, Color color) {
     GLuint shader = renderer_get_ui_shader();
     shader_use(shader);
-    shader_set_mat4(shader, "u_projection", renderer_get_ortho_matrix());
+    shader_set_mat4(shader, "u_projection", renderer_get_projection_matrix());
     shader_set_vec4(shader, "u_rect", x, y, w, h);
     shader_set_vec4(shader, "u_color", color.r, color.g, color.b, color.a);
 
@@ -41,7 +41,7 @@ void ui_draw_rect_rounded(float x, float y, float w, float h,
     /* Corner arcs using a fan of triangles */
     GLuint shader = renderer_get_ui_shader();
     shader_use(shader);
-    shader_set_mat4(shader, "u_projection", renderer_get_ortho_matrix());
+    shader_set_mat4(shader, "u_projection", renderer_get_projection_matrix());
     shader_set_vec4(shader, "u_color", color.r, color.g, color.b, color.a);
 
     /* We'll draw each corner as a triangle fan */

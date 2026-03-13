@@ -208,7 +208,7 @@ void text_render_draw(const char* text, float x, float y,
     /* Draw textured quad */
     GLuint shader = renderer_get_ui_tex_shader();
     shader_use(shader);
-    shader_set_mat4(shader, "u_projection", renderer_get_ortho_matrix());
+    shader_set_mat4(shader, "u_projection", renderer_get_projection_matrix());
     shader_set_vec4(shader, "u_rect", draw_x, draw_y,
                     (float)entry->width, (float)entry->height);
     shader_set_vec4(shader, "u_color", color.r, color.g, color.b, color.a);
