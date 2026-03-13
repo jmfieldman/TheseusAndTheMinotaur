@@ -246,6 +246,7 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
                 /* Start reverse animation, defer grid restore */
                 ps->show_result = false;
                 ps->anim_result_pending = false;
+                input_buffer_init(&ps->input_buf);
                 ps->undo_anim_pending = true;
                 anim_queue_start_reverse(&ps->anim, rec);
                 set_status(ps, "Undo", COLOR_HUD, 0.8f);
@@ -286,6 +287,7 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
         case ACTION_UNDO: {
             const TurnRecord* rec = undo_peek_turn_record(&ps->undo);
             if (rec) {
+                input_buffer_init(&ps->input_buf);
                 ps->undo_anim_pending = true;
                 anim_queue_start_reverse(&ps->anim, rec);
                 set_status(ps, "Undo", COLOR_HUD, 0.8f);
@@ -799,6 +801,14 @@ static void puzzle_update(State* self, float dt) {
             input_buffer_open_window(&ps->input_buf);
         }
 
+        /* Fast-forward animations when input is buffered or a key is held.
+         * Held keys don't generate repeat KEY_DOWN events (filtered by input_manager),
+         * so we also check SDL_GetKeyboardState to detect held direction/wait keys.
+         * This way, holding a direction key speeds up the current animation. */
+        bool has_pending_input = (ps->input_buf.buffered != ACTION_NONE) ||
+                                 (input_buffer_check_held_keys() != ACTION_NONE);
+        anim_queue_set_fast_forward(&ps->anim, has_pending_input);
+
         anim_queue_update(&ps->anim, dt);
 
         /* Check if animation just completed */
@@ -809,6 +819,15 @@ static void puzzle_update(State* self, float dt) {
             if (ps->undo_anim_pending) {
                 ps->undo_anim_pending = false;
                 undo_pop(&ps->undo, ps->grid);
+
+                /* Check for buffered action (e.g. rapid undo presses) */
+                SemanticAction buffered = input_buffer_consume(&ps->input_buf);
+                if (buffered == ACTION_NONE) {
+                    buffered = input_buffer_check_held_keys();
+                }
+                if (buffered != ACTION_NONE) {
+                    resolve_action(ps, buffered);
+                }
                 return;
             }
 

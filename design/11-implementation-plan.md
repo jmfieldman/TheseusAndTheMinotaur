@@ -66,7 +66,7 @@ self-contained `.c` file + registration in the feature registry.
 
 ## Step 3 — Animation System
 
-Tween-based animation framework with event-driven per-feature playback and input buffering. Game logic resolves instantly and records typed animation events (`AnimEvent`) into the `TurnRecord`. The animation queue replays these events with per-feature visual effects. Animations always play out fully (never fast-forwarded or skipped). New input is accepted only during a specific buffer window. See [01 -- Core Mechanics](01-core-mechanics.md) §10 for the full input buffering specification.
+Tween-based animation framework with event-driven per-feature playback and input buffering. Game logic resolves instantly and records typed animation events (`AnimEvent`) into the `TurnRecord`. The animation queue replays these events with per-feature visual effects. Animations always play out fully; when the player buffers input, remaining animations play at a user-configurable speed (default 2×, range 1×–4×, set in Settings). The input buffer window is open during any animation phase (forward or reverse). See [01 -- Core Mechanics](01-core-mechanics.md) §10 for the full input buffering specification.
 
 **Files:**
 - `src/engine/tween.h / .c` — Tween primitives: lerp position, lerp rotation, lerp color, easing functions (linear, ease-in-out, parabolic arc for hop, out-back, quad, cubic). Tween struct with start/end values, duration, elapsed, easing function pointer.
@@ -80,7 +80,7 @@ Tween-based animation framework with event-driven per-feature playback and input
   - **On-leave effects:** Sequential playback of crumble (0.15s), gate lock (0.12s), plate toggle (0.10s)
   - **Environment events:** Sequential playback of spike change (0.12s), auto-turnstile (0.25s), platform move (0.20s), conveyor push (0.15s)
   - Provides query functions for renderers: teleport progress, aux position (box/platform), rotation progress, current event, ice-slide state.
-- `src/engine/input_buffer.h / .c` — Single-slot input buffer. Accepts a fresh key press (not held) during the Minotaur's last step animation. Last press wins. Commit on animation complete. Distinguishes held keys (ignored) from fresh presses (buffered).
+- `src/engine/input_buffer.h / .c` — Single-slot input buffer. Buffer window is open during any animation phase (forward or reverse). Accepts fresh key presses (not held). Last press wins. Commit on animation complete. Distinguishes held keys (ignored) from fresh presses (buffered). When a buffered action is pending, remaining animations play at user-configurable speed (`g_settings.anim_speed`, default 2×, range 1×–4×).
 
 **AnimEvent recording mechanism:**
 - `Grid` holds a transient `active_record` pointer (set at start of `turn_resolve()`, cleared at end)
@@ -89,11 +89,12 @@ Tween-based animation framework with event-driven per-feature playback and input
 - Each feature file adds ~10 lines of event recording in its hook (on_enter, on_leave, on_push, on_environment_phase)
 
 **Input buffer rules:**
-- Buffer window opens at start of Minotaur's **last** step animation (step 2 if 2 steps, step 1 if 1 step, no window if 0 steps)
+- Buffer window is open during **any** animation phase (forward or reverse)
 - Only fresh key-down events accepted (held keys ignored)
 - Last press wins if multiple presses during window
 - Bufferable actions: Move (N/S/E/W), Wait, Undo, Reset
 - Pause is always immediate regardless of animation state
+- When buffered input is pending, `dt` is multiplied by `g_settings.anim_speed` (default 2×, range 1×–4×)
 - Buffered action is not pre-validated — game logic evaluates it on commit
 - On death: movement blocked, but Undo and Reset still available
 - Undo from death plays death animation in reverse (e.g. voxels reconstitute)

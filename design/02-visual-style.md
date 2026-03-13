@@ -505,11 +505,13 @@ Animations always play out **fully** -- they are never fast-forwarded or
 skipped. See [01 -- Core Mechanics](01-core-mechanics.md) §10 for the
 complete input buffering specification.
 
-During the **Minotaur's last step animation**, the player may press a key to
-buffer their next action. When the animation completes, the buffered action
-fires immediately, creating fluid turn chaining without cutting any animation
-short. Animation durations should be short enough to feel snappy but long
-enough to be readable.
+The **buffer window** is open during any animation phase (forward or reverse).
+The player may press a key at any time while animations are playing to buffer
+their next action. When the animation completes, the buffered action fires
+immediately, creating fluid turn chaining. When a buffered input is pending,
+remaining animations play at a user-configurable speed multiplier (default 2×,
+range 1×–4×, set via Settings → "Anim Speed") to reduce wait time while still
+showing every animation frame.
 
 ### 7.6 Undo Rewind Animation
 

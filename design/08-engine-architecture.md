@@ -243,9 +243,12 @@ Key behavior:
 - When the player commits an action, the game logic resolves the full turn
   immediately (Theseus + environment + Minotaur) and records the resulting
   animation events into the `TurnRecord`.
-- Animations always play out fully -- they are never fast-forwarded or skipped.
-- The **input buffer window** opens during the Minotaur's last step animation.
-  Only fresh key-down events are accepted (held keys ignored); last press wins.
+- Animations always play out fully. When the player buffers input, remaining
+  animations play at a user-configurable speed (`g_settings.anim_speed`,
+  default 2×, range 1×–4×) to reduce wait time.
+- The **input buffer window** is open during any animation phase (forward or
+  reverse). Only fresh key-down events are accepted (held keys ignored);
+  last press wins.
 - If the resolved state is a **death**, the animation queue plays through to
   the death moment, then blocks further gameplay input. (See
   [01 -- Core Mechanics](01-core-mechanics.md) §10.)

@@ -24,8 +24,9 @@
  *   4. On-leave effects (reversed)
  *   5. Theseus move (reversed)
  *
- * The input buffer window opens during the Minotaur's LAST step
- * animation (see input_buffer.h).
+ * The input buffer window is open during ANY animation phase (forward
+ * or reverse). When buffered input is pending, remaining animations
+ * play at a user-configurable speed multiplier (see settings.h).
  */
 
 typedef enum {
@@ -52,6 +53,8 @@ typedef enum {
 #define ANIM_MINOTAUR_DURATION   0.15f
 #define ANIM_HOP_HEIGHT          0.3f
 #define ANIM_REVERSE_SPEED       2.0f   /* speed multiplier for reverse (undo) playback */
+/* Default fast-forward speed. Actual value comes from g_settings.anim_speed (1.0–4.0). */
+#define ANIM_FAST_FORWARD_SPEED_DEFAULT  2.0f
 
 /* Per-event-type durations */
 #define ANIM_ICE_SLIDE_PER_TILE  0.06f
@@ -109,6 +112,9 @@ typedef struct {
     /* ── Minotaur phase ────────────────────────── */
     Tween            mino_x;
     Tween            mino_y;
+
+    /* ── Fast-forward ─────────────────────────── */
+    bool             fast_forward;    /* true when buffered input is pending */
 } AnimQueue;
 
 /* Initialize the animation queue (idle state). */
@@ -145,7 +151,9 @@ AnimPhase anim_queue_phase(const AnimQueue* aq);
 
 /*
  * Is the input buffer window currently open?
- * True during the Minotaur's LAST step animation.
+ * True during ANY animation phase (forward or reverse).
+ * The player can queue their next action at any time while
+ * animations are playing, and fast-forward kicks in immediately.
  */
 bool anim_queue_in_buffer_window(const AnimQueue* aq);
 
@@ -192,5 +200,14 @@ bool anim_queue_is_ice_sliding(const AnimQueue* aq);
 
 /* Is the queue currently playing in reverse (undo)? */
 bool anim_queue_is_reversing(const AnimQueue* aq);
+
+/*
+ * Enable/disable fast-forward mode.
+ * When enabled, animation dt is multiplied by g_settings.anim_speed
+ * (user-configurable, 1.0–4.0) so remaining animations complete faster
+ * when the player has buffered input. Works for both forward and reverse
+ * (undo) playback.
+ */
+void anim_queue_set_fast_forward(AnimQueue* aq, bool fast);
 
 #endif /* ENGINE_ANIM_QUEUE_H */

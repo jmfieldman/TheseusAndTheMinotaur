@@ -7,13 +7,15 @@
 /*
  * InputBuffer — single-slot action buffer for input during animations.
  *
- * Design doc §10.2–10.4:
- *   - Buffer window opens during the Minotaur's last step animation
+ * Design doc §10.2–10.4, §10.7:
+ *   - Buffer window is open during ANY animation phase (forward or reverse)
  *   - Only fresh key-down events accepted (held keys ignored)
  *   - Last press wins if multiple presses during window
  *   - Bufferable: Move, Wait, Undo, Reset (not Pause)
  *   - On animation complete: if buffered, resolve immediately;
  *     else check held keys, else wait for input
+ *   - When a buffered action is pending, remaining animations play at
+ *     a user-configurable speed (g_settings.anim_speed, 1×–4×)
  */
 
 typedef struct {

@@ -10,6 +10,7 @@ Settings g_settings;
 void settings_default(void) {
     g_settings.music_volume  = 0.8f;
     g_settings.sfx_volume    = 1.0f;
+    g_settings.anim_speed    = 2.0f;
     g_settings.fullscreen    = false;
     g_settings.resolution_w  = 1280;
     g_settings.resolution_h  = 720;
@@ -53,6 +54,8 @@ void settings_load(const char* path) {
                     g_settings.music_volume = (float)atof(val);
                 else if (strcmp(current_key, "sfx_volume") == 0)
                     g_settings.sfx_volume = (float)atof(val);
+                else if (strcmp(current_key, "anim_speed") == 0)
+                    g_settings.anim_speed = CLAMP((float)atof(val), 1.0f, 4.0f);
                 else if (strcmp(current_key, "fullscreen") == 0)
                     g_settings.fullscreen = (strcmp(val, "true") == 0);
                 else if (strcmp(current_key, "resolution_w") == 0)
@@ -86,6 +89,7 @@ void settings_save(const char* path) {
     fprintf(f, "version: 1\n");
     fprintf(f, "music_volume: %.2f\n", g_settings.music_volume);
     fprintf(f, "sfx_volume: %.2f\n",   g_settings.sfx_volume);
+    fprintf(f, "anim_speed: %.2f\n",  g_settings.anim_speed);
     fprintf(f, "fullscreen: %s\n",     g_settings.fullscreen ? "true" : "false");
     fprintf(f, "resolution_w: %d\n",   g_settings.resolution_w);
     fprintf(f, "resolution_h: %d\n",   g_settings.resolution_h);

@@ -6,6 +6,7 @@
 typedef struct {
     float music_volume;    /* 0.0 - 1.0 */
     float sfx_volume;      /* 0.0 - 1.0 */
+    float anim_speed;      /* 1.0 - 4.0: fast-forward multiplier when input is buffered */
     bool  fullscreen;
     int   resolution_w;
     int   resolution_h;

@@ -1,4 +1,5 @@
 #include "engine/anim_queue.h"
+#include "data/settings.h"
 #include <string.h>
 
 /* ── Helpers: find events by phase ────────────────────── */
@@ -975,6 +976,12 @@ static void anim_queue_update_reverse(AnimQueue* aq, float dt) {
 void anim_queue_update(AnimQueue* aq, float dt) {
     if (!aq->playing) return;
 
+    /* Apply fast-forward speed multiplier when input is buffered.
+     * Uses g_settings.anim_speed (user-configurable, 1.0–4.0). */
+    if (aq->fast_forward) {
+        dt *= g_settings.anim_speed;
+    }
+
     if (aq->reversing) {
         anim_queue_update_reverse(aq, dt);
         return;
@@ -1163,12 +1170,11 @@ AnimPhase anim_queue_phase(const AnimQueue* aq) {
 }
 
 bool anim_queue_in_buffer_window(const AnimQueue* aq) {
-    if (!aq->playing) return false;
-    const TurnRecord* r = &aq->record;
-
-    if (r->minotaur_steps == 0) return false;
-    if (r->minotaur_steps == 2) return aq->phase == ANIM_PHASE_MINOTAUR_STEP2;
-    return aq->phase == ANIM_PHASE_MINOTAUR_STEP1;
+    /* Buffer window is open during ANY animation phase (forward or reverse).
+     * This lets the player queue their next action at any time while
+     * animations are playing. Fast-forward kicks in as soon as input
+     * is buffered, so remaining animations resolve quickly. */
+    return aq->playing;
 }
 
 void anim_queue_theseus_pos(const AnimQueue* aq,
@@ -1344,4 +1350,8 @@ bool anim_queue_is_ice_sliding(const AnimQueue* aq) {
 
 bool anim_queue_is_reversing(const AnimQueue* aq) {
     return aq->reversing;
+}
+
+void anim_queue_set_fast_forward(AnimQueue* aq, bool fast) {
+    aq->fast_forward = fast;
 }

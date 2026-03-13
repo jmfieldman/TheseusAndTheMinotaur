@@ -269,24 +269,18 @@ responsive without sacrificing visual clarity.
   2. Environment phase animations
   3. Minotaur step 1 animation
   4. Minotaur step 2 animation (if applicable)
-- Animations are **never fast-forwarded or skipped**. Every animation plays
-  out fully so the player can always see what happened.
+- Animations always play out fully so the player can see what happened.
+  When the player buffers input, remaining animations play at a
+  user-configurable speed multiplier (default 2×, range 1×–4×) to
+  reduce wait time (see §10.7).
 
 ### 10.2 Input Buffer Window
 
-During most of the animation sequence, **new input is ignored**. The player
-cannot queue a move during Theseus's animation, the environment phase, or the
-Minotaur's first step.
-
-The **buffer window** opens during the **Minotaur's last step animation**:
-
-- If the Minotaur takes 2 steps: window opens at the start of step 2's
-  animation.
-- If the Minotaur takes 1 step: window opens at the start of step 1's
-  animation (it is the last step).
-- If the Minotaur takes 0 steps: no window. Input is accepted only after all
-  animations complete (Theseus move + environment). This is fine because the
-  total animation is short.
+The **buffer window** is open during **any animation phase** — both forward
+playback and reverse (undo) playback. The player can queue their next action
+at any time while animations are playing. When a buffered action is detected,
+remaining animations play at the user-configurable fast-forward speed
+(see §10.7), so the turn resolves quickly.
 
 During the buffer window, a **fresh key press** (not a held key) is stored as
 the buffered action. If the player presses multiple keys during the window,
@@ -298,7 +292,7 @@ This prevents accidental rapid-fire moves from holding a direction.
 
 ### 10.3 Buffer-Eligible Actions
 
-The following actions can be buffered during the Minotaur's last step:
+The following actions can be buffered during the buffer window:
 
 | Action         | Bufferable | Notes                                |
 | -------------- | ---------- | ------------------------------------ |
@@ -313,7 +307,7 @@ animation state (it opens a menu overlay, not a game action).
 
 ### 10.4 Buffer Commit
 
-When the Minotaur's last step animation completes:
+When the animation completes:
 
 1. If a buffered action exists: the next turn's logic resolves instantly using
    the buffered action, and the new turn's animations begin playing.
@@ -347,3 +341,23 @@ death):
 - The "fresh press only" rule prevents accidental moves from held keys while
   still allowing deliberate rapid play.
 - Undo from death creates a satisfying "rewind" feel.
+
+### 10.7 Animation Fast-Forward on Buffered Input
+
+When the player buffers an action during the buffer window, the remaining
+animations for the current turn play at a **user-configurable speed
+multiplier** (`g_settings.anim_speed`). This reduces perceived latency for
+experienced players who are chaining moves quickly, while still letting
+every animation frame play so the player sees what happened.
+
+- **Default:** 2× speed. Configurable from 1× to 4× in the Settings menu
+  ("Anim Speed" slider, 0.25× increments).
+- The speed multiplier is applied to `dt` in `anim_queue_update()` for all
+  phases (Theseus, effects, environment, minotaur) in both forward and
+  reverse (undo) playback.
+- Fast-forward activates as soon as a buffered action is stored, and
+  deactivates if the buffer is cleared.
+- During undo rewind, the base 2× reverse speed is applied first, then
+  the fast-forward multiplier stacks on top if the player buffers another
+  undo. This allows rapid undo chaining at up to 8× effective speed
+  (2× reverse × 4× fast-forward).

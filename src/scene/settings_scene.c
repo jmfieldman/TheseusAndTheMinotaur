@@ -16,6 +16,7 @@
 typedef enum {
     SETTING_MUSIC_VOLUME,
     SETTING_SFX_VOLUME,
+    SETTING_ANIM_SPEED,
     SETTING_FULLSCREEN,
     SETTING_COUNT
 } SettingItem;
@@ -32,6 +33,7 @@ static void rebuild_visible(SettingsScene* ss) {
     ss->visible_count = 0;
     ss->visible_items[ss->visible_count++] = SETTING_MUSIC_VOLUME;
     ss->visible_items[ss->visible_count++] = SETTING_SFX_VOLUME;
+    ss->visible_items[ss->visible_count++] = SETTING_ANIM_SPEED;
     if (!platform_is_mobile()) {
         ss->visible_items[ss->visible_count++] = SETTING_FULLSCREEN;
     }
@@ -68,15 +70,23 @@ static void settings_handle_action(State* self, SemanticAction action) {
         break;
     case ACTION_UI_LEFT:
     case ACTION_UI_RIGHT: {
-        float delta = (action == ACTION_UI_RIGHT) ? 0.05f : -0.05f;
         SettingItem item = ss->visible_items[ss->selected];
         switch (item) {
-        case SETTING_MUSIC_VOLUME:
+        case SETTING_MUSIC_VOLUME: {
+            float delta = (action == ACTION_UI_RIGHT) ? 0.05f : -0.05f;
             g_settings.music_volume = CLAMP(g_settings.music_volume + delta, 0.0f, 1.0f);
             break;
-        case SETTING_SFX_VOLUME:
+        }
+        case SETTING_SFX_VOLUME: {
+            float delta = (action == ACTION_UI_RIGHT) ? 0.05f : -0.05f;
             g_settings.sfx_volume = CLAMP(g_settings.sfx_volume + delta, 0.0f, 1.0f);
             break;
+        }
+        case SETTING_ANIM_SPEED: {
+            float delta = (action == ACTION_UI_RIGHT) ? 0.25f : -0.25f;
+            g_settings.anim_speed = CLAMP(g_settings.anim_speed + delta, 1.0f, 4.0f);
+            break;
+        }
         case SETTING_FULLSCREEN:
             g_settings.fullscreen = !g_settings.fullscreen;
             /* TODO: actually toggle fullscreen via SDL */
@@ -117,7 +127,7 @@ static void settings_render(State* self) {
 
     /* Panel */
     float panel_w = fminf(500.0f, vw * 0.8f);
-    float panel_h = 300.0f;
+    float panel_h = 355.0f;
     float panel_x = cx - panel_w * 0.5f;
     float panel_y = vh * 0.5f - panel_h * 0.5f;
 
@@ -167,6 +177,10 @@ static void settings_render(State* self) {
             snprintf(value_str, sizeof(value_str), "%d%%",
                      (int)(g_settings.sfx_volume * 100.0f + 0.5f));
             break;
+        case SETTING_ANIM_SPEED:
+            label = strings_get("settings_anim_speed");
+            snprintf(value_str, sizeof(value_str), "%.1fx", g_settings.anim_speed);
+            break;
         case SETTING_FULLSCREEN:
             label = strings_get("settings_fullscreen");
             snprintf(value_str, sizeof(value_str), "%s",
@@ -183,14 +197,20 @@ static void settings_render(State* self) {
         text_render_draw(value_str, value_x, y, TEXT_SIZE_BODY, label_col,
                          TEXT_ALIGN_RIGHT);
 
-        /* Slider bar for volume items */
-        if (item == SETTING_MUSIC_VOLUME || item == SETTING_SFX_VOLUME) {
+        /* Slider bar for adjustable items */
+        if (item == SETTING_MUSIC_VOLUME || item == SETTING_SFX_VOLUME ||
+            item == SETTING_ANIM_SPEED) {
             float bar_x = panel_x + panel_w * 0.45f;
             float bar_w = panel_w * 0.35f;
             float bar_y = y + 10.0f;
             float bar_h = 6.0f;
-            float fill = (item == SETTING_MUSIC_VOLUME)
-                ? g_settings.music_volume : g_settings.sfx_volume;
+            float fill;
+            if (item == SETTING_ANIM_SPEED)
+                fill = (g_settings.anim_speed - 1.0f) / 3.0f;
+            else if (item == SETTING_MUSIC_VOLUME)
+                fill = g_settings.music_volume;
+            else
+                fill = g_settings.sfx_volume;
 
             /* Track */
             ui_draw_rect_rounded(bar_x, bar_y, bar_w, bar_h, 3.0f,
