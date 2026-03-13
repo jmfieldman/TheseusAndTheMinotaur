@@ -22,10 +22,10 @@
 
 There are exactly **two actors** on the board at all times:
 
-| Actor    | Controlled By | Count | Mortal |
-|----------|---------------|-------|--------|
-| Theseus  | Player        | 1     | Yes -- can be killed by Minotaur or environmental hazards |
-| Minotaur | AI (deterministic) | 1 | **No** -- the Minotaur is always alive |
+| Actor    | Controlled By      | Count | Mortal                                                    |
+| -------- | ------------------ | ----- | --------------------------------------------------------- |
+| Theseus  | Player             | 1     | Yes -- can be killed by Minotaur or environmental hazards |
+| Minotaur | AI (deterministic) | 1     | **No** -- the Minotaur is always alive                    |
 
 No level will ever contain more than one Minotaur. The Minotaur **cannot be
 killed or incapacitated** by any environmental feature. Environmental features
@@ -63,13 +63,13 @@ Loss conditions are checked at **multiple points** within the turn cycle:
 
 On his turn, Theseus may perform exactly one of:
 
-| Action    | Effect                                    |
-|-----------|-------------------------------------------|
-| Move N/S/E/W | Move one tile in the chosen cardinal direction (blocked by walls) |
-| Wait      | Stay in place; turn still advances         |
-| Undo      | Revert the *entire* last turn (Theseus + Environment + Minotaur) |
-| Reset     | Restart the level from its initial state (see §7.5 for reset animation) |
-| Menu      | Open the pause/options menu (does not advance the turn) |
+| Action       | Effect                                                                  |
+| ------------ | ----------------------------------------------------------------------- |
+| Move N/S/E/W | Move one tile in the chosen cardinal direction (blocked by walls)       |
+| Wait         | Stay in place; turn still advances                                      |
+| Undo         | Revert the _entire_ last turn (Theseus + Environment + Minotaur)        |
+| Reset        | Restart the level from its initial state (see §7.5 for reset animation) |
+| Menu         | Open the pause/options menu (does not advance the turn)                 |
 
 - **Move** and **Wait** advance the turn (triggering Environment + Minotaur phases).
 - **Undo** rolls back one full turn cycle. Multiple undos can chain.
@@ -300,13 +300,13 @@ This prevents accidental rapid-fire moves from holding a direction.
 
 The following actions can be buffered during the Minotaur's last step:
 
-| Action              | Bufferable | Notes |
-|---------------------|------------|-------|
-| Move (N/S/E/W)      | Yes        | Resolves next turn normally |
-| Wait                | Yes        | Resolves next turn normally |
-| Undo                | Yes        | Reverts the current turn |
-| Reset               | Yes        | Restarts the level |
-| Pause               | No         | Takes effect immediately at any time |
+| Action         | Bufferable | Notes                                |
+| -------------- | ---------- | ------------------------------------ |
+| Move (N/S/E/W) | Yes        | Resolves next turn normally          |
+| Wait           | Yes        | Resolves next turn normally          |
+| Undo           | Yes        | Reverts the current turn             |
+| Reset          | Yes        | Restarts the level                   |
+| Pause          | No         | Takes effect immediately at any time |
 
 **Pause** is special -- it is always accepted immediately regardless of
 animation state (it opens a menu overlay, not a game action).
@@ -317,7 +317,8 @@ When the Minotaur's last step animation completes:
 
 1. If a buffered action exists: the next turn's logic resolves instantly using
    the buffered action, and the new turn's animations begin playing.
-2. If no buffered action exists: the game waits for player input normally.
+2. If no buffered action exists: the game waits for player input normally, or
+   use a key that has been held down since before the buffer window opened.
 
 The buffered action is **not pre-validated**. If the player buffers "move east"
 and that would walk Theseus into the Minotaur, the turn resolves normally and
