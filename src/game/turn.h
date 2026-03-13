@@ -32,6 +32,29 @@ typedef enum {
 } TurnResult;
 
 /*
+ * TurnRecord — captures intermediate positions for animation playback.
+ *
+ * Game logic resolves instantly; the renderer plays back the visual
+ * sequence using the positions recorded here.
+ */
+typedef struct {
+    /* Theseus phase */
+    int  theseus_from_col, theseus_from_row;
+    int  theseus_to_col,   theseus_to_row;
+    bool theseus_moved;         /* true if Theseus changed position */
+    bool theseus_pushed;        /* true if Theseus pushed something (didn't move but turn proceeds) */
+
+    /* Minotaur phase */
+    int  minotaur_start_col,  minotaur_start_row;
+    int  minotaur_after1_col, minotaur_after1_row;  /* after step 1 */
+    int  minotaur_after2_col, minotaur_after2_row;  /* after step 2 */
+    int  minotaur_steps;                             /* 0, 1, or 2 */
+
+    /* Result */
+    TurnResult result;
+} TurnRecord;
+
+/*
  * Execute a full turn given the player's chosen direction.
  *
  * dir = DIR_NONE means "wait" (Theseus stays, env + Minotaur still act).
@@ -39,9 +62,12 @@ typedef enum {
  * The caller must push an undo snapshot BEFORE calling this if undo
  * support is desired.
  *
+ * If record is non-NULL, intermediate positions are captured for
+ * animation playback.
+ *
  * Returns the result of the turn.
  */
-TurnResult turn_resolve(Grid* grid, Direction player_dir);
+TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record);
 
 /*
  * Run only the environment phase.

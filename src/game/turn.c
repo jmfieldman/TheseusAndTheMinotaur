@@ -118,15 +118,42 @@ static bool try_exit(Grid* grid, Direction player_dir) {
     return false;
 }
 
+/* ── Helper: fill minotaur "no move" defaults in record ── */
+
+static void record_minotaur_nomove(TurnRecord* record, const Grid* grid) {
+    if (!record) return;
+    record->minotaur_after1_col = grid->minotaur_col;
+    record->minotaur_after1_row = grid->minotaur_row;
+    record->minotaur_after2_col = grid->minotaur_col;
+    record->minotaur_after2_row = grid->minotaur_row;
+    record->minotaur_steps = 0;
+}
+
 /* ── Main turn resolution ──────────────────────────────── */
 
-TurnResult turn_resolve(Grid* grid, Direction player_dir) {
+TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
+    /* Initialize record if provided */
+    if (record) {
+        memset(record, 0, sizeof(*record));
+        record->theseus_from_col   = grid->theseus_col;
+        record->theseus_from_row   = grid->theseus_row;
+        record->minotaur_start_col = grid->minotaur_col;
+        record->minotaur_start_row = grid->minotaur_row;
+    }
+
     /* ── Phase 1: Theseus ── */
 
     if (player_dir != DIR_NONE) {
         /* Check for exit first */
         if (try_exit(grid, player_dir)) {
             grid->turn_count++;
+            if (record) {
+                record->theseus_to_col = grid->theseus_col + direction_dcol(player_dir);
+                record->theseus_to_row = grid->theseus_row + direction_drow(player_dir);
+                record->theseus_moved  = true;
+                record_minotaur_nomove(record, grid);
+                record->result = TURN_RESULT_WIN;
+            }
             return TURN_RESULT_WIN;
         }
 
@@ -140,6 +167,13 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir) {
         if (pre == PREMOVE_KILL) {
             grid->level_lost = true;
             grid->turn_count++;
+            if (record) {
+                record->theseus_to_col = tc;
+                record->theseus_to_row = tr;
+                record->theseus_moved  = true;
+                record_minotaur_nomove(record, grid);
+                record->result = TURN_RESULT_LOSS_HAZARD;
+            }
             return TURN_RESULT_LOSS_HAZARD;
         }
 
@@ -147,31 +181,73 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir) {
         if (!grid_move_entity(grid, ENTITY_THESEUS, player_dir)) {
             /* Move blocked — try on_push hooks */
             if (try_push(grid, grid->theseus_col, grid->theseus_row, player_dir)) {
-                /* Push consumed the action — Theseus doesn't move but turn proceeds */
+                if (record) {
+                    record->theseus_to_col = grid->theseus_col;
+                    record->theseus_to_row = grid->theseus_row;
+                    record->theseus_moved  = false;
+                    record->theseus_pushed = true;
+                }
             } else {
+                if (record) {
+                    record->theseus_to_col = grid->theseus_col;
+                    record->theseus_to_row = grid->theseus_row;
+                    record->theseus_moved  = false;
+                    record->result = TURN_RESULT_BLOCKED;
+                }
                 return TURN_RESULT_BLOCKED;
             }
         } else {
             /* Move succeeded */
+            if (record) {
+                record->theseus_to_col = grid->theseus_col;
+                record->theseus_to_row = grid->theseus_row;
+                record->theseus_moved  = true;
+            }
+
             if (pre == PREMOVE_SLIDE) {
                 TurnResult slide_result = ice_slide(grid, player_dir);
                 if (slide_result != TURN_RESULT_CONTINUE) {
                     grid->turn_count++;
+                    if (record) {
+                        record->theseus_to_col = grid->theseus_col;
+                        record->theseus_to_row = grid->theseus_row;
+                        record_minotaur_nomove(record, grid);
+                        record->result = slide_result;
+                    }
                     return slide_result;
+                }
+                if (record) {
+                    record->theseus_to_col = grid->theseus_col;
+                    record->theseus_to_row = grid->theseus_row;
                 }
             }
 
             if (grid_entities_collide(grid)) {
                 grid->level_lost = true;
                 grid->turn_count++;
+                if (record) {
+                    record_minotaur_nomove(record, grid);
+                    record->result = TURN_RESULT_LOSS_COLLISION;
+                }
                 return TURN_RESULT_LOSS_COLLISION;
             }
 
             if (grid_theseus_on_hazard(grid)) {
                 grid->level_lost = true;
                 grid->turn_count++;
+                if (record) {
+                    record_minotaur_nomove(record, grid);
+                    record->result = TURN_RESULT_LOSS_HAZARD;
+                }
                 return TURN_RESULT_LOSS_HAZARD;
             }
+        }
+    } else {
+        /* Wait — Theseus stays put */
+        if (record) {
+            record->theseus_to_col = grid->theseus_col;
+            record->theseus_to_row = grid->theseus_row;
+            record->theseus_moved  = false;
         }
     }
 
@@ -182,24 +258,72 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir) {
     if (grid_theseus_on_hazard(grid)) {
         grid->level_lost = true;
         grid->turn_count++;
+        if (record) {
+            record_minotaur_nomove(record, grid);
+            record->result = TURN_RESULT_LOSS_HAZARD;
+        }
         return TURN_RESULT_LOSS_HAZARD;
     }
 
     if (grid_entities_collide(grid)) {
         grid->level_lost = true;
         grid->turn_count++;
+        if (record) {
+            record_minotaur_nomove(record, grid);
+            record->result = TURN_RESULT_LOSS_COLLISION;
+        }
         return TURN_RESULT_LOSS_COLLISION;
     }
 
-    /* ── Phase 3: Minotaur ── */
+    /* ── Phase 3: Minotaur (decomposed for animation recording) ── */
 
-    minotaur_take_turn(grid);
+    int mino_steps = 0;
 
-    if (grid->level_lost) {
+    /* Step 1 */
+    if (minotaur_step(grid)) {
+        mino_steps = 1;
+    }
+
+    if (record) {
+        record->minotaur_after1_col = grid->minotaur_col;
+        record->minotaur_after1_row = grid->minotaur_row;
+    }
+
+    if (grid_entities_collide(grid)) {
+        grid->level_lost = true;
         grid->turn_count++;
+        if (record) {
+            record->minotaur_after2_col = grid->minotaur_col;
+            record->minotaur_after2_row = grid->minotaur_row;
+            record->minotaur_steps = mino_steps;
+            record->result = TURN_RESULT_LOSS_COLLISION;
+        }
+        return TURN_RESULT_LOSS_COLLISION;
+    }
+
+    /* Step 2 */
+    if (minotaur_step(grid)) {
+        mino_steps = 2;
+    }
+
+    if (record) {
+        record->minotaur_after2_col = grid->minotaur_col;
+        record->minotaur_after2_row = grid->minotaur_row;
+        record->minotaur_steps = mino_steps;
+    }
+
+    if (grid_entities_collide(grid)) {
+        grid->level_lost = true;
+        grid->turn_count++;
+        if (record) {
+            record->result = TURN_RESULT_LOSS_COLLISION;
+        }
         return TURN_RESULT_LOSS_COLLISION;
     }
 
     grid->turn_count++;
+    if (record) {
+        record->result = TURN_RESULT_CONTINUE;
+    }
     return TURN_RESULT_CONTINUE;
 }
