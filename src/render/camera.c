@@ -209,6 +209,17 @@ void diorama_camera_update(DioramaCamera* cam, int viewport_w, int viewport_h) {
 
     /* Combined VP */
     mat4_multiply(cam->view_proj, cam->proj, cam->view);
+
+    /*
+     * Mirror X axis: in a right-handed coordinate system with the camera
+     * looking along +Z (yaw=0), the standard lookAt maps world +X to
+     * screen LEFT. We want +X = screen RIGHT to match the 2D view, so
+     * negate row 0 of the VP matrix (flips clip-space X).
+     */
+    cam->view_proj[0]  = -cam->view_proj[0];
+    cam->view_proj[4]  = -cam->view_proj[4];
+    cam->view_proj[8]  = -cam->view_proj[8];
+    cam->view_proj[12] = -cam->view_proj[12];
 }
 
 const float* diorama_camera_get_vp(const DioramaCamera* cam) {
