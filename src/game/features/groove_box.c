@@ -1,0 +1,202 @@
+#include "groove_box.h"
+#include "../grid.h"
+#include "../../engine/utils.h"
+#include <cJSON.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAX_GROOVE_LENGTH 32
+
+typedef struct {
+    int groove_cols[MAX_GROOVE_LENGTH];
+    int groove_rows[MAX_GROOVE_LENGTH];
+    int groove_length;
+    int box_col, box_row;   /* current box position */
+} GrooveBoxData;
+
+/* ── Helpers ──────────────────────────────────────────── */
+
+static bool is_on_groove(const GrooveBoxData* d, int col, int row) {
+    for (int i = 0; i < d->groove_length; i++) {
+        if (d->groove_cols[i] == col && d->groove_rows[i] == row) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool is_groove_direction(const GrooveBoxData* d, int from_col, int from_row,
+                                 Direction dir) {
+    int tc = from_col + direction_dcol(dir);
+    int tr = from_row + direction_drow(dir);
+    return is_on_groove(d, tc, tr);
+}
+
+/* ── Vtable hooks ─────────────────────────────────────── */
+
+static bool gb_blocks_movement(const Feature* self, const Grid* grid,
+                                EntityID who,
+                                int from_col, int from_row,
+                                int to_col, int to_row) {
+    (void)grid; (void)who; (void)from_col; (void)from_row;
+    const GrooveBoxData* d = (const GrooveBoxData*)self->data;
+
+    /* The box blocks movement into its current position */
+    return (to_col == d->box_col && to_row == d->box_row);
+}
+
+static bool gb_on_push(Feature* self, Grid* grid,
+                        int from_col, int from_row, Direction dir) {
+    GrooveBoxData* d = (GrooveBoxData*)self->data;
+
+    /* Check if the push is aimed at the box */
+    int push_target_col = from_col + direction_dcol(dir);
+    int push_target_row = from_row + direction_drow(dir);
+    if (push_target_col != d->box_col || push_target_row != d->box_row) {
+        return false;
+    }
+
+    /* Check if the push direction is aligned with the groove */
+    int box_dest_col = d->box_col + direction_dcol(dir);
+    int box_dest_row = d->box_row + direction_drow(dir);
+
+    if (!is_on_groove(d, box_dest_col, box_dest_row)) {
+        return false;   /* off groove — blocked */
+    }
+
+    /* Check for wall between box and destination */
+    if (grid_has_wall(grid, d->box_col, d->box_row, dir)) {
+        return false;
+    }
+
+    /* Check if destination is impassable */
+    Cell* dest = grid_cell(grid, box_dest_col, box_dest_row);
+    if (!dest || dest->impassable) return false;
+
+    /* Check if another groove box is at the destination */
+    for (int i = 0; i < dest->feature_count; i++) {
+        Feature* f = dest->features[i];
+        if (f != self && strcmp(f->vt->name, "groove_box") == 0) {
+            GrooveBoxData* od = (GrooveBoxData*)f->data;
+            if (od->box_col == box_dest_col && od->box_row == box_dest_row) {
+                return false;   /* another box in the way */
+            }
+        }
+    }
+
+    /* Push succeeds — move the box */
+    d->box_col = box_dest_col;
+    d->box_row = box_dest_row;
+
+    /* Move Theseus into the vacated tile */
+    /* Fire on_leave for features at Theseus's current position */
+    Cell* old_cell = grid_cell(grid, from_col, from_row);
+    if (old_cell) {
+        for (int i = 0; i < old_cell->feature_count; i++) {
+            Feature* f = old_cell->features[i];
+            if (f->vt->on_leave) {
+                f->vt->on_leave(f, grid, ENTITY_THESEUS, from_col, from_row);
+            }
+        }
+    }
+
+    grid_set_entity_pos(grid, ENTITY_THESEUS, push_target_col, push_target_row);
+
+    /* Fire on_enter for features at new position (excluding this box) */
+    Cell* new_cell = grid_cell(grid, push_target_col, push_target_row);
+    if (new_cell) {
+        for (int i = 0; i < new_cell->feature_count; i++) {
+            Feature* f = new_cell->features[i];
+            if (f != self && f->vt->on_enter) {
+                f->vt->on_enter(f, grid, ENTITY_THESEUS,
+                                push_target_col, push_target_row);
+            }
+        }
+    }
+
+    return true;
+}
+
+static size_t gb_snapshot_size(const Feature* self) {
+    (void)self;
+    return sizeof(int) * 2;  /* box_col, box_row */
+}
+
+static void gb_snapshot_save(const Feature* self, void* buf) {
+    const GrooveBoxData* d = (const GrooveBoxData*)self->data;
+    int* p = (int*)buf;
+    p[0] = d->box_col;
+    p[1] = d->box_row;
+}
+
+static void gb_snapshot_restore(Feature* self, const void* buf) {
+    GrooveBoxData* d = (GrooveBoxData*)self->data;
+    const int* p = (const int*)buf;
+    d->box_col = p[0];
+    d->box_row = p[1];
+}
+
+static void gb_destroy(Feature* self) {
+    free(self->data);
+    self->data = NULL;
+}
+
+static const FeatureVTable groove_box_vt = {
+    .name                  = "groove_box",
+    .blocks_movement       = gb_blocks_movement,
+    .on_pre_move           = NULL,
+    .on_enter              = NULL,
+    .on_leave              = NULL,
+    .on_push               = gb_on_push,
+    .on_environment_phase  = NULL,
+    .is_hazardous          = NULL,
+    .snapshot_size          = gb_snapshot_size,
+    .snapshot_save          = gb_snapshot_save,
+    .snapshot_restore       = gb_snapshot_restore,
+    .destroy               = gb_destroy,
+};
+
+/* ── Factory ──────────────────────────────────────────── */
+
+Feature* groove_box_create(int col, int row, const cJSON* config) {
+    Feature* f = feature_create(&groove_box_vt, col, row);
+    if (!f) return NULL;
+
+    GrooveBoxData* d = calloc(1, sizeof(GrooveBoxData));
+    if (!d) { feature_free(f); return NULL; }
+
+    d->box_col = col;
+    d->box_row = row;
+
+    if (config) {
+        /* Parse groove track */
+        const cJSON* groove_arr = cJSON_GetObjectItemCaseSensitive(config, "groove");
+        if (cJSON_IsArray(groove_arr)) {
+            const cJSON* item = NULL;
+            int idx = 0;
+            cJSON_ArrayForEach(item, groove_arr) {
+                if (idx >= MAX_GROOVE_LENGTH) break;
+                const cJSON* c_item = cJSON_GetObjectItemCaseSensitive(item, "col");
+                const cJSON* r_item = cJSON_GetObjectItemCaseSensitive(item, "row");
+                if (cJSON_IsNumber(c_item) && cJSON_IsNumber(r_item)) {
+                    d->groove_cols[idx] = c_item->valueint;
+                    d->groove_rows[idx] = r_item->valueint;
+                    idx++;
+                }
+            }
+            d->groove_length = idx;
+        }
+
+        /* Parse initial box position */
+        const cJSON* pos_item = cJSON_GetObjectItemCaseSensitive(config, "initial_pos");
+        if (pos_item) {
+            const cJSON* c_item = cJSON_GetObjectItemCaseSensitive(pos_item, "col");
+            const cJSON* r_item = cJSON_GetObjectItemCaseSensitive(pos_item, "row");
+            if (cJSON_IsNumber(c_item)) d->box_col = c_item->valueint;
+            if (cJSON_IsNumber(r_item)) d->box_row = r_item->valueint;
+        }
+    }
+
+    f->data = d;
+    return f;
+}

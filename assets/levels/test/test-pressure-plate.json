@@ -1,0 +1,30 @@
+{
+  "id": "test-pressure-plate",
+  "name": "Pressure Plate Test",
+  "biome": "mechanical_halls",
+  "difficulty": 1,
+  "optimal_turns": 5,
+  "grid": { "width": 5, "height": 5 },
+  "entrance": { "col": 0, "row": 2, "side": "west" },
+  "exit":     { "col": 4, "row": 2, "side": "east" },
+  "theseus":  { "col": 0, "row": 2 },
+  "minotaur": { "col": 4, "row": 4 },
+  "walls": [
+    { "col": 2, "row": 2, "side": "east" },
+    { "col": 3, "row": 3, "side": "south" },
+    { "col": 3, "row": 4, "side": "south" }
+  ],
+  "impassable": [],
+  "features": [
+    {
+      "type": "pressure_plate",
+      "position": { "col": 2, "row": 2 },
+      "config": {
+        "color": "blue",
+        "targets": [
+          { "type": "wall", "col": 2, "row": 2, "side": "east", "initial_active": true }
+        ]
+      }
+    }
+  ]
+}

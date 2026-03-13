@@ -8,10 +8,10 @@ Pure game logic module. No rendering, no SDL, no platform dependencies. Fully te
 |--------------------------|---------|
 | `game.h`                 | Convenience header — includes the entire game logic API. |
 | `feature.h / feature.c`  | Feature vtable interface. Defines pluggable hook points (`blocks_movement`, `on_pre_move`, `on_enter`, `on_leave`, `on_push`, `on_environment_phase`, `is_hazardous`, snapshot support). Each environmental element implements this interface. Includes `PreMoveResult` enum for pre-move checks (OK, KILL, SLIDE). |
-| `grid.h / grid.c`        | Grid and Cell model. Manages the NxM tile grid, walls (stored per-edge, mirrored on neighbours), impassable tiles, entity positions, and per-cell feature lists. Provides movement queries and entity move execution with on_enter/on_leave callbacks. |
-| `turn.h / turn.c`        | Turn resolution loop. Executes the fixed 3-phase sequence: Theseus phase → Environment phase → Minotaur phase. Checks win/loss conditions after each phase. |
+| `grid.h / grid.c`        | Grid and Cell model. Manages the NxM tile grid, walls (stored per-edge, mirrored on neighbours), impassable tiles, entity positions, and per-cell feature lists. Provides movement queries, entity move execution with on_enter/on_leave callbacks, and `grid_rebuild_feature_links()` for relinking features after undo/position changes. |
+| `turn.h / turn.c`        | Turn resolution loop. Executes the fixed 3-phase sequence: Theseus phase → Environment phase → Minotaur phase. Runs `on_pre_move` hooks before Theseus moves (for Medusa/ice), `on_push` hooks when movement is blocked (for turnstiles/groove boxes), and ice slide logic. Checks win/loss conditions after each phase. |
 | `minotaur.h / minotaur.c` | Minotaur AI. Greedy 2-step chase with horizontal priority. Cannot exit through exit door. Immune to hazards but blocked by walls/impassable tiles. |
-| `undo.h / undo.c`        | Undo/redo snapshot stack. Captures entity positions and all mutable feature state (via vtable snapshot hooks). Supports unlimited undo depth and full reset to initial state. |
+| `undo.h / undo.c`        | Undo/redo snapshot stack. Captures entity positions, cell state (walls + impassable), feature positions, and all mutable feature state (via vtable snapshot hooks). Supports unlimited undo depth and full reset to initial state. Rebuilds cell-feature links on restore. |
 | `level_loader.h / level_loader.c` | Level JSON parser. Reads level files (via cJSON), creates Grid with walls/impassable tiles, and instantiates features via a pluggable factory registry. |
 
 ## Subdirectories

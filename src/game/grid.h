@@ -129,6 +129,14 @@ bool grid_add_feature(Grid* grid, Feature* feature);
 int grid_get_features_at(const Grid* grid, int col, int row,
                          Feature** out_features, int max_out);
 
+/*
+ * Rebuild cell->features links from the grid-level features array.
+ * Clears all cell feature lists, then re-populates them based on
+ * each feature's current col/row.  Call after restoring feature
+ * positions from an undo snapshot.
+ */
+void grid_rebuild_feature_links(Grid* grid);
+
 /* ── Entity position helpers ───────────────────────────── */
 
 void grid_get_entity_pos(const Grid* grid, EntityID who, int* out_col, int* out_row);

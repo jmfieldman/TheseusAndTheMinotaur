@@ -24,6 +24,15 @@
 /* Maximum snapshots (generous — most puzzles < 200 turns) */
 #define UNDO_MAX_DEPTH  512
 
+/*
+ * Compact per-cell state for undo (walls + impassable only).
+ * Feature pointer linkage is rebuilt from feature col/row on restore.
+ */
+typedef struct {
+    bool walls[DIR_COUNT];
+    bool impassable;
+} CellSnapshot;
+
 typedef struct {
     int theseus_col, theseus_row;
     int minotaur_col, minotaur_row;
@@ -38,6 +47,22 @@ typedef struct {
      */
     void*  feature_blob;
     size_t feature_blob_size;
+
+    /*
+     * Cell state snapshot (walls + impassable for each cell).
+     * Required for features that modify grid structure (pressure plates,
+     * locking gates, crumbling floors, turnstiles).
+     */
+    CellSnapshot* cell_snapshots;
+    int cell_count;
+
+    /*
+     * Feature position snapshot.  Stores col/row for each feature
+     * (packed as [col0, row0, col1, row1, ...]).
+     * Required for features that move (moving platform, auto-turnstile).
+     */
+    int* feature_positions;
+    int feature_pos_count;   /* number of features (array has 2x this) */
 } UndoSnapshot;
 
 typedef struct {

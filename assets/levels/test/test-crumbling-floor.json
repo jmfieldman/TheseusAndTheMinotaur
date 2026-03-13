@@ -1,0 +1,27 @@
+{
+  "id": "test-crumbling-floor",
+  "name": "Crumbling Floor Test",
+  "biome": "sunken_ruins",
+  "difficulty": 2,
+  "optimal_turns": 5,
+  "grid": { "width": 5, "height": 4 },
+  "entrance": { "col": 0, "row": 1, "side": "west" },
+  "exit":     { "col": 4, "row": 1, "side": "east" },
+  "theseus":  { "col": 0, "row": 1 },
+  "minotaur": { "col": 4, "row": 3 },
+  "walls": [
+    { "col": 3, "row": 2, "side": "south" },
+    { "col": 3, "row": 3, "side": "west" }
+  ],
+  "impassable": [],
+  "features": [
+    {
+      "type": "crumbling_floor",
+      "position": { "col": 2, "row": 1 }
+    },
+    {
+      "type": "crumbling_floor",
+      "position": { "col": 2, "row": 2 }
+    }
+  ]
+}

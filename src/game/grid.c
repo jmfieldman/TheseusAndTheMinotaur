@@ -210,6 +210,25 @@ int grid_get_features_at(const Grid* grid, int col, int row,
     return count;
 }
 
+/* ── Feature link rebuilding ───────────────────────────── */
+
+void grid_rebuild_feature_links(Grid* grid) {
+    /* Clear all cell-level feature arrays */
+    int total = grid->cols * grid->rows;
+    for (int i = 0; i < total; i++) {
+        grid->cells[i].feature_count = 0;
+    }
+
+    /* Re-link each feature to its cell based on current col/row */
+    for (int i = 0; i < grid->feature_count; i++) {
+        Feature* f = grid->features[i];
+        Cell* cell = grid_cell(grid, f->col, f->row);
+        if (cell && cell->feature_count < MAX_FEATURES_PER_CELL) {
+            cell->features[cell->feature_count++] = f;
+        }
+    }
+}
+
 /* ── Entity position helpers ───────────────────────────── */
 
 void grid_get_entity_pos(const Grid* grid, EntityID who,

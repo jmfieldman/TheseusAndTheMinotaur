@@ -98,10 +98,17 @@ static void ss_handle_action(State* self, SemanticAction action) {
             /* Start new game */
             LOG_INFO("Starting new game in slot %d", ss->selected);
         }
-        /* For now, always launch tutorial-01 as a playable prototype */
+        /* Map save slots to different test levels for feature testing */
+        static const char* level_files[] = {
+            "levels/tutorial/tutorial-01.json",
+            "levels/tutorial/tutorial-02.json",
+            "levels/test/test-pressure-plate.json",
+        };
+        int num_levels = (int)(sizeof(level_files) / sizeof(level_files[0]));
+        int idx = ss->selected % num_levels;
         char level_path[512];
-        snprintf(level_path, sizeof(level_path), "%s/assets/levels/tutorial/tutorial-01.json",
-                 platform_get_asset_dir());
+        snprintf(level_path, sizeof(level_path), "%s/assets/%s",
+                 platform_get_asset_dir(), level_files[idx]);
         engine_push_state(puzzle_scene_create(level_path));
         break;
     }

@@ -52,6 +52,28 @@ static const Color COLOR_ENTRANCE   = {0.40f, 0.60f, 0.80f, 0.4f};
 static const Color COLOR_SPIKE_OFF  = {0.35f, 0.30f, 0.25f, 1.0f};
 /* Spike trap active */
 static const Color COLOR_SPIKE_ON   = {0.90f, 0.35f, 0.20f, 1.0f};
+/* Pressure plate */
+static const Color COLOR_PLATE      = {0.30f, 0.50f, 0.70f, 1.0f};
+/* Locking gate (unlocked) */
+static const Color COLOR_GATE_OPEN  = {0.60f, 0.55f, 0.30f, 1.0f};
+/* Locking gate (locked) */
+static const Color COLOR_GATE_LOCKED = {0.50f, 0.20f, 0.20f, 1.0f};
+/* Teleporter */
+static const Color COLOR_TELEPORTER = {0.55f, 0.30f, 0.70f, 1.0f};
+/* Crumbling floor (intact) */
+static const Color COLOR_CRUMBLE_OK = {0.45f, 0.40f, 0.30f, 1.0f};
+/* Crumbling floor (collapsed) */
+static const Color COLOR_CRUMBLE_PIT = {0.05f, 0.05f, 0.05f, 1.0f};
+/* Moving platform */
+static const Color COLOR_PLATFORM   = {0.50f, 0.45f, 0.35f, 1.0f};
+/* Medusa wall */
+static const Color COLOR_MEDUSA     = {0.40f, 0.65f, 0.30f, 1.0f};
+/* Ice tile */
+static const Color COLOR_ICE        = {0.55f, 0.75f, 0.85f, 0.6f};
+/* Groove box */
+static const Color COLOR_GROOVE_BOX = {0.55f, 0.40f, 0.25f, 1.0f};
+/* Turnstile */
+static const Color COLOR_TURNSTILE  = {0.60f, 0.50f, 0.20f, 1.0f};
 /* Background */
 static const Color COLOR_BG         = {0.07f, 0.07f, 0.09f, 1.0f};
 /* HUD text */
@@ -282,21 +304,16 @@ static void render_features(const PuzzleScene* ps) {
 
     for (int i = 0; i < ps->grid->feature_count; i++) {
         const Feature* f = ps->grid->features[i];
+        const char* name = f->vt->name;
         float sx, sy;
         grid_to_screen(ps, f->col, f->row, &sx, &sy);
 
-        if (strcmp(f->vt->name, "spike_trap") == 0) {
-            /* Check if active via is_hazardous */
+        if (strcmp(name, "spike_trap") == 0) {
             bool active = f->vt->is_hazardous &&
                           f->vt->is_hazardous(f, ps->grid, f->col, f->row);
             Color spike_color = active ? COLOR_SPIKE_ON : COLOR_SPIKE_OFF;
-
-            /* Draw spike marker as smaller centered square */
             ui_draw_rect(sx + inset, sy + inset,
-                         ts - 2.0f * inset, ts - 2.0f * inset,
-                         spike_color);
-
-            /* Draw small "X" pattern with 4 corner dots when active */
+                         ts - 2.0f * inset, ts - 2.0f * inset, spike_color);
             if (active) {
                 float dot = ts * 0.08f;
                 ui_draw_rect(sx + inset, sy + inset, dot, dot, COLOR_SPIKE_ON);
@@ -304,8 +321,62 @@ static void render_features(const PuzzleScene* ps) {
                 ui_draw_rect(sx + inset, sy + ts - inset - dot, dot, dot, COLOR_SPIKE_ON);
                 ui_draw_rect(sx + ts - inset - dot, sy + ts - inset - dot, dot, dot, COLOR_SPIKE_ON);
             }
+        } else if (strcmp(name, "pressure_plate") == 0) {
+            /* Recessed plate marker */
+            float pi = ts * 0.25f;
+            ui_draw_rect(sx + pi, sy + pi, ts - 2.0f * pi, ts - 2.0f * pi, COLOR_PLATE);
+        } else if (strcmp(name, "locking_gate") == 0) {
+            /* Small gate marker on the tile */
+            bool locked = f->vt->snapshot_size && f->vt->snapshot_size(f) > 0;
+            /* Check locked state by reading data directly */
+            typedef struct { int gate_side; bool locked; } LGPeek;
+            LGPeek* lgd = (LGPeek*)f->data;
+            Color gc = lgd->locked ? COLOR_GATE_LOCKED : COLOR_GATE_OPEN;
+            float gi = ts * 0.30f;
+            ui_draw_rect(sx + gi, sy + gi, ts - 2.0f * gi, ts - 2.0f * gi, gc);
+        } else if (strcmp(name, "teleporter") == 0) {
+            /* Diamond shape (rotated square) approximated with small centered square */
+            float ti = ts * 0.25f;
+            ui_draw_rect(sx + ti, sy + ti, ts - 2.0f * ti, ts - 2.0f * ti, COLOR_TELEPORTER);
+        } else if (strcmp(name, "crumbling_floor") == 0) {
+            bool collapsed = f->vt->is_hazardous &&
+                             f->vt->is_hazardous(f, ps->grid, f->col, f->row);
+            Color cc = collapsed ? COLOR_CRUMBLE_PIT : COLOR_CRUMBLE_OK;
+            float ci = ts * 0.10f;
+            ui_draw_rect(sx + ci, sy + ci, ts - 2.0f * ci, ts - 2.0f * ci, cc);
+            /* Crack pattern for intact */
+            if (!collapsed) {
+                float line_w = 2.0f;
+                ui_draw_rect(sx + ts * 0.3f, sy + ts * 0.2f, line_w, ts * 0.6f, COLOR_BG);
+                ui_draw_rect(sx + ts * 0.2f, sy + ts * 0.5f, ts * 0.5f, line_w, COLOR_BG);
+            }
+        } else if (strcmp(name, "moving_platform") == 0) {
+            /* Draw platform at its current position */
+            float pi = ts * 0.08f;
+            ui_draw_rect(sx + pi, sy + pi, ts - 2.0f * pi, ts - 2.0f * pi, COLOR_PLATFORM);
+        } else if (strcmp(name, "medusa_wall") == 0) {
+            /* Green eye marker */
+            float ei = ts * 0.30f;
+            ui_draw_rect(sx + ei, sy + ei, ts - 2.0f * ei, ts - 2.0f * ei, COLOR_MEDUSA);
+        } else if (strcmp(name, "ice_tile") == 0) {
+            /* Semi-transparent blue overlay */
+            ui_draw_rect(sx, sy, ts, ts, COLOR_ICE);
+        } else if (strcmp(name, "groove_box") == 0) {
+            /* Draw box at its current position (not feature position) */
+            typedef struct { int gc[32]; int gr[32]; int gl; int bc, br; } GBPeek;
+            GBPeek* gbd = (GBPeek*)f->data;
+            float bsx, bsy;
+            grid_to_screen(ps, gbd->bc, gbd->br, &bsx, &bsy);
+            float bi = ts * 0.12f;
+            ui_draw_rect(bsx + bi, bsy + bi, ts - 2.0f * bi, ts - 2.0f * bi,
+                         COLOR_GROOVE_BOX);
+        } else if (strcmp(name, "auto_turnstile") == 0 ||
+                   strcmp(name, "manual_turnstile") == 0) {
+            /* Small gear/pivot marker */
+            float gi = ts * 0.35f;
+            ui_draw_rect(sx + gi, sy + gi, ts - 2.0f * gi, ts - 2.0f * gi,
+                         COLOR_TURNSTILE);
         }
-        /* Future features will get their own rendering cases here */
     }
 }
 

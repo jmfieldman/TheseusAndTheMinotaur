@@ -1,0 +1,31 @@
+{
+  "id": "test-groove-box",
+  "name": "Groove Box Test",
+  "biome": "stone_labyrinth",
+  "difficulty": 2,
+  "optimal_turns": 5,
+  "grid": { "width": 5, "height": 4 },
+  "entrance": { "col": 0, "row": 1, "side": "west" },
+  "exit":     { "col": 4, "row": 1, "side": "east" },
+  "theseus":  { "col": 0, "row": 1 },
+  "minotaur": { "col": 4, "row": 3 },
+  "walls": [
+    { "col": 3, "row": 2, "side": "south" }
+  ],
+  "impassable": [],
+  "features": [
+    {
+      "type": "groove_box",
+      "position": { "col": 2, "row": 1 },
+      "config": {
+        "groove": [
+          { "col": 1, "row": 1 },
+          { "col": 2, "row": 1 },
+          { "col": 3, "row": 1 },
+          { "col": 4, "row": 1 }
+        ],
+        "initial_pos": { "col": 2, "row": 1 }
+      }
+    }
+  ]
+}

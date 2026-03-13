@@ -1,0 +1,25 @@
+{
+  "id": "test-locking-gate",
+  "name": "Locking Gate Test",
+  "biome": "palace_of_knossos",
+  "difficulty": 2,
+  "optimal_turns": 5,
+  "grid": { "width": 5, "height": 4 },
+  "entrance": { "col": 0, "row": 1, "side": "west" },
+  "exit":     { "col": 4, "row": 1, "side": "east" },
+  "theseus":  { "col": 0, "row": 1 },
+  "minotaur": { "col": 4, "row": 3 },
+  "walls": [
+    { "col": 1, "row": 0, "side": "east" },
+    { "col": 1, "row": 1, "side": "east" },
+    { "col": 1, "row": 3, "side": "east" }
+  ],
+  "impassable": [],
+  "features": [
+    {
+      "type": "locking_gate",
+      "position": { "col": 1, "row": 2 },
+      "config": { "side": "east" }
+    }
+  ]
+}

@@ -20,7 +20,7 @@ static size_t calc_feature_blob_size(const Grid* grid) {
 }
 
 /*
- * Capture feature state into a snapshot.
+ * Capture full state into a snapshot.
  */
 static void snapshot_capture(UndoSnapshot* snap, const Grid* grid) {
     snap->theseus_col  = grid->theseus_col;
@@ -31,7 +31,7 @@ static void snapshot_capture(UndoSnapshot* snap, const Grid* grid) {
     snap->level_won    = grid->level_won;
     snap->level_lost   = grid->level_lost;
 
-    /* Serialize feature state */
+    /* Serialize feature internal state */
     size_t blob_size = calc_feature_blob_size(grid);
     if (blob_size > 0) {
         snap->feature_blob = malloc(blob_size);
@@ -52,6 +52,30 @@ static void snapshot_capture(UndoSnapshot* snap, const Grid* grid) {
         snap->feature_blob = NULL;
         snap->feature_blob_size = 0;
     }
+
+    /* Snapshot cell state (walls + impassable) */
+    int total_cells = grid->cols * grid->rows;
+    snap->cell_snapshots = malloc((size_t)total_cells * sizeof(CellSnapshot));
+    snap->cell_count = total_cells;
+    for (int i = 0; i < total_cells; i++) {
+        const Cell* c = &grid->cells[i];
+        for (int d = 0; d < DIR_COUNT; d++) {
+            snap->cell_snapshots[i].walls[d] = c->walls[d];
+        }
+        snap->cell_snapshots[i].impassable = c->impassable;
+    }
+
+    /* Snapshot feature positions (col/row) */
+    snap->feature_pos_count = grid->feature_count;
+    if (grid->feature_count > 0) {
+        snap->feature_positions = malloc((size_t)(grid->feature_count * 2) * sizeof(int));
+        for (int i = 0; i < grid->feature_count; i++) {
+            snap->feature_positions[i * 2]     = grid->features[i]->col;
+            snap->feature_positions[i * 2 + 1] = grid->features[i]->row;
+        }
+    } else {
+        snap->feature_positions = NULL;
+    }
 }
 
 /*
@@ -66,7 +90,7 @@ static void snapshot_restore(const UndoSnapshot* snap, Grid* grid) {
     grid->level_won    = snap->level_won;
     grid->level_lost   = snap->level_lost;
 
-    /* Restore feature state */
+    /* Restore feature internal state */
     if (snap->feature_blob && snap->feature_blob_size > 0) {
         const uint8_t* ptr = (const uint8_t*)snap->feature_blob;
         for (int i = 0; i < grid->feature_count; i++) {
@@ -80,15 +104,49 @@ static void snapshot_restore(const UndoSnapshot* snap, Grid* grid) {
             }
         }
     }
+
+    /* Restore cell state (walls + impassable) */
+    if (snap->cell_snapshots && snap->cell_count > 0) {
+        int total_cells = grid->cols * grid->rows;
+        int count = (snap->cell_count < total_cells) ? snap->cell_count : total_cells;
+        for (int i = 0; i < count; i++) {
+            Cell* c = &grid->cells[i];
+            for (int d = 0; d < DIR_COUNT; d++) {
+                c->walls[d] = snap->cell_snapshots[i].walls[d];
+            }
+            c->impassable = snap->cell_snapshots[i].impassable;
+        }
+    }
+
+    /* Restore feature positions and rebuild cell links */
+    if (snap->feature_positions && snap->feature_pos_count > 0) {
+        int count = (snap->feature_pos_count < grid->feature_count)
+                    ? snap->feature_pos_count : grid->feature_count;
+        for (int i = 0; i < count; i++) {
+            grid->features[i]->col = snap->feature_positions[i * 2];
+            grid->features[i]->row = snap->feature_positions[i * 2 + 1];
+        }
+    }
+
+    /* Rebuild cell->features links from feature col/row */
+    grid_rebuild_feature_links(grid);
 }
 
 /*
- * Free the feature blob in a snapshot (but not the snapshot struct itself).
+ * Free all allocated memory in a snapshot (but not the struct itself).
  */
 static void snapshot_free_blob(UndoSnapshot* snap) {
     free(snap->feature_blob);
     snap->feature_blob = NULL;
     snap->feature_blob_size = 0;
+
+    free(snap->cell_snapshots);
+    snap->cell_snapshots = NULL;
+    snap->cell_count = 0;
+
+    free(snap->feature_positions);
+    snap->feature_positions = NULL;
+    snap->feature_pos_count = 0;
 }
 
 /* ── Public API ────────────────────────────────────────── */

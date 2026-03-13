@@ -1,0 +1,31 @@
+{
+  "id": "test-teleporter",
+  "name": "Teleporter Test",
+  "biome": "celestial_observatory",
+  "difficulty": 1,
+  "optimal_turns": 4,
+  "grid": { "width": 6, "height": 4 },
+  "entrance": { "col": 0, "row": 1, "side": "west" },
+  "exit":     { "col": 5, "row": 1, "side": "east" },
+  "theseus":  { "col": 0, "row": 1 },
+  "minotaur": { "col": 5, "row": 3 },
+  "walls": [
+    { "col": 2, "row": 0, "side": "east" },
+    { "col": 2, "row": 1, "side": "east" },
+    { "col": 2, "row": 2, "side": "east" },
+    { "col": 2, "row": 3, "side": "east" }
+  ],
+  "impassable": [],
+  "features": [
+    {
+      "type": "teleporter",
+      "position": { "col": 1, "row": 1 },
+      "config": { "pair_id": "A" }
+    },
+    {
+      "type": "teleporter",
+      "position": { "col": 4, "row": 1 },
+      "config": { "pair_id": "A" }
+    }
+  ]
+}
