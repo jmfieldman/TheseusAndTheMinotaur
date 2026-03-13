@@ -117,6 +117,9 @@ typedef struct {
     InputBuffer input_buf;
     bool        anim_result_pending;  /* true if result overlay should show after anim */
     TurnResult  pending_result;       /* the result to display */
+
+    /* Reverse undo animation: grid restore is deferred until anim completes */
+    bool        undo_anim_pending;    /* true during reverse undo animation */
 } PuzzleScene;
 
 /* ---------- Layout calculation ---------- */
@@ -238,10 +241,19 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
     if (ps->show_result) {
         /* In result state, only undo/reset/back allowed */
         if (action == ACTION_UNDO) {
-            if (undo_pop(&ps->undo, ps->grid)) {
+            const TurnRecord* rec = undo_peek_turn_record(&ps->undo);
+            if (rec) {
+                /* Start reverse animation, defer grid restore */
                 ps->show_result = false;
                 ps->anim_result_pending = false;
-                anim_queue_init(&ps->anim);  /* cancel any animation */
+                ps->undo_anim_pending = true;
+                anim_queue_start_reverse(&ps->anim, rec);
+                set_status(ps, "Undo", COLOR_HUD, 0.8f);
+            } else if (undo_pop(&ps->undo, ps->grid)) {
+                /* No TurnRecord — fall back to instant undo */
+                ps->show_result = false;
+                ps->anim_result_pending = false;
+                anim_queue_init(&ps->anim);
                 set_status(ps, "Undo", COLOR_HUD, 0.8f);
             }
             return;
@@ -271,12 +283,18 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
         case ACTION_WAIT:
             is_wait = true;
             break;
-        case ACTION_UNDO:
-            if (undo_pop(&ps->undo, ps->grid)) {
+        case ACTION_UNDO: {
+            const TurnRecord* rec = undo_peek_turn_record(&ps->undo);
+            if (rec) {
+                ps->undo_anim_pending = true;
+                anim_queue_start_reverse(&ps->anim, rec);
+                set_status(ps, "Undo", COLOR_HUD, 0.8f);
+            } else if (undo_pop(&ps->undo, ps->grid)) {
                 anim_queue_init(&ps->anim);
                 set_status(ps, "Undo", COLOR_HUD, 0.8f);
             }
             return;
+        }
         case ACTION_RESET:
             if (undo_reset(&ps->undo, ps->grid)) {
                 anim_queue_init(&ps->anim);
@@ -304,6 +322,9 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
         undo_pop(&ps->undo, ps->grid);
         return;
     }
+
+    /* Store TurnRecord in undo snapshot for reverse animation on undo */
+    undo_store_turn_record(&ps->undo, &record);
 
     /* Start the animation */
     input_buffer_init(&ps->input_buf);
@@ -695,6 +716,7 @@ static void puzzle_on_enter(State* self) {
     ps->last_vw = 0;
     ps->last_vh = 0;
     ps->anim_result_pending = false;
+    ps->undo_anim_pending = false;
 
     /* Initialize animation system */
     anim_queue_init(&ps->anim);
@@ -783,6 +805,13 @@ static void puzzle_update(State* self, float dt) {
         if (!anim_queue_is_playing(&ps->anim)) {
             input_buffer_close_window(&ps->input_buf);
 
+            /* Complete deferred undo (grid restore after reverse animation) */
+            if (ps->undo_anim_pending) {
+                ps->undo_anim_pending = false;
+                undo_pop(&ps->undo, ps->grid);
+                return;
+            }
+
             /* Show deferred result */
             if (ps->anim_result_pending) {
                 show_turn_result(ps, ps->pending_result);
@@ -826,6 +855,22 @@ static void puzzle_render(State* self) {
     render_features(ps);
     render_walls(ps);
     render_actors(ps);
+
+    /* Rewind overlay during reverse (undo) animation */
+    if (anim_queue_is_reversing(&ps->anim) && anim_queue_is_playing(&ps->anim)) {
+        /* Semi-transparent blue-tinted overlay for "rewind tape" effect */
+        ui_draw_rect(0, 0, (float)vw, (float)vh,
+                     color_rgba(0.05f, 0.08f, 0.15f, 0.25f));
+
+        /* Horizontal scan lines for VHS-rewind feel */
+        float line_h = 2.0f;
+        float gap = 12.0f;
+        Color line_color = color_rgba(0.2f, 0.3f, 0.5f, 0.08f);
+        for (float y = 0; y < (float)vh; y += gap) {
+            ui_draw_rect(0, y, (float)vw, line_h, line_color);
+        }
+    }
+
     render_hud(ps, vw, vh);
     render_result_overlay(ps, vw, vh);
 }

@@ -98,6 +98,13 @@ Tween-based animation framework with event-driven per-feature playback and input
 - On death: movement blocked, but Undo and Reset still available
 - Undo from death plays death animation in reverse (e.g. voxels reconstitute)
 
+**Reverse undo animation:**
+- `TurnRecord` is stored alongside each `UndoSnapshot` via `undo_store_turn_record()` after `turn_resolve()` fills it
+- `anim_queue_start_reverse()` plays the record backward at 2× speed with reversed phase order (Mino2 → Mino1 → Env → Effects → Theseus)
+- Grid restore (`undo_pop()`) is deferred until the reverse animation completes
+- A "VHS rewind" visual overlay (blue tint + scan lines) renders during reverse playback
+- Falls back to instant restore if no `TurnRecord` is available
+
 **Verification:** Hook into puzzle scene — Theseus square slides smoothly between tiles instead of teleporting. Verify: (1) held key does not fire during animation, (2) fresh press during Minotaur's last step queues next turn, (3) no input accepted during Theseus/environment animations, (4) undo from death works. Additionally verify per-feature animations: ice slide shows hop then slide, teleport shows fade out/in, groove box push shows concurrent motion, environment phase shows sequential spike/turnstile/platform/conveyor animations.
 
 ---

@@ -147,6 +147,10 @@ static void snapshot_free_blob(UndoSnapshot* snap) {
     free(snap->feature_positions);
     snap->feature_positions = NULL;
     snap->feature_pos_count = 0;
+
+    free(snap->turn_record);
+    snap->turn_record = NULL;
+    snap->has_turn_record = false;
 }
 
 /* ── Public API ────────────────────────────────────────── */
@@ -186,6 +190,26 @@ void undo_push(UndoStack* stack, const Grid* grid) {
 
     snapshot_capture(&stack->snapshots[stack->count], grid);
     stack->count++;
+}
+
+void undo_store_turn_record(UndoStack* stack, const TurnRecord* record) {
+    if (stack->count <= 0 || !record) return;
+
+    UndoSnapshot* snap = &stack->snapshots[stack->count - 1];
+    if (snap->turn_record) {
+        free(snap->turn_record);
+    }
+    snap->turn_record = malloc(sizeof(TurnRecord));
+    if (snap->turn_record) {
+        memcpy(snap->turn_record, record, sizeof(TurnRecord));
+        snap->has_turn_record = true;
+    }
+}
+
+const TurnRecord* undo_peek_turn_record(const UndoStack* stack) {
+    if (stack->count <= 0) return NULL;
+    const UndoSnapshot* snap = &stack->snapshots[stack->count - 1];
+    return snap->has_turn_record ? snap->turn_record : NULL;
 }
 
 bool undo_pop(UndoStack* stack, Grid* grid) {

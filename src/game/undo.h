@@ -2,6 +2,7 @@
 #define GAME_UNDO_H
 
 #include "grid.h"
+#include "turn.h"
 #include <stdbool.h>
 
 /*
@@ -63,6 +64,14 @@ typedef struct {
      */
     int* feature_positions;
     int feature_pos_count;   /* number of features (array has 2x this) */
+
+    /*
+     * TurnRecord for reverse animation playback.
+     * Stored AFTER turn_resolve() fills it, so undo can replay the
+     * turn's animation in reverse.  Only present for non-initial snapshots.
+     */
+    TurnRecord* turn_record;
+    bool        has_turn_record;
 } UndoSnapshot;
 
 typedef struct {
@@ -95,6 +104,19 @@ void undo_save_initial(UndoStack* stack, const Grid* grid);
  * Call BEFORE resolving each turn.
  */
 void undo_push(UndoStack* stack, const Grid* grid);
+
+/*
+ * Store the TurnRecord for the most recently pushed snapshot.
+ * Call AFTER turn_resolve() fills the record, so reverse animation
+ * can replay the turn backward on undo.
+ */
+void undo_store_turn_record(UndoStack* stack, const TurnRecord* record);
+
+/*
+ * Peek at the TurnRecord stored in the top snapshot WITHOUT popping.
+ * Returns NULL if stack is empty or no record was stored.
+ */
+const TurnRecord* undo_peek_turn_record(const UndoStack* stack);
 
 /*
  * Pop the most recent snapshot and restore the grid to that state.

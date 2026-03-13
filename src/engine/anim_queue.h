@@ -17,7 +17,12 @@
  *   4. Minotaur step 1 animation
  *   5. Minotaur step 2 animation (if applicable)
  *
- * Animations are never fast-forwarded or skipped.
+ * For undo, the queue can play in REVERSE order at 2× speed:
+ *   1. Minotaur step 2 (reversed)
+ *   2. Minotaur step 1 (reversed)
+ *   3. Environment phase (events in reverse order, swapped from/to)
+ *   4. On-leave effects (reversed)
+ *   5. Theseus move (reversed)
  *
  * The input buffer window opens during the Minotaur's LAST step
  * animation (see input_buffer.h).
@@ -46,6 +51,7 @@ typedef enum {
 #define ANIM_ENVIRONMENT_DURATION 0.10f
 #define ANIM_MINOTAUR_DURATION   0.15f
 #define ANIM_HOP_HEIGHT          0.3f
+#define ANIM_REVERSE_SPEED       2.0f   /* speed multiplier for reverse (undo) playback */
 
 /* Per-event-type durations */
 #define ANIM_ICE_SLIDE_PER_TILE  0.06f
@@ -65,6 +71,7 @@ typedef struct {
     AnimPhase        phase;
     TurnRecord       record;
     bool             playing;
+    bool             reversing;       /* true during reverse (undo) playback */
 
     /* ── Theseus phase ─────────────────────────── */
     AnimEventType    theseus_event_type;   /* what kind of move */
@@ -112,6 +119,16 @@ void anim_queue_init(AnimQueue* aq);
  * The TurnRecord must already be filled in by turn_resolve().
  */
 void anim_queue_start(AnimQueue* aq, const TurnRecord* record);
+
+/*
+ * Start playing a turn's animation in REVERSE (for undo).
+ * Plays phases in reverse order (Mino2→Mino1→Env→Effects→Theseus)
+ * at 2× speed with swapped from/to positions.
+ *
+ * The grid should NOT be restored until this animation completes
+ * (the caller defers undo_pop until anim finishes).
+ */
+void anim_queue_start_reverse(AnimQueue* aq, const TurnRecord* record);
 
 /*
  * Advance the animation by dt seconds.
@@ -172,5 +189,8 @@ const AnimEvent* anim_queue_current_event(const AnimQueue* aq);
 
 /* Is the Theseus phase in ice-slide sub-phase (no hop)? */
 bool anim_queue_is_ice_sliding(const AnimQueue* aq);
+
+/* Is the queue currently playing in reverse (undo)? */
+bool anim_queue_is_reversing(const AnimQueue* aq);
 
 #endif /* ENGINE_ANIM_QUEUE_H */

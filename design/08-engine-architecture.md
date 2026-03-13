@@ -291,6 +291,34 @@ events and sets up appropriate tweens for visual playback.
 - **Push:** Box slides to new position while Theseus steps into vacated tile
   (concurrent tweens).
 
+#### 3.4.3 Reverse Undo Animation
+
+Undo plays back the turn's animation in **reverse** at **2× speed** with a
+visual "rewind" overlay, giving the feeling of rewinding a tape:
+
+**Reverse phase order** (opposite of forward):
+
+1. **Minotaur step 2** (reversed: after2 → after1)
+2. **Minotaur step 1** (reversed: after1 → env start position)
+3. **Environment phase** (events iterated in reverse order, from/to swapped)
+4. **Theseus effects** (events iterated in reverse, progress runs 1→0)
+5. **Theseus move** (reversed: to → from, including reverse ice slide and
+   reverse teleport)
+
+**Architecture:**
+
+- The `TurnRecord` is stored alongside each `UndoSnapshot` (via
+  `undo_store_turn_record()`) after `turn_resolve()` fills it.
+- On undo, `anim_queue_start_reverse()` plays the record backward. The
+  actual grid restore (`undo_pop()`) is **deferred** until the reverse
+  animation completes.
+- During reverse playback, a semi-transparent blue-tinted overlay with
+  horizontal scan lines creates a "VHS rewind" visual effect.
+- All durations are divided by `ANIM_REVERSE_SPEED` (2.0×) so undo feels
+  snappy but still visually informative.
+- If no `TurnRecord` is stored (e.g. first turn after session restore),
+  undo falls back to instant grid restore.
+
 ### 3.5 Game Logic Module
 
 Entirely separate from rendering:

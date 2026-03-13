@@ -511,6 +511,22 @@ fires immediately, creating fluid turn chaining without cutting any animation
 short. Animation durations should be short enough to feel snappy but long
 enough to be readable.
 
+### 7.6 Undo Rewind Animation
+
+When the player presses Undo, the previous turn's animation plays in
+**reverse** at **2× speed** with a "VHS rewind" visual overlay:
+
+- **Phase order reversed:** Minotaur step 2 → step 1 → environment (events
+  in reverse order) → on-leave effects (reversed) → Theseus move (reversed).
+- **Visual overlay:** Semi-transparent blue tint with horizontal scan lines
+  over the entire viewport during reverse playback.
+- **Grid restore deferred:** The actual board state is not restored until the
+  reverse animation completes, so the player sees the turn visually "unwind."
+- **Speed:** All animation durations divided by 2.0× for snappy but readable
+  rewind.
+- **Fallback:** If no animation record exists (e.g. first load), undo snaps
+  the board state instantly.
+
 ### 7.7 Death Animations
 
 Each death cause has a distinct voxel animation. All death animations work
