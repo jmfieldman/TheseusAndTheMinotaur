@@ -1,6 +1,7 @@
 #include "scene/title_scene.h"
 #include "scene/save_select_scene.h"
 #include "scene/settings_scene.h"
+#include "scene/test_level_scene.h"
 #include "engine/engine.h"
 #include "engine/utils.h"
 #include "render/renderer.h"
@@ -19,6 +20,7 @@ typedef enum {
     TITLE_ITEM_PLAY,
     TITLE_ITEM_CONTINUE,
     TITLE_ITEM_SETTINGS,
+    TITLE_ITEM_TEST,
     TITLE_ITEM_QUIT,
     TITLE_ITEM_COUNT
 } TitleMenuItem;
@@ -44,6 +46,7 @@ static void rebuild_visible_items(TitleScene* ts) {
     if (ts->has_continue)
         ts->visible_items[ts->visible_count++] = TITLE_ITEM_CONTINUE;
     ts->visible_items[ts->visible_count++] = TITLE_ITEM_SETTINGS;
+    ts->visible_items[ts->visible_count++] = TITLE_ITEM_TEST;
     if (ts->show_quit)
         ts->visible_items[ts->visible_count++] = TITLE_ITEM_QUIT;
 }
@@ -53,6 +56,7 @@ static const char* item_string_key(TitleMenuItem item) {
     case TITLE_ITEM_PLAY:     return "title_play";
     case TITLE_ITEM_CONTINUE: return "title_continue";
     case TITLE_ITEM_SETTINGS: return "title_settings";
+    case TITLE_ITEM_TEST:     return "title_test";
     case TITLE_ITEM_QUIT:     return "title_quit";
     default:                  return "";
     }
@@ -128,6 +132,9 @@ static void title_handle_action(State* self, SemanticAction action) {
             break;
         case TITLE_ITEM_SETTINGS:
             engine_push_state(settings_scene_create());
+            break;
+        case TITLE_ITEM_TEST:
+            engine_push_state(test_level_scene_create());
             break;
         case TITLE_ITEM_QUIT:
             engine_quit();
