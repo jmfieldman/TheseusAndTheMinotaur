@@ -10,7 +10,10 @@
 #include "render/voxel_mesh.h"
 #include "render/camera.h"
 #include "render/lighting.h"
+#include "render/diorama_gen.h"
+#include "data/biome_config.h"
 #include "input/input_manager.h"
+#include "platform/platform.h"
 #include "data/strings.h"
 #include "data/settings.h"
 #include "game/game.h"
@@ -748,145 +751,33 @@ static void render_result_overlay(const PuzzleScene* ps, int vw, int vh) {
  *   - Theseus and Minotaur as colored cubes
  * All in world units where 1 unit = 1 tile.
  */
-static void build_test_diorama(PuzzleScene* ps) {
+static void build_diorama(PuzzleScene* ps) {
     if (ps->diorama_built) {
         voxel_mesh_destroy(&ps->diorama_mesh);
         voxel_mesh_destroy(&ps->theseus_mesh);
         voxel_mesh_destroy(&ps->minotaur_mesh);
     }
 
-    voxel_mesh_begin(&ps->diorama_mesh);
-
     int cols = ps->grid->cols;
     int rows = ps->grid->rows;
 
-    /* Floor height and thickness */
-    float floor_h = 0.15f;
-    float floor_y = -floor_h;
+    /* Load biome config */
+    BiomeConfig biome;
+    biome_config_defaults(&biome);
 
-    /* Floor tiles — one tile per grid cell.
-     * AO is computed via raytraced textures (per-texel), so no
-     * subdivision is needed for smooth shadows. */
-    for (int r = 0; r < rows; r++) {
-        for (int c = 0; c < cols; c++) {
-            const Cell* cell = grid_cell_const(ps->grid, c, r);
-            if (cell->impassable) {
-                /* Impassable: dark block filling the whole tile height */
-                voxel_mesh_add_box(&ps->diorama_mesh,
-                                    (float)c, floor_y, (float)r,
-                                    1.0f, floor_h + 0.5f, 1.0f,
-                                    0.12f, 0.13f, 0.11f, 1.0f,
-                                    false);
-                continue;
-            }
-
-            float shade;
-            if ((c + r) % 2 == 0) {
-                shade = 0.35f;
-            } else {
-                shade = 0.42f;
-            }
-            /* Slight height jitter for visual interest */
-            float jitter = ((c * 7 + r * 13) % 5) * 0.005f;
-
-            voxel_mesh_add_box(&ps->diorama_mesh,
-                                (float)c, floor_y - jitter, (float)r,
-                                1.0f, floor_h + jitter, 1.0f,
-                                shade, shade * 1.05f, shade * 0.95f, 1.0f,
-                                false);
-        }
+    if (ps->grid->biome[0] != '\0') {
+        char biome_path[512];
+        snprintf(biome_path, sizeof(biome_path), "%s/assets/biomes/%s.json",
+                 platform_get_asset_dir(), ps->grid->biome);
+        biome_config_load(&biome, biome_path);
     }
 
-    /* Walls — rendered as tall thin blocks on cell edges.
-     *
-     * Each physical wall segment is shared between two cells (e.g. cell A's
-     * north wall is cell B's south wall). To avoid duplicate overlapping boxes
-     * we emit each wall only once:
-     *   - South walls: only emit for row 0 (grid boundary)
-     *   - West walls:  only emit for col 0 (grid boundary)
-     *   - North walls: always emit (covers interior + top boundary)
-     *   - East walls:  always emit (covers interior + right boundary)
-     *
-     * Walls are marked no_cull=true because they are thin geometry that
-     * should never have faces culled. They still contribute to the
-     * occupancy grid for AO shadow casting on adjacent surfaces. */
-    float wall_w = 0.12f;   /* wall thickness */
-    float wall_h = 0.6f;    /* wall height above floor */
+    /* Generate diorama via procedural pipeline */
+    voxel_mesh_begin(&ps->diorama_mesh);
 
-    for (int r = 0; r < rows; r++) {
-        for (int c = 0; c < cols; c++) {
-            bool is_exit;
+    DioramaGenResult gen_result;
+    diorama_generate(&ps->diorama_mesh, ps->grid, &biome, &gen_result);
 
-            /* North wall (between row r and r+1) — always emit */
-            if (grid_has_wall(ps->grid, c, r, DIR_NORTH)) {
-                is_exit = (c == ps->grid->exit_col && r == ps->grid->exit_row &&
-                           ps->grid->exit_side == DIR_NORTH);
-                if (!is_exit) {
-                    voxel_mesh_add_box(&ps->diorama_mesh,
-                                        (float)c, 0.0f, (float)(r + 1) - wall_w * 0.5f,
-                                        1.0f, wall_h, wall_w,
-                                        0.55f, 0.50f, 0.42f, 1.0f,
-                                        true);
-                }
-            }
-
-            /* South wall — only emit for row 0 (grid boundary).
-             * Interior south walls are covered by the north wall of row r-1. */
-            if (r == 0 && grid_has_wall(ps->grid, c, r, DIR_SOUTH)) {
-                is_exit = (c == ps->grid->exit_col && r == ps->grid->exit_row &&
-                           ps->grid->exit_side == DIR_SOUTH);
-                if (!is_exit) {
-                    voxel_mesh_add_box(&ps->diorama_mesh,
-                                        (float)c, 0.0f, (float)r - wall_w * 0.5f,
-                                        1.0f, wall_h, wall_w,
-                                        0.55f, 0.50f, 0.42f, 1.0f,
-                                        true);
-                }
-            }
-
-            /* East wall (between col c and c+1) — always emit */
-            if (grid_has_wall(ps->grid, c, r, DIR_EAST)) {
-                is_exit = (c == ps->grid->exit_col && r == ps->grid->exit_row &&
-                           ps->grid->exit_side == DIR_EAST);
-                if (!is_exit) {
-                    voxel_mesh_add_box(&ps->diorama_mesh,
-                                        (float)(c + 1) - wall_w * 0.5f, 0.0f, (float)r,
-                                        wall_w, wall_h, 1.0f,
-                                        0.55f, 0.50f, 0.42f, 1.0f,
-                                        true);
-                }
-            }
-
-            /* West wall — only emit for col 0 (grid boundary).
-             * Interior west walls are covered by the east wall of col c-1. */
-            if (c == 0 && grid_has_wall(ps->grid, c, r, DIR_WEST)) {
-                is_exit = (c == ps->grid->exit_col && r == ps->grid->exit_row &&
-                           ps->grid->exit_side == DIR_WEST);
-                if (!is_exit) {
-                    voxel_mesh_add_box(&ps->diorama_mesh,
-                                        (float)c - wall_w * 0.5f, 0.0f, (float)r,
-                                        wall_w, wall_h, 1.0f,
-                                        0.55f, 0.50f, 0.42f, 1.0f,
-                                        true);
-                }
-            }
-        }
-    }
-
-    /* Exit marker — golden floor inlay */
-    {
-        float inset = 0.15f;
-        voxel_mesh_add_box(&ps->diorama_mesh,
-                            (float)ps->grid->exit_col + inset,
-                            0.0f,
-                            (float)ps->grid->exit_row + inset,
-                            1.0f - 2.0f * inset, 0.02f, 1.0f - 2.0f * inset,
-                            0.85f, 0.75f, 0.40f, 1.0f,
-                            false);
-    }
-
-    /* Build the mesh with occupancy grid cell size = 1/16 tile.
-     * Finer grid gives smoother AO and avoids culling artifacts on thin walls. */
     voxel_mesh_build(&ps->diorama_mesh, 0.0625f);
 
     /* Set up camera */
@@ -894,15 +785,22 @@ static void build_test_diorama(PuzzleScene* ps) {
     diorama_camera_set_target(&ps->diorama_cam,
                                cols * 0.5f, 0.0f, rows * 0.5f);
 
-    /* Set up lighting */
+    /* Set up lighting with generated point lights */
     lighting_init(&ps->diorama_light);
+    for (int i = 0; i < gen_result.light_count; i++) {
+        lighting_add_point(&ps->diorama_light,
+                           gen_result.lights[i].pos[0],
+                           gen_result.lights[i].pos[1],
+                           gen_result.lights[i].pos[2],
+                           gen_result.lights[i].color[0],
+                           gen_result.lights[i].color[1],
+                           gen_result.lights[i].color[2],
+                           gen_result.lights[i].radius);
+    }
 
-    /* Build actor meshes (unit-sized, centered at origin).
-     * These are rendered each frame with a translation model matrix
-     * so they follow the current game state and animation positions. */
+    /* Build actor meshes (unit-sized, centered at origin) */
 
-    /* Theseus — blue cube, 0.45 units, centered at origin.
-     * Single isolated box: use large cell_size so all 6 faces emit with full AO. */
+    /* Theseus — blue cube */
     {
         float size = 0.45f;
         float half = size * 0.5f;
@@ -915,7 +813,7 @@ static void build_test_diorama(PuzzleScene* ps) {
         voxel_mesh_build(&ps->theseus_mesh, size);
     }
 
-    /* Minotaur — red cube, 0.65 units wide/deep, 0.52 units tall, centered */
+    /* Minotaur — red cube */
     {
         float size = 0.65f;
         float half = size * 0.5f;
@@ -930,7 +828,7 @@ static void build_test_diorama(PuzzleScene* ps) {
 
     ps->diorama_built = true;
 
-    LOG_INFO("Test diorama built: %d static verts, theseus %d verts, minotaur %d verts",
+    LOG_INFO("Diorama built: %d static verts, theseus %d verts, minotaur %d verts",
              voxel_mesh_get_vertex_count(&ps->diorama_mesh),
              voxel_mesh_get_vertex_count(&ps->theseus_mesh),
              voxel_mesh_get_vertex_count(&ps->minotaur_mesh));
@@ -1078,7 +976,7 @@ static void puzzle_on_enter(State* self) {
     /* Build 3D diorama for verification */
     ps->render_3d = false;
     ps->diorama_built = false;
-    build_test_diorama(ps);
+    build_diorama(ps);
 
     input_manager_set_context(INPUT_CONTEXT_PUZZLE);
 

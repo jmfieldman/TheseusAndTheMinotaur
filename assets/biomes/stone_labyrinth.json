@@ -1,0 +1,84 @@
+{
+    "id": "stone_labyrinth",
+    "name": "Stone Labyrinth",
+
+    "palette": {
+        "floor_a":        [0.35, 0.37, 0.33],
+        "floor_b":        [0.42, 0.44, 0.40],
+        "wall":           [0.55, 0.50, 0.42],
+        "wall_jitter":    0.06,
+        "accent":         [0.65, 0.60, 0.45],
+        "impassable":     [0.30, 0.28, 0.25],
+        "platform_side":  [0.25, 0.23, 0.20],
+        "back_wall":      [0.50, 0.47, 0.40]
+    },
+
+    "wall_style": {
+        "blocks_per_segment": 4,
+        "rows_of_blocks":     2,
+        "block_regularity":   0.7,
+        "roughness":          0.1,
+        "height_variation":   0.05,
+        "color_jitter":       0.06,
+        "mortar_gap":         0.015
+    },
+
+    "floor_decorations": {
+        "density":       0.10,
+        "max_per_tile":  1,
+        "prefabs":       ["stone_pebble", "floor_crack"]
+    },
+
+    "wall_decorations": {
+        "density":       0.15,
+        "max_per_tile":  1,
+        "prefabs":       ["wall_moss"]
+    },
+
+    "lantern_pillars": {
+        "glow_color":           [0.4, 0.8, 0.8],
+        "density":              0.5,
+        "place_at_corners":     true,
+        "place_at_wall_endpoints": true
+    },
+
+    "platform": {
+        "depth_blocks": 3
+    },
+
+    "back_wall": {
+        "height_multiplier":   4.0,
+        "decoration_density":  0.3
+    },
+
+    "edge_border": {
+        "depth": 1
+    },
+
+    "doors": {
+        "frame_height_blocks": 4
+    },
+
+    "prefabs": [
+        {
+            "name": "stone_pebble",
+            "boxes": [
+                { "dx": 0.0, "dy": 0.0, "dz": 0.0, "sx": 0.08, "sy": 0.03, "sz": 0.06, "color": [0.45, 0.42, 0.38] }
+            ]
+        },
+        {
+            "name": "floor_crack",
+            "boxes": [
+                { "dx": 0.0,  "dy": 0.001, "dz": 0.0,   "sx": 0.15, "sy": 0.003, "sz": 0.02, "color": [0.20, 0.18, 0.15] },
+                { "dx": 0.06, "dy": 0.001, "dz": 0.05,  "sx": 0.10, "sy": 0.003, "sz": 0.02, "color": [0.20, 0.18, 0.15] }
+            ]
+        },
+        {
+            "name": "wall_moss",
+            "boxes": [
+                { "dx": 0.0, "dy": 0.0,  "dz": 0.0, "sx": 0.12, "sy": 0.06, "sz": 0.03, "color": [0.25, 0.35, 0.20], "no_cull": true },
+                { "dx": 0.05, "dy": 0.04, "dz": 0.0, "sx": 0.08, "sy": 0.04, "sz": 0.02, "color": [0.30, 0.40, 0.22], "no_cull": true }
+            ]
+        }
+    ]
+}

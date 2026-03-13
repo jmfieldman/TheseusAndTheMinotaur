@@ -102,8 +102,9 @@ static bool face_is_hidden(const OccupancyGrid* occ,
         cz = (face->face_sign > 0) ? box->z + box->sz : box->z;
     }
 
-    /* Offset slightly into the neighbor */
-    float eps = occ->cell_size * 0.5f;
+    /* Offset into the neighbor by more than one cell to avoid sampling
+     * a cell that the box itself partially occupies at its boundary. */
+    float eps = occ->cell_size * 1.5f;
     cx += face->nx * eps;
     cy += face->ny * eps;
     cz += face->nz * eps;

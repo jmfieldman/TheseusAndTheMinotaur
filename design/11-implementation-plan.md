@@ -116,16 +116,18 @@ Switch from 2D rectangles to actual 3D voxel rendering. Freeform box placement, 
 
 **Files:**
 - `src/render/camera.h / .c` — Orthographic camera positioned for isometric-style diorama view. Handles viewport sizing (square sub-region on mobile). View + projection matrices.
-- `src/render/voxel_mesh.h / .c` — Freeform box mesh builder. Accumulates axis-aligned boxes at arbitrary positions and dimensions into a single VBO (position + normal + color per vertex). API: `voxel_mesh_begin()`, `voxel_mesh_add_box(pos, size, color)` (any float coordinates, any dimensions — not grid-snapped), `voxel_mesh_build()` → VAO/VBO, `voxel_mesh_draw()`. During `build()`:
-  1. Rasterizes all placed boxes into a coarse occupancy grid (~8 subdivisions per game tile)
-  2. Emits vertices for each box face, skipping faces fully occluded by the occupancy grid (hidden face culling)
-  3. For each emitted vertex, samples 3 neighboring occupancy cells at that corner to compute a baked AO multiplier (0.0–1.0), multiplied into the vertex color
-  4. Uploads final vertex data to GPU; discards occupancy grid
-- `src/render/occupancy_grid.h / .c` — Coarse boolean grid used during mesh build for face culling and AO. Allocated at `voxel_mesh_build()` time, populated by rasterizing all placed boxes, queried per face/vertex, then freed. Resolution is tunable (~8 subdivisions per game tile = 128×128×32 for a 16×16 level).
-- `src/render/lighting.h / .c` — Simple directional light + up to N point lights (lanterns). Passed as uniforms to the voxel shader.
-- Voxel vertex/fragment shaders (embedded in `shader.c` or new file): position + normal + color (with baked AO) → lit output with ambient + diffuse + optional point lights.
+- `src/render/voxel_mesh.h / .c` — Freeform box mesh builder. Accumulates axis-aligned boxes at arbitrary positions and dimensions into a single VBO (position + normal + color + uv per vertex = 12 floats). Boxes can be flagged `no_cull` for thin geometry (walls). API: `voxel_mesh_begin()`, `voxel_mesh_add_box(pos, size, color, no_cull)`, `voxel_mesh_build(cell_size)` → VAO/VBO + AO texture, `voxel_mesh_draw()`. During `build()`:
+  1. Rasterizes all boxes into a coarse occupancy grid (~16 subdivisions per game tile)
+  2. Emits vertices for each face, skipping fully occluded faces (unless `no_cull`)
+  3. Packs visible faces into an AO texture atlas (8×8 texels per face)
+  4. Raycasts 32 cosine-weighted hemisphere rays per texel for AO values
+  5. Uploads geometry and AO texture (R8 format) to GPU; discards occupancy grid
+- `src/render/ao_baker.h / .c` — Raytraced AO baker. Per-texel hemisphere raycasting against occupancy grid. Fibonacci hemisphere sampling, fixed-step ray marching, tangent-space basis from face normal.
+- `src/render/occupancy_grid.h / .c` — Coarse boolean grid used during mesh build for face culling and AO raycasting. Allocated at `voxel_mesh_build()` time, populated by rasterizing all placed boxes, queried per face/texel, then freed.
+- `src/render/lighting.h / .c` — Simple directional light + up to 8 point lights (lanterns). Passed as uniforms to the voxel shader.
+- Voxel vertex/fragment shaders (embedded in `renderer.c`): position + normal + color + uv → AO texture sampled and multiplied into base color → lit output with half-Lambert diffuse + ambient + point lights.
 
-**Verification:** Render a single hardcoded 4×4 diorama with checkerboard floor, a few wall blocks with slight position jitter, and two colored cubes for actors. Verify: (1) AO darkening at wall-floor seams and box corners, (2) hidden faces are culled (check vertex count), (3) boxes placed at non-grid-aligned positions render correctly.
+**Verification:** ✅ Complete. Renders diorama with checkerboard floor, walls, actors. AO darkening at wall-floor junctions, hidden face culling, thin wall geometry preserved with `no_cull`.
 
 ---
 
@@ -134,25 +136,26 @@ Switch from 2D rectangles to actual 3D voxel rendering. Freeform box placement, 
 Generate full diorama meshes from level data + biome config, following the 12-step pipeline from design doc §09.
 
 **Files:**
-- `src/render/diorama_gen.h / .c` — Takes a `Grid*` + biome config → produces `VoxelMesh`. Pipeline steps:
-  1. Platform base
-  2. Checkerboard floor tiles (paving stones, slight color variation)
-  3. Walls (stacked blocks with mortar, archways at passages)
-  4. Back wall (tall thematic backdrop)
-  5. Entrance/exit doors (openings, lock geometry)
-  6. Impassable fill (biome-appropriate blocks)
-  7. Environmental feature markers (spike geometry, pressure plate recesses, etc.)
-  8. Floor decorations (scattered biome prefabs via seeded RNG)
-  9. Wall decorations (moss, cracks, vines)
-  10. Lantern pillars (tall columns with glow source)
-  11. Exit god-light effect (vertical amber beam)
-  12. Edge border / cliff geometry
-  13. **Bake ambient occlusion** — after all geometry is placed, run the AO pass over the entire mesh. Samples neighboring voxel occupancy per vertex and darkens vertex colors at corners, seams, and overhangs. This is the final step before `voxel_mesh_build()` uploads to GPU.
-- `src/data/biome_config.h / .c` — Load biome JSON config (palette, procgen params, prefab lists)
-- `assets/biomes/stone_labyrinth.json` — First biome config
-- `assets/biomes/dark_forest.json` — Second biome config
+- `src/render/diorama_gen.h / .c` — Takes a `Grid*` + `BiomeConfig*` → populates `VoxelMesh` + returns `DioramaGenResult` with point lights. 12-step pipeline:
+  1. Platform base (large box under grid with overhang)
+  2. Floor tiles (2×2 paving stones per tile with mortar gaps, color jitter)
+  3. Walls (stacked blocks: N×M per segment, mortar, per-block jitter, roughness)
+  4. Back wall (tall north-edge wall, optional decoration prefabs)
+  5. Doors (frame pillars + lintel, exit floor inlay with accent border)
+  6. Impassable fill (prefabs or solid block fallback, random rotation)
+  7. Feature markers (spike slits, pressure plates, teleporter rings, ice tint, crumble cracks)
+  8. Floor decorations (seeded prefab scatter on walkable tiles)
+  9. Wall decorations (prefabs on wall surfaces)
+  10. Lantern pillars (at wall corners/endpoints, glow boxes, point lights)
+  11. Exit light (amber beam boxes, warm point light)
+  12. Edge border (ring of boxes around platform perimeter)
+  AO baking happens automatically during `voxel_mesh_build()` (Step 4 raytraced AO textures).
+  Uses seeded xorshift32 RNG (seed from `hash(level_id)`) for deterministic decoration.
+- `src/data/biome_config.h / .c` — BiomeConfig struct hierarchy (palette, wall style, decorations, lanterns, prefabs). JSON loader via cJSON. `biome_config_defaults()` provides stone-labyrinth fallback.
+- `assets/biomes/stone_labyrinth.json` — Default biome (warm sandstone)
+- `assets/biomes/dark_forest.json` — Forest biome (dark greens, moss, mushrooms)
 
-**Verification:** Puzzle scene renders actual diorama instead of colored rectangles. Two biomes look visually distinct.
+**Verification:** ✅ Complete. Puzzle scene renders procedural diorama with stacked-block walls, paving floors, decorations, and lantern point lights. Two biomes are visually distinct. Toggle 2D/3D with 'C'.
 
 ---
 

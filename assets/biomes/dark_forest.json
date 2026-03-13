@@ -1,0 +1,93 @@
+{
+    "id": "dark_forest",
+    "name": "Dark Forest",
+
+    "palette": {
+        "floor_a":        [0.18, 0.22, 0.15],
+        "floor_b":        [0.22, 0.26, 0.18],
+        "wall":           [0.30, 0.28, 0.22],
+        "wall_jitter":    0.08,
+        "accent":         [0.50, 0.55, 0.30],
+        "impassable":     [0.15, 0.18, 0.12],
+        "platform_side":  [0.12, 0.14, 0.10],
+        "back_wall":      [0.25, 0.28, 0.20]
+    },
+
+    "wall_style": {
+        "blocks_per_segment": 3,
+        "rows_of_blocks":     3,
+        "block_regularity":   0.4,
+        "roughness":          0.3,
+        "height_variation":   0.08,
+        "color_jitter":       0.08,
+        "mortar_gap":         0.02
+    },
+
+    "floor_decorations": {
+        "density":       0.20,
+        "max_per_tile":  2,
+        "prefabs":       ["mushroom", "twig"]
+    },
+
+    "wall_decorations": {
+        "density":       0.25,
+        "max_per_tile":  1,
+        "prefabs":       ["thick_moss", "vine"]
+    },
+
+    "lantern_pillars": {
+        "glow_color":           [0.3, 0.7, 0.3],
+        "density":              0.4,
+        "place_at_corners":     true,
+        "place_at_wall_endpoints": false
+    },
+
+    "platform": {
+        "depth_blocks": 4
+    },
+
+    "back_wall": {
+        "height_multiplier":   5.0,
+        "decoration_density":  0.5
+    },
+
+    "edge_border": {
+        "depth": 2
+    },
+
+    "doors": {
+        "frame_height_blocks": 5
+    },
+
+    "prefabs": [
+        {
+            "name": "mushroom",
+            "boxes": [
+                { "dx": 0.0, "dy": 0.0,  "dz": 0.0, "sx": 0.03, "sy": 0.05, "sz": 0.03, "color": [0.60, 0.55, 0.45] },
+                { "dx": 0.0, "dy": 0.05, "dz": 0.0, "sx": 0.07, "sy": 0.02, "sz": 0.07, "color": [0.70, 0.25, 0.20] }
+            ]
+        },
+        {
+            "name": "twig",
+            "boxes": [
+                { "dx": 0.0,  "dy": 0.001, "dz": 0.0,  "sx": 0.18, "sy": 0.015, "sz": 0.02, "color": [0.35, 0.25, 0.15] },
+                { "dx": 0.06, "dy": 0.001, "dz": 0.03, "sx": 0.10, "sy": 0.012, "sz": 0.015, "color": [0.30, 0.22, 0.12] }
+            ]
+        },
+        {
+            "name": "thick_moss",
+            "boxes": [
+                { "dx": 0.0,  "dy": 0.0,  "dz": 0.0, "sx": 0.15, "sy": 0.08, "sz": 0.04, "color": [0.20, 0.35, 0.15], "no_cull": true },
+                { "dx": 0.04, "dy": 0.06, "dz": 0.0, "sx": 0.10, "sy": 0.05, "sz": 0.03, "color": [0.22, 0.38, 0.18], "no_cull": true },
+                { "dx":-0.04, "dy": 0.03, "dz": 0.0, "sx": 0.08, "sy": 0.04, "sz": 0.03, "color": [0.18, 0.30, 0.12], "no_cull": true }
+            ]
+        },
+        {
+            "name": "vine",
+            "boxes": [
+                { "dx": 0.0, "dy": 0.0,   "dz": 0.0, "sx": 0.02, "sy": 0.12, "sz": 0.02, "color": [0.15, 0.30, 0.10], "no_cull": true },
+                { "dx": 0.02, "dy":-0.08, "dz": 0.0, "sx": 0.02, "sy": 0.10, "sz": 0.02, "color": [0.18, 0.32, 0.12], "no_cull": true }
+            ]
+        }
+    ]
+}
