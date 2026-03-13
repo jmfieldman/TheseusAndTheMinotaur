@@ -142,6 +142,9 @@ bool grid_move_entity(Grid* grid, EntityID who, Direction dir) {
     int nc = col + direction_dcol(dir);
     int nr = row + direction_drow(dir);
 
+    /* Update position first so hooks can query the entity's new location */
+    grid_set_entity_pos(grid, who, nc, nr);
+
     /* Fire on_leave for features at old position */
     Cell* old_cell = grid_cell(grid, col, row);
     for (int i = 0; i < old_cell->feature_count; i++) {
@@ -150,9 +153,6 @@ bool grid_move_entity(Grid* grid, EntityID who, Direction dir) {
             f->vt->on_leave(f, grid, who, col, row);
         }
     }
-
-    /* Update position */
-    grid_set_entity_pos(grid, who, nc, nr);
 
     /* Fire on_enter for features at new position */
     Cell* new_cell = grid_cell(grid, nc, nr);

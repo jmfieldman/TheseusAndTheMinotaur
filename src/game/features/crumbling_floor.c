@@ -6,14 +6,13 @@
 #include <string.h>
 
 typedef enum {
-    CF_INTACT,      /* passable, not yet triggered */
-    CF_MARKED,      /* actor left or Theseus waited — will collapse next env phase */
+    CF_INTACT,      /* passable, not yet stepped on */
+    CF_STEPPED,     /* Theseus has been here — will collapse when he leaves */
     CF_COLLAPSED    /* deadly pit — impassable and hazardous */
 } CrumblingState;
 
 typedef struct {
     CrumblingState state;
-    bool theseus_present;   /* track for the "wait" collapse case */
 } CrumblingFloorData;
 
 /* ── Vtable hooks ─────────────────────────────────────── */
@@ -39,34 +38,20 @@ static void cf_on_enter(Feature* self, Grid* grid, EntityID who,
                          int col, int row) {
     (void)grid; (void)col; (void)row;
     CrumblingFloorData* d = (CrumblingFloorData*)self->data;
-    if (who == ENTITY_THESEUS) {
-        d->theseus_present = true;
+
+    /* Mark that Theseus has stepped here; it will crumble when he leaves */
+    if (who == ENTITY_THESEUS && d->state == CF_INTACT) {
+        d->state = CF_STEPPED;
     }
 }
 
 static void cf_on_leave(Feature* self, Grid* grid, EntityID who,
                           int col, int row) {
-    (void)grid; (void)col; (void)row;
+    (void)col; (void)row;
     CrumblingFloorData* d = (CrumblingFloorData*)self->data;
 
-    if (who == ENTITY_THESEUS) {
-        d->theseus_present = false;
-        if (d->state == CF_INTACT) {
-            d->state = CF_MARKED;
-        }
-    }
-}
-
-static void cf_on_environment_phase(Feature* self, Grid* grid) {
-    CrumblingFloorData* d = (CrumblingFloorData*)self->data;
-
-    if (d->state == CF_INTACT && d->theseus_present) {
-        /* Theseus waited on the tile — collapse immediately */
-        d->state = CF_COLLAPSED;
-        Cell* cell = grid_cell(grid, self->col, self->row);
-        if (cell) cell->impassable = true;
-    } else if (d->state == CF_MARKED) {
-        /* Actor left — collapse */
+    /* Theseus left a stepped tile — collapse it now */
+    if (who == ENTITY_THESEUS && d->state == CF_STEPPED) {
         d->state = CF_COLLAPSED;
         Cell* cell = grid_cell(grid, self->col, self->row);
         if (cell) cell->impassable = true;
@@ -106,7 +91,7 @@ static const FeatureVTable crumbling_floor_vt = {
     .on_enter              = cf_on_enter,
     .on_leave              = cf_on_leave,
     .on_push               = NULL,
-    .on_environment_phase  = cf_on_environment_phase,
+    .on_environment_phase  = NULL,
     .is_hazardous          = cf_is_hazardous,
     .snapshot_size          = cf_snapshot_size,
     .snapshot_save          = cf_snapshot_save,
@@ -125,7 +110,6 @@ Feature* crumbling_floor_create(int col, int row, const cJSON* config) {
     if (!d) { feature_free(f); return NULL; }
 
     d->state = CF_INTACT;
-    d->theseus_present = false;
 
     f->data = d;
     return f;
