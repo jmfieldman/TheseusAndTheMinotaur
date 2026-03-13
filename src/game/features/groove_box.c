@@ -88,6 +88,11 @@ static bool gb_on_push(Feature* self, Grid* grid,
     d->box_col = box_dest_col;
     d->box_row = box_dest_row;
 
+    /* Keep feature grid position in sync so cell feature links are correct */
+    self->col = box_dest_col;
+    self->row = box_dest_row;
+    grid_rebuild_feature_links(grid);
+
     /* Move Theseus into the vacated tile */
     /* Fire on_leave for features at Theseus's current position */
     Cell* old_cell = grid_cell(grid, from_col, from_row);
@@ -134,6 +139,9 @@ static void gb_snapshot_restore(Feature* self, const void* buf) {
     const int* p = (const int*)buf;
     d->box_col = p[0];
     d->box_row = p[1];
+    /* Keep feature grid position in sync */
+    self->col = p[0];
+    self->row = p[1];
 }
 
 static void gb_destroy(Feature* self) {

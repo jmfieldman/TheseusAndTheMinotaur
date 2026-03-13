@@ -362,13 +362,9 @@ static void render_features(const PuzzleScene* ps) {
             /* Semi-transparent blue overlay */
             ui_draw_rect(sx, sy, ts, ts, COLOR_ICE);
         } else if (strcmp(name, "groove_box") == 0) {
-            /* Draw box at its current position (not feature position) */
-            typedef struct { int gc[32]; int gr[32]; int gl; int bc, br; } GBPeek;
-            GBPeek* gbd = (GBPeek*)f->data;
-            float bsx, bsy;
-            grid_to_screen(ps, gbd->bc, gbd->br, &bsx, &bsy);
+            /* Feature col/row tracks the box position, so sx/sy is correct */
             float bi = ts * 0.12f;
-            ui_draw_rect(bsx + bi, bsy + bi, ts - 2.0f * bi, ts - 2.0f * bi,
+            ui_draw_rect(sx + bi, sy + bi, ts - 2.0f * bi, ts - 2.0f * bi,
                          COLOR_GROOVE_BOX);
         } else if (strcmp(name, "auto_turnstile") == 0 ||
                    strcmp(name, "manual_turnstile") == 0) {
