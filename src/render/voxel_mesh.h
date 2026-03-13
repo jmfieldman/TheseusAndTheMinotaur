@@ -47,6 +47,7 @@ typedef struct {
     float sx, sy, sz;    /* size (extents) */
     float r, g, b, a;    /* color */
     bool  no_cull;       /* if true, all 6 faces are always emitted (for thin geometry like walls) */
+    bool  occluder_only; /* if true, contributes to occupancy grid for AO but emits no faces */
 } VoxelBox;
 
 typedef struct {
@@ -101,5 +102,12 @@ int voxel_mesh_get_vertex_count(const VoxelMesh* mesh);
 
 /* Query whether mesh has an AO texture. */
 bool voxel_mesh_has_ao(const VoxelMesh* mesh);
+
+/* Add an occluder-only box. Contributes to the occupancy grid for AO
+ * raycasting but emits no visible faces. Use to simulate a ground plane
+ * or other invisible geometry that should cast AO shadows. */
+void voxel_mesh_add_occluder(VoxelMesh* mesh,
+                              float x, float y, float z,
+                              float sx, float sy, float sz);
 
 #endif /* VOXEL_MESH_H */

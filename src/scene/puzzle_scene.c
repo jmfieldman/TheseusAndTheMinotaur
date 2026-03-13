@@ -135,6 +135,9 @@ typedef struct {
     VoxelMesh       diorama_mesh;    /* static geometry (floor, walls, exit) */
     VoxelMesh       theseus_mesh;    /* dynamic actor: Theseus (blue cube) */
     VoxelMesh       minotaur_mesh;   /* dynamic actor: Minotaur (red cube) */
+    GLuint          shadow_vao;
+    GLuint          shadow_vbo;      /* tessellated disc with radial alpha falloff */
+    int             shadow_vertex_count;
     DioramaCamera   diorama_cam;
     LightingState   diorama_light;
 } PuzzleScene;
@@ -751,11 +754,153 @@ static void render_result_overlay(const PuzzleScene* ps, int vw, int vh) {
  *   - Theseus and Minotaur as colored cubes
  * All in world units where 1 unit = 1 tile.
  */
+
+/* Generate a precomputed soft radial shadow texture and a flat quad to render it.
+ * The texture is a 64×64 R8 image with a smooth gaussian-like falloff from center.
+ * The quad uses the same vertex layout as voxel meshes (pos + normal + color + uv). */
+#define SHADOW_RADIUS       0.45f
+#define SHADOW_PEAK_ALPHA   0.50f
+#define SHADOW_RINGS        5
+#define SHADOW_SEGMENTS     32
+#define SHADOW_FLOATS_PER_VERT 12  /* pos(3)+norm(3)+col(4)+uv(2) */
+
+/* Smoothstep falloff for shadow alpha based on normalized distance [0,1] */
+static float shadow_falloff(float d) {
+    float t = 1.0f - d;
+    if (t < 0.0f) t = 0.0f;
+    return t * t * (3.0f - 2.0f * t);
+}
+
+static void build_shadow_resources(PuzzleScene* ps) {
+    /* Tessellated disc: center hub + SHADOW_RINGS concentric rings,
+     * each with SHADOW_SEGMENTS angular slices. Radial falloff is
+     * baked into vertex alpha — no texture needed. */
+    int tri_count = SHADOW_SEGMENTS + SHADOW_SEGMENTS * (SHADOW_RINGS - 1) * 2;
+    int vert_count = tri_count * 3;
+    float* verts = (float*)malloc((size_t)vert_count * SHADOW_FLOATS_PER_VERT * sizeof(float));
+
+    float ring_radii[SHADOW_RINGS + 1];
+    float ring_alpha[SHADOW_RINGS + 1];
+    ring_radii[0] = 0.0f;
+    ring_alpha[0] = SHADOW_PEAK_ALPHA;
+    for (int i = 1; i <= SHADOW_RINGS; i++) {
+        float t = (float)i / (float)SHADOW_RINGS;
+        ring_radii[i] = SHADOW_RADIUS * t;
+        ring_alpha[i] = SHADOW_PEAK_ALPHA * shadow_falloff(t);
+    }
+
+    /* Precompute sin/cos for angular segments */
+    float sin_table[SHADOW_SEGMENTS + 1];
+    float cos_table[SHADOW_SEGMENTS + 1];
+    for (int s = 0; s <= SHADOW_SEGMENTS; s++) {
+        float angle = (float)s / (float)SHADOW_SEGMENTS * 2.0f * 3.14159265f;
+        sin_table[s] = sinf(angle);
+        cos_table[s] = cosf(angle);
+    }
+
+    int vi = 0;  /* vertex index */
+
+    /* Helper: emit one vertex */
+    #define EMIT_VERT(px, pz, alpha) do { \
+        float* dst = &verts[vi * SHADOW_FLOATS_PER_VERT]; \
+        dst[0] = (px); dst[1] = 0.0f; dst[2] = (pz); \
+        dst[3] = 0.0f; dst[4] = 1.0f; dst[5] = 0.0f; \
+        dst[6] = 0.0f; dst[7] = 0.0f; dst[8] = 0.0f; dst[9] = (alpha); \
+        dst[10] = 0.0f; dst[11] = 0.0f; \
+        vi++; \
+    } while (0)
+
+    /* Center fan (ring 0 → ring 1) */
+    for (int s = 0; s < SHADOW_SEGMENTS; s++) {
+        int s1 = s + 1;
+        EMIT_VERT(0.0f, 0.0f, ring_alpha[0]);
+        EMIT_VERT(ring_radii[1] * cos_table[s1], ring_radii[1] * sin_table[s1], ring_alpha[1]);
+        EMIT_VERT(ring_radii[1] * cos_table[s],  ring_radii[1] * sin_table[s],  ring_alpha[1]);
+    }
+
+    /* Outer ring strips (ring i → ring i+1) */
+    for (int i = 1; i < SHADOW_RINGS; i++) {
+        float r0 = ring_radii[i], r1 = ring_radii[i + 1];
+        float a0 = ring_alpha[i], a1 = ring_alpha[i + 1];
+        for (int s = 0; s < SHADOW_SEGMENTS; s++) {
+            int s1 = s + 1;
+            /* Triangle 1: inner[s], outer[s1], outer[s] */
+            EMIT_VERT(r0 * cos_table[s],  r0 * sin_table[s],  a0);
+            EMIT_VERT(r1 * cos_table[s1], r1 * sin_table[s1], a1);
+            EMIT_VERT(r1 * cos_table[s],  r1 * sin_table[s],  a1);
+            /* Triangle 2: inner[s], inner[s1], outer[s1] */
+            EMIT_VERT(r0 * cos_table[s],  r0 * sin_table[s],  a0);
+            EMIT_VERT(r0 * cos_table[s1], r0 * sin_table[s1], a0);
+            EMIT_VERT(r1 * cos_table[s1], r1 * sin_table[s1], a1);
+        }
+    }
+
+    #undef EMIT_VERT
+
+    ps->shadow_vertex_count = vi;
+
+    glGenVertexArrays(1, &ps->shadow_vao);
+    glGenBuffers(1, &ps->shadow_vbo);
+    glBindVertexArray(ps->shadow_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, ps->shadow_vbo);
+    glBufferData(GL_ARRAY_BUFFER,
+                 (GLsizeiptr)((size_t)vi * SHADOW_FLOATS_PER_VERT * sizeof(float)),
+                 verts, GL_STATIC_DRAW);
+
+    size_t stride = SHADOW_FLOATS_PER_VERT * sizeof(float);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)(10 * sizeof(float)));
+
+    glBindVertexArray(0);
+    free(verts);
+}
+
+static void destroy_shadow_resources(PuzzleScene* ps) {
+    if (ps->shadow_vao) { glDeleteVertexArrays(1, &ps->shadow_vao); ps->shadow_vao = 0; }
+    if (ps->shadow_vbo) { glDeleteBuffers(1, &ps->shadow_vbo); ps->shadow_vbo = 0; }
+    ps->shadow_vertex_count = 0;
+}
+
+static void draw_shadow(const PuzzleScene* ps, GLuint shader,
+                         float x, float z, float scale) {
+    if (ps->shadow_vertex_count == 0) return;
+
+    /* No AO texture needed — falloff is baked in vertex alpha */
+    shader_set_int(shader, "u_has_ao", 0);
+
+    /* Disable depth writes so shadow doesn't block actor rendering */
+    glDepthMask(GL_FALSE);
+
+    float model[16];
+    memset(model, 0, sizeof(model));
+    model[0]  = scale;
+    model[5]  = 1.0f;
+    model[10] = scale;
+    model[15] = 1.0f;
+    model[12] = x;
+    model[13] = 0.01f;  /* just above floor */
+    model[14] = z;
+    shader_set_mat4(shader, "u_model", model);
+
+    glBindVertexArray(ps->shadow_vao);
+    glDrawArrays(GL_TRIANGLES, 0, ps->shadow_vertex_count);
+    glBindVertexArray(0);
+
+    glDepthMask(GL_TRUE);
+}
+
 static void build_diorama(PuzzleScene* ps) {
     if (ps->diorama_built) {
         voxel_mesh_destroy(&ps->diorama_mesh);
         voxel_mesh_destroy(&ps->theseus_mesh);
         voxel_mesh_destroy(&ps->minotaur_mesh);
+        destroy_shadow_resources(ps);
     }
 
     int cols = ps->grid->cols;
@@ -798,7 +943,9 @@ static void build_diorama(PuzzleScene* ps) {
                            gen_result.lights[i].radius);
     }
 
-    /* Build actor meshes (unit-sized, centered at origin) */
+    /* Build actor meshes (unit-sized, centered at origin).
+     * Each actor includes an invisible ground plane occluder so the AO baker
+     * sees a floor surface, producing darkened bottom edges on the cube. */
 
     /* Theseus — blue cube */
     {
@@ -810,7 +957,10 @@ static void build_diorama(PuzzleScene* ps) {
                             size, size, size,
                             80.0f/255.0f, 168.0f/255.0f, 251.0f/255.0f, 1.0f,
                             true);
-        voxel_mesh_build(&ps->theseus_mesh, size);
+        voxel_mesh_add_occluder(&ps->theseus_mesh,
+                                 -2.0f, -0.05f, -2.0f,
+                                 4.0f, 0.05f, 4.0f);
+        voxel_mesh_build(&ps->theseus_mesh, size * 0.25f);
     }
 
     /* Minotaur — red cube */
@@ -823,8 +973,14 @@ static void build_diorama(PuzzleScene* ps) {
                             size, size * 0.8f, size,
                             239.0f/255.0f, 34.0f/255.0f, 34.0f/255.0f, 1.0f,
                             true);
-        voxel_mesh_build(&ps->minotaur_mesh, size);
+        voxel_mesh_add_occluder(&ps->minotaur_mesh,
+                                 -2.0f, -0.05f, -2.0f,
+                                 4.0f, 0.05f, 4.0f);
+        voxel_mesh_build(&ps->minotaur_mesh, size * 0.25f);
     }
+
+    /* Precomputed soft radial shadow texture + quad */
+    build_shadow_resources(ps);
 
     ps->diorama_built = true;
 
@@ -865,18 +1021,20 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
     /* Set AO texture uniform for static diorama mesh */
     shader_set_int(shader, "u_ao_texture", 0);  /* texture unit 0 */
     shader_set_int(shader, "u_has_ao", voxel_mesh_has_ao(&ps->diorama_mesh) ? 1 : 0);
+    shader_set_float(shader, "u_ao_intensity", 1.0f);
 
     /* Draw static geometry (floor, walls, exit marker) */
     voxel_mesh_draw(&ps->diorama_mesh);
 
-    /* Disable AO for dynamic actors (they don't have precomputed AO) */
-    shader_set_int(shader, "u_has_ao", 0);
+    /* Enable blending for shadow quads (semi-transparent) */
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    /* Draw dynamic actors with per-frame model matrices */
+    /* Draw dynamic actors with per-frame model matrices, AO, and shadows */
     {
         bool animating = anim_queue_is_playing(&ps->anim);
 
-        /* Minotaur */
+        /* Minotaur — always on ground (no hop) */
         {
             float mcol, mrow;
             if (animating) {
@@ -885,55 +1043,66 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 mcol = (float)ps->grid->minotaur_col;
                 mrow = (float)ps->grid->minotaur_row;
             }
-            /* Model matrix: translate to grid position (center of tile) */
+
+            /* Soft ground shadow */
+            draw_shadow(ps, shader, mcol + 0.5f, mrow + 0.5f, 1.0f);
+
+            /* Actor with full AO */
+            shader_set_int(shader, "u_has_ao",
+                           voxel_mesh_has_ao(&ps->minotaur_mesh) ? 1 : 0);
+            shader_set_float(shader, "u_ao_intensity", 1.0f);
             float model[16];
             memset(model, 0, sizeof(model));
             model[0]  = 1.0f;
             model[5]  = 1.0f;
             model[10] = 1.0f;
             model[15] = 1.0f;
-            model[12] = mcol + 0.5f;   /* center of tile */
+            model[12] = mcol + 0.5f;
             model[13] = 0.0f;
             model[14] = mrow + 0.5f;
             shader_set_mat4(shader, "u_model", model);
             voxel_mesh_draw(&ps->minotaur_mesh);
         }
 
-        /* Theseus */
+        /* Theseus — hops during move animation */
         {
             float tcol, trow;
+            float thop = 0.0f;
             if (animating) {
-                float thop;
                 anim_queue_theseus_pos(&ps->anim, &tcol, &trow, &thop);
-                /* Apply hop as Y offset */
-                float model[16];
-                memset(model, 0, sizeof(model));
-                model[0]  = 1.0f;
-                model[5]  = 1.0f;
-                model[10] = 1.0f;
-                model[15] = 1.0f;
-                model[12] = tcol + 0.5f;
-                model[13] = thop * 0.3f;  /* scale hop to world units */
-                model[14] = trow + 0.5f;
-                shader_set_mat4(shader, "u_model", model);
             } else {
                 tcol = (float)ps->grid->theseus_col;
                 trow = (float)ps->grid->theseus_row;
-                float model[16];
-                memset(model, 0, sizeof(model));
-                model[0]  = 1.0f;
-                model[5]  = 1.0f;
-                model[10] = 1.0f;
-                model[15] = 1.0f;
-                model[12] = tcol + 0.5f;
-                model[13] = 0.0f;
-                model[14] = trow + 0.5f;
-                shader_set_mat4(shader, "u_model", model);
             }
+            float hop_y = thop * 0.3f;
+
+            /* Soft ground shadow — shrinks with hop height */
+            float shadow_scale = 1.0f - thop * 0.5f;
+            draw_shadow(ps, shader, tcol + 0.5f, trow + 0.5f, shadow_scale);
+
+            /* Actor with AO fading based on hop */
+            float ao_intensity = 1.0f - thop;
+            shader_set_int(shader, "u_has_ao",
+                           voxel_mesh_has_ao(&ps->theseus_mesh) ? 1 : 0);
+            shader_set_float(shader, "u_ao_intensity", ao_intensity);
+            float model[16];
+            memset(model, 0, sizeof(model));
+            model[0]  = 1.0f;
+            model[5]  = 1.0f;
+            model[10] = 1.0f;
+            model[15] = 1.0f;
+            model[12] = tcol + 0.5f;
+            model[13] = hop_y;
+            model[14] = trow + 0.5f;
+            shader_set_mat4(shader, "u_model", model);
             voxel_mesh_draw(&ps->theseus_mesh);
         }
 
-        /* Reset model matrix to identity for any subsequent draws */
+        glDisable(GL_BLEND);
+
+        /* Reset uniforms for any subsequent draws */
+        shader_set_float(shader, "u_ao_intensity", 1.0f);
+        shader_set_int(shader, "u_has_ao", 0);
         float identity2[16];
         memset(identity2, 0, sizeof(identity2));
         identity2[0] = identity2[5] = identity2[10] = identity2[15] = 1.0f;
@@ -992,6 +1161,7 @@ static void puzzle_on_exit(State* self) {
         voxel_mesh_destroy(&ps->diorama_mesh);
         voxel_mesh_destroy(&ps->theseus_mesh);
         voxel_mesh_destroy(&ps->minotaur_mesh);
+        destroy_shadow_resources(ps);
         ps->diorama_built = false;
     }
     if (ps->grid) {
@@ -1209,6 +1379,7 @@ static void puzzle_destroy(State* self) {
         voxel_mesh_destroy(&ps->diorama_mesh);
         voxel_mesh_destroy(&ps->theseus_mesh);
         voxel_mesh_destroy(&ps->minotaur_mesh);
+        destroy_shadow_resources(ps);
     }
     if (ps->grid) {
         grid_destroy(ps->grid);

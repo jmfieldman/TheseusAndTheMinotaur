@@ -211,6 +211,21 @@ void voxel_mesh_add_box(VoxelMesh* mesh,
     box->sx = sx; box->sy = sy; box->sz = sz;
     box->r = r; box->g = g; box->b = b; box->a = a;
     box->no_cull = no_cull;
+    box->occluder_only = false;
+}
+
+void voxel_mesh_add_occluder(VoxelMesh* mesh,
+                              float x, float y, float z,
+                              float sx, float sy, float sz) {
+    if (mesh->box_count >= VOXEL_MESH_MAX_BOXES) {
+        LOG_WARN("VoxelMesh: max boxes (%d) exceeded, ignoring", VOXEL_MESH_MAX_BOXES);
+        return;
+    }
+    VoxelBox* box = &mesh->boxes[mesh->box_count++];
+    memset(box, 0, sizeof(VoxelBox));
+    box->x = x; box->y = y; box->z = z;
+    box->sx = sx; box->sy = sy; box->sz = sz;
+    box->occluder_only = true;
 }
 
 void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
@@ -254,6 +269,7 @@ void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
     int total_faces = 0;
     for (int i = 0; i < mesh->box_count; i++) {
         const VoxelBox* box = &mesh->boxes[i];
+        if (box->occluder_only) continue;
         for (int f = 0; f < 6; f++) {
             if (!box->no_cull && face_is_hidden(occ, box, &s_faces[f])) {
                 continue;
@@ -308,6 +324,7 @@ void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
 
     for (int i = 0; i < mesh->box_count; i++) {
         const VoxelBox* box = &mesh->boxes[i];
+        if (box->occluder_only) continue;
 
         for (int f = 0; f < 6; f++) {
             const FaceTemplate* face = &s_faces[f];

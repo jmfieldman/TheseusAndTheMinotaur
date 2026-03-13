@@ -99,17 +99,22 @@ static const char* s_voxel_frag_src =
     "/* AO texture */\n"
     "uniform sampler2D u_ao_texture;\n"
     "uniform int u_has_ao;\n"          /* 1 if AO texture is bound */
+    "uniform float u_ao_intensity;\n"  /* 0..1: lerp between no-AO and full-AO, also scales vertex alpha */
     "\n"
     "void main() {\n"
     "    vec3 N = normalize(v_normal);\n"
     "    vec3 base_color = v_color.rgb;\n"
     "\n"
-    "    /* Apply AO from texture if available */\n"
+    "    /* Apply AO from texture if available, modulated by intensity */\n"
     "    float ao = 1.0;\n"
     "    if (u_has_ao != 0) {\n"
-    "        ao = texture(u_ao_texture, v_uv).r;\n"
+    "        float ao_sample = texture(u_ao_texture, v_uv).r;\n"
+    "        ao = mix(1.0, ao_sample, u_ao_intensity);\n"
     "    }\n"
+    "\n"
+    "    /* Apply AO to base color */\n"
     "    base_color *= ao;\n"
+    "    float final_alpha = v_color.a;\n"
     "\n"
     "    /* Ambient */\n"
     "    vec3 lit = u_ambient_color.rgb * base_color;\n"
@@ -129,7 +134,7 @@ static const char* s_voxel_frag_src =
     "        lit += u_point_color[i].rgb * base_color * pndl * atten;\n"
     "    }\n"
     "\n"
-    "    FragColor = vec4(lit, v_color.a);\n"
+    "    FragColor = vec4(lit, final_alpha);\n"
     "}\n";
 
 /* ---------- State ---------- */
@@ -262,6 +267,12 @@ void renderer_init(void) {
     }
     if (!s_renderer.voxel_shader) {
         LOG_ERROR("Failed to compile voxel shader");
+    } else {
+        /* Default AO uniforms */
+        shader_use(s_renderer.voxel_shader);
+        shader_set_float(s_renderer.voxel_shader, "u_ao_intensity", 1.0f);
+        shader_set_int(s_renderer.voxel_shader, "u_ao_texture", 0);
+        glUseProgram(0);
     }
 
     LOG_INFO("Renderer initialized");
