@@ -144,12 +144,19 @@ All environmental features must be:
 
 ### 6.2 Environmental Kill Examples
 
-- **Spike trap (active):** If Theseus is standing on a spike tile when it
-  activates during environment phase, Theseus dies.
-- **Weak floor:** After Theseus steps on it, it collapses during the next
-  environment phase. If Theseus is still on it, he falls.
-- **Crushing wall:** A wall segment that moves into a tile -- if Theseus
-  occupies that tile, he is killed.
+- **Spike trap:** Theseus steps on a spike trap tile, then leaves or waits.
+  The spikes shoot up during the environment phase. If Theseus is on the tile
+  (because he waited), he dies. If he left, the spikes remain up for one turn
+  — moving back onto the tile during that turn is also fatal.
+- **Crumbling floor:** After Theseus steps off a crumbling floor tile, it
+  collapses into a pit. If Theseus waits on it instead of leaving, it
+  collapses and he falls.
+- **Medusa wall:** If Theseus moves toward a Medusa face while in its line of
+  sight (i.e. faces the Medusa head-on), he is killed immediately.
+- **Moving platform gap:** If Theseus steps onto a pit tile with no platform
+  present, he falls.
+- **Ice slide hazard:** If Theseus slides across ice into an active hazard
+  (e.g. active spike trap), he dies at the hazardous tile.
 
 In all cases, the Minotaur is **unaffected** by these same hazards.
 

@@ -8,6 +8,7 @@ Game engine source code. Organized into subsystem directories with strict depend
 | `input/`    | Input abstraction: semantic actions, adapters        | SDL3, engine/         |
 | `render/`   | OpenGL rendering: shaders, UI draw, text             | SDL3, SDL3_ttf, glad, engine/ |
 | `scene/`    | Game scenes/states: title, save select, settings     | engine/, input/, render/, data/ |
+| `game/`     | Pure game logic: grid, turn resolution, undo, AI     | cJSON (level loader only), engine/utils.h |
 | `data/`     | Persistence: strings, settings, save data            | cJSON, libyaml, platform/ |
 | `platform/` | Platform abstraction: save paths, feature flags      | SDL3                  |
 

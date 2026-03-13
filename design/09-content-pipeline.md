@@ -508,7 +508,7 @@ biomes/
     "accent": "#6b7a5c",
     "impassable": "#1e2518"
   },
-  "features_introduced": ["spike_trap"]
+  "features_introduced": ["spike_trap", "crumbling_floor"]
 }
 ```
 
