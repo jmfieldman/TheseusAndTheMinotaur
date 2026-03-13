@@ -21,6 +21,7 @@
       "position": { "col": 2, "row": 3 },
       "config": {
         "color": "blue",
+        "action": "clear",
         "targets": [
           { "type": "wall", "col": 3, "row": 3, "side": "east", "initial_active": true }
         ]
@@ -28,9 +29,21 @@
     },
     {
       "type": "pressure_plate",
-      "position": { "col": 5, "row": 5 },
+      "position": { "col": 5, "row": 3 },
       "config": {
         "color": "red",
+        "action": "set",
+        "targets": [
+          { "type": "wall", "col": 3, "row": 3, "side": "east", "initial_active": true }
+        ]
+      }
+    },
+    {
+      "type": "pressure_plate",
+      "position": { "col": 4, "row": 6 },
+      "config": {
+        "color": "green",
+        "action": "toggle",
         "targets": [
           { "type": "tile", "col": 6, "row": 3, "initial_active": false }
         ]

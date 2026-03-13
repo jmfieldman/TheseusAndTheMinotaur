@@ -19,10 +19,18 @@ typedef struct {
     bool initial_active;    /* wall present / tile impassable when active */
 } PPTarget;
 
+/* Plate action: what happens when Theseus steps on the plate */
+typedef enum {
+    PP_ACTION_TOGGLE,   /* flip state each step (default) */
+    PP_ACTION_SET,      /* always set targets to active (walls up / tiles blocked) */
+    PP_ACTION_CLEAR     /* always clear targets (walls down / tiles passable) */
+} PPAction;
+
 typedef struct {
     PPTarget* targets;
     int target_count;
     bool toggled;           /* false = initial state, true = toggled */
+    PPAction action;
     char color[16];
 } PressurePlateData;
 
@@ -53,7 +61,19 @@ static void pp_on_enter(Feature* self, Grid* grid, EntityID who,
     if (who != ENTITY_THESEUS) return;
 
     PressurePlateData* d = (PressurePlateData*)self->data;
-    d->toggled = !d->toggled;
+
+    switch (d->action) {
+        case PP_ACTION_TOGGLE:
+            d->toggled = !d->toggled;
+            break;
+        case PP_ACTION_SET:
+            d->toggled = false;  /* active = initial_active XOR false = initial_active */
+            break;
+        case PP_ACTION_CLEAR:
+            d->toggled = true;   /* active = initial_active XOR true = !initial_active */
+            break;
+    }
+
     apply_targets(d, grid);
 }
 
@@ -108,12 +128,21 @@ Feature* pressure_plate_create(int col, int row, const cJSON* config) {
     if (!d) { feature_free(f); return NULL; }
 
     d->toggled = false;
+    d->action = PP_ACTION_TOGGLE;
     strncpy(d->color, "blue", sizeof(d->color) - 1);
 
     if (config) {
         const cJSON* color_item = cJSON_GetObjectItemCaseSensitive(config, "color");
         if (cJSON_IsString(color_item)) {
             strncpy(d->color, color_item->valuestring, sizeof(d->color) - 1);
+        }
+
+        const cJSON* action_item = cJSON_GetObjectItemCaseSensitive(config, "action");
+        if (cJSON_IsString(action_item)) {
+            const char* a = action_item->valuestring;
+            if (strcmp(a, "set") == 0)        d->action = PP_ACTION_SET;
+            else if (strcmp(a, "clear") == 0)  d->action = PP_ACTION_CLEAR;
+            else                               d->action = PP_ACTION_TOGGLE;
         }
 
         const cJSON* targets_arr = cJSON_GetObjectItemCaseSensitive(config, "targets");
