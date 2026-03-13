@@ -198,15 +198,20 @@ void renderer_begin_frame(void) {
     if (g_settings.camera_perspective && h > 0) {
         build_perspective_view(s_renderer.projection, (float)w, (float)h,
                                g_settings.camera_fov);
-        glEnable(GL_DEPTH_TEST);
     } else {
         /* Ortho: screen-space pixels, origin at top-left */
         build_ortho(s_renderer.projection, 0.0f, (float)w, (float)h, 0.0f, -1.0f, 1.0f);
-        glDisable(GL_DEPTH_TEST);
     }
 
+    /*
+     * Depth test stays disabled for now — all current geometry is at z=0,
+     * so GL_LESS would reject everything after the first draw per pixel.
+     * Enable depth test later when we have 3D geometry with varying Z.
+     */
+    glDisable(GL_DEPTH_TEST);
+
     glClearColor(0.08f, 0.08f, 0.10f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT);
 }
 
 void renderer_end_frame(void) {
