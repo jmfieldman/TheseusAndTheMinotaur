@@ -1,4 +1,5 @@
 #include "scene/save_select_scene.h"
+#include "scene/puzzle_scene.h"
 #include "engine/engine.h"
 #include "engine/utils.h"
 #include "render/renderer.h"
@@ -7,6 +8,7 @@
 #include "data/strings.h"
 #include "data/save_data.h"
 #include "input/input_manager.h"
+#include "platform/platform.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -87,18 +89,22 @@ static void ss_handle_action(State* self, SemanticAction action) {
         ss->selected++;
         if (ss->selected >= SAVE_SLOT_COUNT) ss->selected = 0;
         break;
-    case ACTION_UI_CONFIRM:
+    case ACTION_UI_CONFIRM: {
         if (ss->slots[ss->selected].exists) {
-            /* Load existing game */
+            /* Load existing game — for now, launch tutorial level 1 */
             LOG_INFO("Loading save slot %d (biome: %s)",
                      ss->selected, ss->slots[ss->selected].current_biome);
-            /* TODO: push overworld state with loaded save */
         } else {
             /* Start new game */
             LOG_INFO("Starting new game in slot %d", ss->selected);
-            /* TODO: create new save, push tutorial/overworld state */
         }
+        /* For now, always launch tutorial-01 as a playable prototype */
+        char level_path[512];
+        snprintf(level_path, sizeof(level_path), "%s/assets/levels/tutorial/tutorial-01.json",
+                 platform_get_asset_dir());
+        engine_push_state(puzzle_scene_create(level_path));
         break;
+    }
     case ACTION_UI_BACK:
         engine_pop_state();
         break;

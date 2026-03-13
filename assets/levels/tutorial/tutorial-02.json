@@ -1,0 +1,36 @@
+{
+  "id": "tutorial-02",
+  "name": "Spike Trap",
+  "biome": "stone_labyrinth",
+  "difficulty": 2,
+  "optimal_turns": 7,
+  "grid": {
+    "width": 5,
+    "height": 4
+  },
+  "entrance": { "col": 0, "row": 0, "side": "west" },
+  "exit": { "col": 4, "row": 3, "side": "east" },
+  "theseus": { "col": 0, "row": 0 },
+  "minotaur": { "col": 4, "row": 0 },
+  "walls": [
+    { "col": 1, "row": 0, "side": "east" },
+    { "col": 2, "row": 0, "side": "north" },
+    { "col": 3, "row": 1, "side": "north" },
+    { "col": 1, "row": 2, "side": "east" },
+    { "col": 3, "row": 2, "side": "north" },
+    { "col": 3, "row": 3, "side": "west" }
+  ],
+  "impassable": [],
+  "features": [
+    {
+      "type": "spike_trap",
+      "position": { "col": 2, "row": 1 },
+      "config": {}
+    },
+    {
+      "type": "spike_trap",
+      "position": { "col": 3, "row": 2 },
+      "config": {}
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "tutorial-01",
+  "name": "First Steps",
+  "biome": "stone_labyrinth",
+  "difficulty": 1,
+  "optimal_turns": 5,
+  "grid": {
+    "width": 4,
+    "height": 4
+  },
+  "entrance": { "col": 0, "row": 0, "side": "west" },
+  "exit": { "col": 3, "row": 3, "side": "east" },
+  "theseus": { "col": 0, "row": 0 },
+  "minotaur": { "col": 3, "row": 0 },
+  "walls": [
+    { "col": 1, "row": 0, "side": "east" },
+    { "col": 2, "row": 1, "side": "north" },
+    { "col": 1, "row": 2, "side": "east" },
+    { "col": 2, "row": 2, "side": "north" }
+  ],
+  "impassable": [],
+  "features": []
+}
