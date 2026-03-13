@@ -6,6 +6,7 @@
 #include "data/strings.h"
 #include "data/settings.h"
 #include "platform/platform.h"
+#include "game/features/feature_registry.h"
 
 #include <glad/gl.h>
 #include <SDL3/SDL.h>
@@ -112,6 +113,9 @@ bool engine_init(const char* title, int width, int height) {
                  platform_get_asset_dir());
         text_render_init(font_path);
     }
+
+    /* Feature factories (must be before any level loading) */
+    feature_registry_init();
 
     LOG_INFO("Engine initialized successfully");
     return true;

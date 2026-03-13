@@ -92,9 +92,11 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # --- Copy assets to build directory ---
-add_custom_command(TARGET theseus POST_BUILD
+# Always-run target so asset-only changes are picked up without a code rebuild.
+add_custom_target(copy_assets ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/assets
         $<TARGET_FILE_DIR:theseus>/assets
     COMMENT "Copying assets to build directory"
 )
+add_dependencies(copy_assets theseus)

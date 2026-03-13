@@ -2,26 +2,24 @@
   "id": "test-crumbling-floor",
   "name": "Crumbling Floor Test",
   "biome": "sunken_ruins",
-  "difficulty": 2,
-  "optimal_turns": 5,
-  "grid": { "width": 5, "height": 4 },
-  "entrance": { "col": 0, "row": 1, "side": "west" },
-  "exit":     { "col": 4, "row": 1, "side": "east" },
-  "theseus":  { "col": 0, "row": 1 },
-  "minotaur": { "col": 4, "row": 3 },
+  "difficulty": 1,
+  "optimal_turns": 99,
+  "grid": { "width": 8, "height": 8 },
+  "entrance": { "col": 0, "row": 0, "side": "south" },
+  "exit":     { "col": 7, "row": 0, "side": "east" },
+  "theseus":  { "col": 0, "row": 0 },
+  "minotaur": { "col": 7, "row": 7 },
   "walls": [
-    { "col": 3, "row": 2, "side": "south" },
-    { "col": 3, "row": 3, "side": "west" }
+    { "col": 7, "row": 7, "side": "south" },
+    { "col": 7, "row": 7, "side": "west" }
   ],
   "impassable": [],
   "features": [
-    {
-      "type": "crumbling_floor",
-      "position": { "col": 2, "row": 1 }
-    },
-    {
-      "type": "crumbling_floor",
-      "position": { "col": 2, "row": 2 }
-    }
+    { "type": "crumbling_floor", "position": { "col": 2, "row": 2 } },
+    { "type": "crumbling_floor", "position": { "col": 3, "row": 2 } },
+    { "type": "crumbling_floor", "position": { "col": 4, "row": 2 } },
+    { "type": "crumbling_floor", "position": { "col": 2, "row": 5 } },
+    { "type": "crumbling_floor", "position": { "col": 3, "row": 5 } },
+    { "type": "crumbling_floor", "position": { "col": 5, "row": 4 } }
   ]
 }

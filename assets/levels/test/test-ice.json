@@ -2,21 +2,25 @@
   "id": "test-ice",
   "name": "Ice Tile Test",
   "biome": "crystal_caverns",
-  "difficulty": 2,
-  "optimal_turns": 4,
-  "grid": { "width": 6, "height": 4 },
-  "entrance": { "col": 0, "row": 1, "side": "west" },
-  "exit":     { "col": 5, "row": 1, "side": "east" },
-  "theseus":  { "col": 0, "row": 1 },
-  "minotaur": { "col": 5, "row": 3 },
+  "difficulty": 1,
+  "optimal_turns": 99,
+  "grid": { "width": 8, "height": 8 },
+  "entrance": { "col": 0, "row": 0, "side": "south" },
+  "exit":     { "col": 7, "row": 0, "side": "east" },
+  "theseus":  { "col": 0, "row": 0 },
+  "minotaur": { "col": 7, "row": 7 },
   "walls": [
-    { "col": 4, "row": 2, "side": "south" },
-    { "col": 4, "row": 3, "side": "west" }
+    { "col": 7, "row": 7, "side": "south" },
+    { "col": 7, "row": 7, "side": "west" }
   ],
   "impassable": [],
   "features": [
-    { "type": "ice_tile", "position": { "col": 1, "row": 1 } },
-    { "type": "ice_tile", "position": { "col": 2, "row": 1 } },
-    { "type": "ice_tile", "position": { "col": 3, "row": 1 } }
+    { "type": "ice_tile", "position": { "col": 2, "row": 3 } },
+    { "type": "ice_tile", "position": { "col": 3, "row": 3 } },
+    { "type": "ice_tile", "position": { "col": 4, "row": 3 } },
+    { "type": "ice_tile", "position": { "col": 5, "row": 3 } },
+    { "type": "ice_tile", "position": { "col": 3, "row": 4 } },
+    { "type": "ice_tile", "position": { "col": 3, "row": 5 } },
+    { "type": "ice_tile", "position": { "col": 3, "row": 6 } }
   ]
 }
