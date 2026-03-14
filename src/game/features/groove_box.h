@@ -21,4 +21,13 @@ struct cJSON;
 
 Feature* groove_box_create(int col, int row, const struct cJSON* config);
 
+/*
+ * Query the groove path tiles for diorama generation.
+ *
+ * Returns the number of path tiles written (0 if f is not a groove_box).
+ * out_cols/out_rows are filled with the tile coordinates.
+ * max_out limits the number of entries written.
+ */
+int groove_box_get_path(const Feature* f, int* out_cols, int* out_rows, int max_out);
+
 #endif /* GAME_FEATURE_GROOVE_BOX_H */

@@ -18,6 +18,7 @@
 #include "data/strings.h"
 #include "data/settings.h"
 #include "game/game.h"
+#include "game/features/groove_box.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -151,6 +152,12 @@ typedef struct {
     DioramaCamera   diorama_cam;
     LightingState   diorama_light;
     WallStyle       wall_style;      /* cached for shader uniforms at render time */
+
+    /* Groove trench tracking */
+    bool*           groove_tile_map; /* flat bool array [rows * cols], true if tile is on a groove path */
+    int             groove_map_cols;
+    int             groove_map_rows;
+    float           trench_depth;    /* cached from biome config */
 
     /* Failed push "bump" animation (no game state change, purely visual) */
     bool            bump_active;
@@ -850,6 +857,16 @@ static void shadow_gaussian_blur(float* data, int w, int h, float radius) {
     free(kernel);
 }
 
+/* Check if a tile position is on a groove path.
+ * Works for integer tile coordinates; for fractional positions during
+ * animation, caller should round or check both from/to tiles. */
+static bool is_groove_tile(const PuzzleScene* ps, int col, int row) {
+    if (!ps->groove_tile_map) return false;
+    if (col < 0 || col >= ps->groove_map_cols) return false;
+    if (row < 0 || row >= ps->groove_map_rows) return false;
+    return ps->groove_tile_map[row * ps->groove_map_cols + col];
+}
+
 /*
  * Generate a blurred rectangular shadow texture for an actor.
  *
@@ -1013,9 +1030,9 @@ static void destroy_shadow_resources(PuzzleScene* ps) {
     ps->shadow_vertex_count = 0;
 }
 
-static void draw_shadow(const PuzzleScene* ps, GLuint shader,
-                         float x, float z, float scale,
-                         GLuint shadow_tex, float extent) {
+static void draw_shadow_at_y(const PuzzleScene* ps, GLuint shader,
+                              float x, float y, float z, float scale,
+                              GLuint shadow_tex, float extent) {
     if (ps->shadow_vertex_count == 0 || !shadow_tex) return;
 
     /* Bind actor shadow texture to unit 1 (temporarily replaces floor lightmap) */
@@ -1035,7 +1052,7 @@ static void draw_shadow(const PuzzleScene* ps, GLuint shader,
     model[10] = s;
     model[15] = 1.0f;
     model[12] = x + ps->shadow_offset_x;
-    model[13] = 0.01f;  /* just above floor */
+    model[13] = y;
     model[14] = z + ps->shadow_offset_z;
     shader_set_mat4(shader, "u_model", model);
 
@@ -1053,6 +1070,68 @@ static void draw_shadow(const PuzzleScene* ps, GLuint shader,
     }
 }
 
+/* Compute actor Y offset based on current fractional position.
+ * If the actor is over a groove tile, lower them by trench_depth.
+ * During animation (fractional positions), smoothly interpolate. */
+static float actor_groove_y(const PuzzleScene* ps, float col, float row) {
+    if (!ps->groove_tile_map || ps->trench_depth <= 0.0f) return 0.0f;
+
+    /* For integer positions, simple lookup */
+    int ic = (int)floorf(col);
+    int ir = (int)floorf(row);
+
+    /* Fraction within tile */
+    float fc = col - (float)ic;
+    float fr = row - (float)ir;
+
+    bool cur = is_groove_tile(ps, ic, ir);
+
+    /* If near a tile boundary, check the adjacent tile for smooth transition */
+    bool next_c = (fc > 0.5f) ? is_groove_tile(ps, ic + 1, ir) : is_groove_tile(ps, ic - 1, ir);
+    bool next_r = (fr > 0.5f) ? is_groove_tile(ps, ic, ir + 1) : is_groove_tile(ps, ic, ir - 1);
+
+    /* If fully within one tile and groove status won't change, return directly */
+    if (cur) return -ps->trench_depth;
+    if (!cur && !next_c && !next_r) return 0.0f;
+
+    /* Near a boundary — use smoothstep transition.
+     * Transition happens in the 0.3 units around the tile boundary. */
+    float y = 0.0f;
+    float blend_zone = 0.3f;
+
+    /* Check col-direction boundary */
+    if (fc > (1.0f - blend_zone) && is_groove_tile(ps, ic + 1, ir)) {
+        float t = (fc - (1.0f - blend_zone)) / blend_zone;
+        float s = t * t * (3.0f - 2.0f * t);
+        y = -ps->trench_depth * s;
+    } else if (fc < blend_zone && is_groove_tile(ps, ic - 1, ir) && !cur) {
+        float t = (blend_zone - fc) / blend_zone;
+        float s = t * t * (3.0f - 2.0f * t);
+        y = -ps->trench_depth * s;
+    }
+
+    /* Check row-direction boundary */
+    if (fr > (1.0f - blend_zone) && is_groove_tile(ps, ic, ir + 1)) {
+        float t = (fr - (1.0f - blend_zone)) / blend_zone;
+        float s = t * t * (3.0f - 2.0f * t);
+        float ry = -ps->trench_depth * s;
+        if (ry < y) y = ry; /* take the lower value */
+    } else if (fr < blend_zone && is_groove_tile(ps, ic, ir - 1) && !cur) {
+        float t = (blend_zone - fr) / blend_zone;
+        float s = t * t * (3.0f - 2.0f * t);
+        float ry = -ps->trench_depth * s;
+        if (ry < y) y = ry;
+    }
+
+    return y;
+}
+
+static void draw_shadow(const PuzzleScene* ps, GLuint shader,
+                         float x, float z, float scale,
+                         GLuint shadow_tex, float extent) {
+    draw_shadow_at_y(ps, shader, x, 0.01f, z, scale, shadow_tex, extent);
+}
+
 static void build_diorama(PuzzleScene* ps) {
     if (ps->diorama_built) {
         voxel_mesh_destroy(&ps->diorama_mesh);
@@ -1060,6 +1139,8 @@ static void build_diorama(PuzzleScene* ps) {
         voxel_mesh_destroy(&ps->minotaur_mesh);
         voxel_mesh_destroy(&ps->groove_box_mesh);
         destroy_shadow_resources(ps);
+        free(ps->groove_tile_map);
+        ps->groove_tile_map = NULL;
     }
 
     int cols = ps->grid->cols;
@@ -1074,6 +1155,25 @@ static void build_diorama(PuzzleScene* ps) {
         snprintf(biome_path, sizeof(biome_path), "%s/assets/biomes/%s.json",
                  platform_get_asset_dir(), ps->grid->biome);
         biome_config_load(&biome, biome_path);
+    }
+
+    /* Cache trench depth and build groove tile map for actor Y adjustment */
+    ps->trench_depth = biome.groove_trench.trench_depth;
+    ps->groove_map_cols = cols;
+    ps->groove_map_rows = rows;
+    ps->groove_tile_map = calloc((size_t)(cols * rows), sizeof(bool));
+    if (ps->groove_tile_map) {
+        for (int fi = 0; fi < ps->grid->feature_count; fi++) {
+            const Feature* feat = ps->grid->features[fi];
+            if (!feat) continue;
+            int path_cols[32], path_rows[32];
+            int path_len = groove_box_get_path(feat, path_cols, path_rows, 32);
+            for (int pi = 0; pi < path_len; pi++) {
+                int pc = path_cols[pi], pr = path_rows[pi];
+                if (pc >= 0 && pc < cols && pr >= 0 && pr < rows)
+                    ps->groove_tile_map[pr * cols + pc] = true;
+            }
+        }
     }
 
     /* Generate diorama via procedural pipeline */
@@ -1165,7 +1265,7 @@ static void build_diorama(PuzzleScene* ps) {
          * Box fills tile minus wall inset on each side. */
         float inset = 0.12f;
         float box_sz = 1.0f - 2.0f * inset;
-        float box_h  = 0.45f;
+        float box_h  = 0.45f + ps->trench_depth;
         float half   = box_sz * 0.5f;
         voxel_mesh_begin(&ps->groove_box_mesh);
         /* Main crate body */
@@ -1355,10 +1455,25 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 render_row = (float)box_row;
             }
 
-            /* Draw ground shadow under groove box */
-            draw_shadow(ps, shader,
-                        render_col + 0.5f, render_row + 0.5f, 1.0f,
-                        ps->shadow_tex_groovebox, ps->shadow_extent_gb);
+            /* Draw ground shadow under groove box on both levels:
+             * 1. Floor rim level — use GL_GREATER depth test with shadow
+             *    placed halfway between rim (Y=0) and trench floor (Y=-depth).
+             *    GL_GREATER passes where depth buffer has rim surface (closer
+             *    to camera than shadow), fails over trench opening (further).
+             *    Using the midpoint maximizes depth gap to avoid z-fighting.
+             * 2. Trench floor level — normal depth test. */
+            float box_y = -ps->trench_depth;
+            float rim_shadow_y = -ps->trench_depth * 0.5f;
+            glDepthFunc(GL_GREATER);
+            draw_shadow_at_y(ps, shader,
+                             render_col + 0.5f, rim_shadow_y,
+                             render_row + 0.5f, 1.0f,
+                             ps->shadow_tex_groovebox, ps->shadow_extent_gb);
+            glDepthFunc(GL_LESS);
+            draw_shadow_at_y(ps, shader,
+                             render_col + 0.5f, box_y + 0.01f,
+                             render_row + 0.5f, 1.0f,
+                             ps->shadow_tex_groovebox, ps->shadow_extent_gb);
 
             float model[16];
             memset(model, 0, sizeof(model));
@@ -1367,7 +1482,7 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             model[10] = 1.0f;
             model[15] = 1.0f;
             model[12] = render_col + 0.5f;
-            model[13] = 0.0f;
+            model[13] = box_y;
             model[14] = render_row + 0.5f;
             shader_set_mat4(shader, "u_model", model);
             voxel_mesh_draw(&ps->groove_box_mesh);
@@ -1396,9 +1511,13 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 mrow = (float)ps->grid->minotaur_row;
             }
 
+            /* Compute groove Y offset for minotaur */
+            float mino_gy = actor_groove_y(ps, mcol, mrow);
+
             /* Soft ground shadow */
-            draw_shadow(ps, shader, mcol + 0.5f, mrow + 0.5f, 1.0f,
-                        ps->shadow_tex_minotaur, ps->shadow_extent_m);
+            draw_shadow_at_y(ps, shader, mcol + 0.5f, mino_gy + 0.01f,
+                             mrow + 0.5f, 1.0f,
+                             ps->shadow_tex_minotaur, ps->shadow_extent_m);
 
             /* Actor with full AO */
             shader_set_int(shader, "u_has_ao",
@@ -1411,7 +1530,7 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             model[10] = 1.0f;
             model[15] = 1.0f;
             model[12] = mcol + 0.5f;
-            model[13] = 0.0f;
+            model[13] = mino_gy;
             model[14] = mrow + 0.5f;
             shader_set_mat4(shader, "u_model", model);
             voxel_mesh_draw(&ps->minotaur_mesh);
@@ -1506,12 +1625,15 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 trow += ps->bump_dir_z * bump_frac * max_disp;
             }
 
+            /* Compute groove Y offset for Theseus */
+            float thes_gy = actor_groove_y(ps, tcol, trow);
             float hop_y = thop * 0.3f;
 
             /* Soft ground shadow — shrinks with hop height */
             float shadow_scale = 1.0f - thop * 0.5f;
-            draw_shadow(ps, shader, tcol + 0.5f, trow + 0.5f, shadow_scale,
-                        ps->shadow_tex_theseus, ps->shadow_extent_t);
+            draw_shadow_at_y(ps, shader, tcol + 0.5f, thes_gy + 0.01f,
+                             trow + 0.5f, shadow_scale,
+                             ps->shadow_tex_theseus, ps->shadow_extent_t);
 
             /* Actor with AO fading based on hop */
             float ao_intensity = 1.0f - thop;
@@ -1525,7 +1647,7 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             model[10] = 1.0f;
             model[15] = 1.0f;
             model[12] = tcol + 0.5f;
-            model[13] = hop_y;
+            model[13] = thes_gy + hop_y;
             model[14] = trow + 0.5f;
             shader_set_mat4(shader, "u_model", model);
             voxel_mesh_draw(&ps->theseus_mesh);
@@ -1598,6 +1720,8 @@ static void puzzle_on_exit(State* self) {
         voxel_mesh_destroy(&ps->minotaur_mesh);
         voxel_mesh_destroy(&ps->groove_box_mesh);
         destroy_shadow_resources(ps);
+        free(ps->groove_tile_map);
+        ps->groove_tile_map = NULL;
         ps->diorama_built = false;
     }
     if (ps->grid) {
@@ -1827,6 +1951,8 @@ static void puzzle_destroy(State* self) {
         voxel_mesh_destroy(&ps->minotaur_mesh);
         voxel_mesh_destroy(&ps->groove_box_mesh);
         destroy_shadow_resources(ps);
+        free(ps->groove_tile_map);
+        ps->groove_tile_map = NULL;
     }
     if (ps->grid) {
         grid_destroy(ps->grid);

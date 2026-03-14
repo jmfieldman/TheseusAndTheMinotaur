@@ -2,8 +2,10 @@
 
 #include "engine/utils.h"
 #include "game/feature.h"
+#include "game/features/groove_box.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* ---------- Constants ---------- */
@@ -91,10 +93,76 @@ static bool is_door(const Grid* grid, int col, int row, Direction side) {
     return false;
 }
 
+/* ---------- Groove tile lookup ---------- */
+
+typedef struct {
+    bool is_groove;
+    bool open_north;   /* trench continues to the north neighbor */
+    bool open_south;
+    bool open_east;
+    bool open_west;
+    bool is_horizontal; /* true = east/west groove, false = north/south */
+} GrooveTileInfo;
+
+static GrooveTileInfo* build_groove_info(const Grid* grid) {
+    int count = grid->cols * grid->rows;
+    GrooveTileInfo* info = calloc((size_t)count, sizeof(GrooveTileInfo));
+    if (!info) return NULL;
+
+    /* Mark all groove path tiles */
+    for (int fi = 0; fi < grid->feature_count; fi++) {
+        const Feature* feat = grid->features[fi];
+        if (!feat) continue;
+
+        int path_cols[32], path_rows[32];
+        int path_len = groove_box_get_path(feat, path_cols, path_rows, 32);
+        if (path_len < 2) continue;
+
+        /* Determine direction: if any two consecutive tiles share a row, it's horizontal */
+        bool horizontal = (path_rows[0] == path_rows[1]);
+
+        for (int i = 0; i < path_len; i++) {
+            int c = path_cols[i];
+            int r = path_rows[i];
+            if (c < 0 || c >= grid->cols || r < 0 || r >= grid->rows) continue;
+            GrooveTileInfo* ti = &info[r * grid->cols + c];
+            ti->is_groove = true;
+            ti->is_horizontal = horizontal;
+        }
+
+        /* Determine open edges: check if adjacent tile in groove direction is also a groove tile */
+        for (int i = 0; i < path_len; i++) {
+            int c = path_cols[i];
+            int r = path_rows[i];
+            if (c < 0 || c >= grid->cols || r < 0 || r >= grid->rows) continue;
+            GrooveTileInfo* ti = &info[r * grid->cols + c];
+
+            if (horizontal) {
+                /* Check east/west neighbors */
+                if (c + 1 < grid->cols && info[r * grid->cols + (c + 1)].is_groove)
+                    ti->open_east = true;
+                if (c - 1 >= 0 && info[r * grid->cols + (c - 1)].is_groove)
+                    ti->open_west = true;
+            } else {
+                /* Check north/south neighbors */
+                if (r + 1 < grid->rows && info[(r + 1) * grid->cols + c].is_groove)
+                    ti->open_north = true;
+                if (r - 1 >= 0 && info[(r - 1) * grid->cols + c].is_groove)
+                    ti->open_south = true;
+            }
+        }
+    }
+
+    return info;
+}
+
 /* ---------- Floor tiles ---------- */
 
 static void gen_floor(VoxelMesh* mesh, const Grid* grid,
-                      const BiomeConfig* biome, RNG* rng) {
+                      const BiomeConfig* biome, RNG* rng,
+                      const GrooveTileInfo* groove_info) {
+    const GrooveTrenchConfig* tc = &biome->groove_trench;
+
     for (int r = 0; r < grid->rows; r++) {
         for (int c = 0; c < grid->cols; c++) {
             const Cell* cell = grid_cell_const(grid, c, r);
@@ -110,14 +178,173 @@ static void gen_floor(VoxelMesh* mesh, const Grid* grid,
 
             /* Very subtle per-tile color jitter for natural variation */
             float cj = rng_jitter(rng, biome->floor_style.color_jitter);
+            float cr = base_color[0] + cj;
+            float cg = base_color[1] + cj;
+            float cb = base_color[2] + cj;
 
-            add_box_ao(mesh,
-                       (float)c, -FLOOR_THICKNESS, (float)r,
-                       1.0f, FLOOR_THICKNESS, 1.0f,
-                       base_color[0] + cj,
-                       base_color[1] + cj,
-                       base_color[2] + cj,
-                       1.0f, false, AO_MODE_LIGHTMAP);
+            const GrooveTileInfo* gi = groove_info
+                ? &groove_info[r * grid->cols + c] : NULL;
+
+            if (!gi || !gi->is_groove) {
+                /* Normal flat floor tile */
+                add_box_ao(mesh,
+                           (float)c, -FLOOR_THICKNESS, (float)r,
+                           1.0f, FLOOR_THICKNESS, 1.0f,
+                           cr, cg, cb, 1.0f, false, AO_MODE_LIGHTMAP);
+                continue;
+            }
+
+            /* ── Groove trench tile ─────────────────────────── */
+            float fx = (float)c;
+            float fz = (float)r;
+            float inset = tc->trench_inset;
+            float cap   = tc->cap_inset;
+            float depth = tc->trench_depth;
+
+            if (gi->is_horizontal) {
+                /* Trench runs east-west.
+                 * Rim strips on north and south sides (full tile width). */
+
+                /* North rim */
+                add_box_ao(mesh,
+                           fx, -FLOOR_THICKNESS, fz + 1.0f - inset,
+                           1.0f, FLOOR_THICKNESS, inset,
+                           cr, cg, cb, 1.0f, false, AO_MODE_LIGHTMAP);
+                /* South rim */
+                add_box_ao(mesh,
+                           fx, -FLOOR_THICKNESS, fz,
+                           1.0f, FLOOR_THICKNESS, inset,
+                           cr, cg, cb, 1.0f, false, AO_MODE_LIGHTMAP);
+
+                /* Endpoint caps (floor-level strips closing off trench) */
+                if (!gi->open_west) {
+                    add_box_ao(mesh,
+                               fx, -FLOOR_THICKNESS, fz + inset,
+                               cap, FLOOR_THICKNESS, 1.0f - 2.0f * inset,
+                               cr, cg, cb, 1.0f, false, AO_MODE_LIGHTMAP);
+                }
+                if (!gi->open_east) {
+                    add_box_ao(mesh,
+                               fx + 1.0f - cap, -FLOOR_THICKNESS, fz + inset,
+                               cap, FLOOR_THICKNESS, 1.0f - 2.0f * inset,
+                               cr, cg, cb, 1.0f, false, AO_MODE_LIGHTMAP);
+                }
+
+                /* Trench floor (recessed) */
+                float tx_start = fx + (gi->open_west ? 0.0f : cap);
+                float tx_end   = fx + 1.0f - (gi->open_east ? 0.0f : cap);
+                float tz_start = fz + inset;
+                float tz_end   = fz + 1.0f - inset;
+
+                add_box_ao(mesh,
+                           tx_start, -FLOOR_THICKNESS - depth, tz_start,
+                           tx_end - tx_start, FLOOR_THICKNESS, tz_end - tz_start,
+                           cr * tc->color_darken, cg * tc->color_darken,
+                           cb * tc->color_darken, 1.0f, false, AO_MODE_LIGHTMAP);
+
+                /* Inner walls (thin slabs connecting rim to trench floor) */
+                float wall_cr = cr * tc->wall_darken;
+                float wall_cg = cg * tc->wall_darken;
+                float wall_cb = cb * tc->wall_darken;
+                float slab = 0.01f;
+
+                /* North inner wall */
+                add_box_ao(mesh,
+                           tx_start, -depth, tz_end - slab,
+                           tx_end - tx_start, depth, slab,
+                           wall_cr, wall_cg, wall_cb, 1.0f, true, AO_MODE_NONE);
+                /* South inner wall */
+                add_box_ao(mesh,
+                           tx_start, -depth, tz_start,
+                           tx_end - tx_start, depth, slab,
+                           wall_cr, wall_cg, wall_cb, 1.0f, true, AO_MODE_NONE);
+
+                /* Cap end walls (only if endpoint is closed) */
+                if (!gi->open_west) {
+                    add_box_ao(mesh,
+                               tx_start, -depth, tz_start,
+                               slab, depth, tz_end - tz_start,
+                               wall_cr, wall_cg, wall_cb, 1.0f, true, AO_MODE_NONE);
+                }
+                if (!gi->open_east) {
+                    add_box_ao(mesh,
+                               tx_end - slab, -depth, tz_start,
+                               slab, depth, tz_end - tz_start,
+                               wall_cr, wall_cg, wall_cb, 1.0f, true, AO_MODE_NONE);
+                }
+
+            } else {
+                /* Trench runs north-south.
+                 * Rim strips on east and west sides. */
+
+                /* East rim */
+                add_box_ao(mesh,
+                           fx + 1.0f - inset, -FLOOR_THICKNESS, fz,
+                           inset, FLOOR_THICKNESS, 1.0f,
+                           cr, cg, cb, 1.0f, false, AO_MODE_LIGHTMAP);
+                /* West rim */
+                add_box_ao(mesh,
+                           fx, -FLOOR_THICKNESS, fz,
+                           inset, FLOOR_THICKNESS, 1.0f,
+                           cr, cg, cb, 1.0f, false, AO_MODE_LIGHTMAP);
+
+                /* Endpoint caps */
+                if (!gi->open_south) {
+                    add_box_ao(mesh,
+                               fx + inset, -FLOOR_THICKNESS, fz,
+                               1.0f - 2.0f * inset, FLOOR_THICKNESS, cap,
+                               cr, cg, cb, 1.0f, false, AO_MODE_LIGHTMAP);
+                }
+                if (!gi->open_north) {
+                    add_box_ao(mesh,
+                               fx + inset, -FLOOR_THICKNESS, fz + 1.0f - cap,
+                               1.0f - 2.0f * inset, FLOOR_THICKNESS, cap,
+                               cr, cg, cb, 1.0f, false, AO_MODE_LIGHTMAP);
+                }
+
+                /* Trench floor (recessed) */
+                float tx_start = fx + inset;
+                float tx_end   = fx + 1.0f - inset;
+                float tz_start = fz + (gi->open_south ? 0.0f : cap);
+                float tz_end   = fz + 1.0f - (gi->open_north ? 0.0f : cap);
+
+                add_box_ao(mesh,
+                           tx_start, -FLOOR_THICKNESS - depth, tz_start,
+                           tx_end - tx_start, FLOOR_THICKNESS, tz_end - tz_start,
+                           cr * tc->color_darken, cg * tc->color_darken,
+                           cb * tc->color_darken, 1.0f, false, AO_MODE_LIGHTMAP);
+
+                /* Inner walls */
+                float wall_cr = cr * tc->wall_darken;
+                float wall_cg = cg * tc->wall_darken;
+                float wall_cb = cb * tc->wall_darken;
+                float slab = 0.01f;
+
+                /* East inner wall */
+                add_box_ao(mesh,
+                           tx_end - slab, -depth, tz_start,
+                           slab, depth, tz_end - tz_start,
+                           wall_cr, wall_cg, wall_cb, 1.0f, true, AO_MODE_NONE);
+                /* West inner wall */
+                add_box_ao(mesh,
+                           tx_start, -depth, tz_start,
+                           slab, depth, tz_end - tz_start,
+                           wall_cr, wall_cg, wall_cb, 1.0f, true, AO_MODE_NONE);
+
+                /* Cap end walls */
+                if (!gi->open_south) {
+                    add_box_ao(mesh,
+                               tx_start, -depth, tz_start,
+                               tx_end - tx_start, depth, slab,
+                               wall_cr, wall_cg, wall_cb, 1.0f, true, AO_MODE_NONE);
+                }
+                if (!gi->open_north) {
+                    add_box_ao(mesh,
+                               tx_start, -depth, tz_end - slab,
+                               tx_end - tx_start, depth, slab,
+                               wall_cr, wall_cg, wall_cb, 1.0f, true, AO_MODE_NONE);
+                }
+            }
         }
     }
 }
@@ -600,7 +827,8 @@ static void gen_features(VoxelMesh* mesh, const Grid* grid,
 /* ---------- Step 8: Floor decorations ---------- */
 
 static void gen_floor_deco(VoxelMesh* mesh, const Grid* grid,
-                           const BiomeConfig* biome, RNG* rng) {
+                           const BiomeConfig* biome, RNG* rng,
+                           const GrooveTileInfo* groove_info) {
     if (biome->floor_decorations.prefab_count == 0 ||
         biome->floor_decorations.density <= 0.0f)
         return;
@@ -610,6 +838,8 @@ static void gen_floor_deco(VoxelMesh* mesh, const Grid* grid,
             const Cell* cell = grid_cell_const(grid, c, r);
             if (cell->impassable) continue;
             if (cell->feature_count > 0) continue; /* don't clutter feature tiles */
+            /* Skip groove path tiles — decorations would clip through trench */
+            if (groove_info && groove_info[r * grid->cols + c].is_groove) continue;
 
             int placed = 0;
             while (placed < biome->floor_decorations.max_per_tile) {
@@ -892,18 +1122,23 @@ void diorama_generate(VoxelMesh* mesh, const Grid* grid,
     RNG rng;
     rng_seed(&rng, grid->level_id);
 
+    /* Build groove tile lookup for trench floor generation */
+    GrooveTileInfo* groove_info = build_groove_info(grid);
+
     /* Pipeline (no monolithic platform — individual floor tiles only,
      * so below-surface effects like pits remain visible) */
-    gen_floor(mesh, grid, biome, &rng);
+    gen_floor(mesh, grid, biome, &rng, groove_info);
     gen_walls(mesh, grid, biome, &rng);
     gen_doors(mesh, grid, biome);
     gen_impassable(mesh, grid, biome, &rng);
     gen_features(mesh, grid, biome);
-    gen_floor_deco(mesh, grid, biome, &rng);
+    gen_floor_deco(mesh, grid, biome, &rng, groove_info);
     gen_wall_deco(mesh, grid, biome, &rng);
     gen_lanterns(mesh, grid, biome, &rng, result);
     gen_exit_light(mesh, grid, biome, result);
     gen_edge_border(mesh, grid, biome);
+
+    free(groove_info);
 
     result->grid_cols = grid->cols;
     result->grid_rows = grid->rows;

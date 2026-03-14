@@ -196,6 +196,19 @@ static const FeatureVTable groove_box_vt = {
 
 /* ── Factory ──────────────────────────────────────────── */
 
+int groove_box_get_path(const Feature* f, int* out_cols, int* out_rows, int max_out) {
+    if (!f || !f->vt || !f->vt->name) return 0;
+    if (strcmp(f->vt->name, "groove_box") != 0) return 0;
+    const GrooveBoxData* d = (const GrooveBoxData*)f->data;
+    if (!d) return 0;
+    int count = d->groove_length < max_out ? d->groove_length : max_out;
+    for (int i = 0; i < count; i++) {
+        out_cols[i] = d->groove_cols[i];
+        out_rows[i] = d->groove_rows[i];
+    }
+    return count;
+}
+
 Feature* groove_box_create(int col, int row, const cJSON* config) {
     Feature* f = feature_create(&groove_box_vt, col, row);
     if (!f) return NULL;

@@ -229,6 +229,13 @@ void biome_config_defaults(BiomeConfig* cfg) {
     cfg->floor_shadow.shadow_intensity = 0.55f;
     cfg->floor_shadow.shadow_resolution = 32;
 
+    /* Groove trench */
+    cfg->groove_trench.trench_depth = 0.07f;
+    cfg->groove_trench.trench_inset = 0.12f;
+    cfg->groove_trench.cap_inset = 0.15f;
+    cfg->groove_trench.color_darken = 0.80f;
+    cfg->groove_trench.wall_darken = 0.70f;
+
     /* Actor shadow (independent from floor shadows) */
     cfg->actor_shadow.shadow_softness = 0.4f;
     cfg->actor_shadow.shadow_scale = 1.3f;
@@ -350,6 +357,21 @@ bool biome_config_load(BiomeConfig* cfg, const char* json_path) {
                                                            cfg->actor_shadow.shadow_intensity);
         cfg->actor_shadow.shadow_resolution = parse_int(as, "shadow_resolution",
                                                           cfg->actor_shadow.shadow_resolution);
+    }
+
+    /* Groove trench */
+    const cJSON* gt = cJSON_GetObjectItemCaseSensitive(root, "groove_trench");
+    if (gt) {
+        cfg->groove_trench.trench_depth = parse_float(gt, "trench_depth",
+                                                        cfg->groove_trench.trench_depth);
+        cfg->groove_trench.trench_inset = parse_float(gt, "trench_inset",
+                                                        cfg->groove_trench.trench_inset);
+        cfg->groove_trench.cap_inset = parse_float(gt, "cap_inset",
+                                                      cfg->groove_trench.cap_inset);
+        cfg->groove_trench.color_darken = parse_float(gt, "color_darken",
+                                                        cfg->groove_trench.color_darken);
+        cfg->groove_trench.wall_darken = parse_float(gt, "wall_darken",
+                                                       cfg->groove_trench.wall_darken);
     }
 
     /* Prefabs */

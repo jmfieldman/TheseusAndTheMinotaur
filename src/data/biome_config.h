@@ -137,6 +137,16 @@ typedef struct {
     int   shadow_resolution;  /* reference resolution for blur conversion, default 32 */
 } ActorShadowConfig;
 
+/* Groove trench configuration — controls the visual channel cut into
+ * floor tiles where groove boxes can slide. */
+typedef struct {
+    float trench_depth;        /* depth of groove channel (default 0.07) */
+    float trench_inset;        /* inset from tile edge to trench wall (default 0.12) */
+    float cap_inset;           /* endpoint cap inset from tile edge (default 0.15) */
+    float color_darken;        /* darken factor for trench floor (default 0.80) */
+    float wall_darken;         /* darken factor for trench inner walls (default 0.70) */
+} GrooveTrenchConfig;
+
 /* Door style configuration */
 typedef struct {
     int frame_height_blocks;   /* door frame height in blocks */
@@ -158,6 +168,7 @@ typedef struct {
     DoorConfig       doors;
     FloorShadowConfig  floor_shadow;
     ActorShadowConfig  actor_shadow;
+    GrooveTrenchConfig groove_trench;
 
     /* Prefab library (referenced by name from decoration layers) */
     BiomePrefab      prefabs[BIOME_MAX_PREFABS];
