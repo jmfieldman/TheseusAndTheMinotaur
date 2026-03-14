@@ -1294,21 +1294,21 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 }
             }
 
-            /* Compute piecewise box position:
-             * Phase 1 (0.0–0.25): box stays at from position
-             * Phase 2 (0.25–0.75): box slides from→to with smoothstep
-             * Phase 3 (0.75–1.0): box at to position */
+            /* Compute piecewise box position — synchronized with Theseus:
+             * Phase 1 (0.00–0.20): approach — box stays at from position
+             * Phase 2 (0.20–0.75): push — box slides from→to (same smoothstep as Theseus)
+             * Phase 3 (0.75–1.00): settle — box at to position */
             float t = tween_progress(&ps->anim.aux_x);
             float box_from_col = ps->anim.aux_x.start;
             float box_from_row = ps->anim.aux_y.start;
             float box_to_col   = ps->anim.aux_x.end;
             float box_to_row   = ps->anim.aux_y.end;
 
-            if (t < 0.25f) {
+            if (t < 0.20f) {
                 anim_box_col = box_from_col;
                 anim_box_row = box_from_row;
             } else if (t < 0.75f) {
-                float u = (t - 0.25f) / 0.5f;
+                float u = (t - 0.20f) / 0.55f;
                 float s = u * u * (3.0f - 2.0f * u); /* smoothstep */
                 anim_box_col = box_from_col + (box_to_col - box_from_col) * s;
                 anim_box_row = box_from_row + (box_to_row - box_from_row) * s;
@@ -1414,9 +1414,11 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 anim_queue_theseus_event_type(&ps->anim) == ANIM_EVT_BOX_SLIDE) {
                 /* Multi-phase push rendering:
                  * The tweens are linear 0→1. We remap progress to create:
-                 * Phase 1 (0.0–0.25): approach — Theseus moves to edge near box
-                 * Phase 2 (0.25–0.75): push — Theseus adjacent to box, both slide
-                 * Phase 3 (0.75–1.0): settle — Theseus slides to center of new tile
+                 * Phase 1 (0.00–0.20): approach — Theseus moves to edge near box
+                 * Phase 2 (0.20–0.75): push — Theseus pressed against box, both
+                 *   travel together one full tile. Theseus ends up past his
+                 *   tile center, flush against the box at its destination.
+                 * Phase 3 (0.75–1.00): settle — Theseus backs up to tile center
                  */
                 float t = tween_progress(&ps->anim.move_x);
                 float from_col = ps->anim.move_x.start;
@@ -1426,30 +1428,35 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 float dir_col  = to_col - from_col; /* +1, -1, or 0 */
                 float dir_row  = to_row - from_row;
 
-                if (t < 0.25f) {
-                    /* Approach: from center to edge (0.4 tiles toward box) */
-                    float u = t / 0.25f;
+                /* Contact offset: how far past tile center Theseus is
+                 * when pressed against the box (edge of actor to edge of box) */
+                float contact = 0.4f;
+
+                if (t < 0.20f) {
+                    /* Approach: from center to contact edge */
+                    float u = t / 0.20f;
                     float s = u * u * (3.0f - 2.0f * u); /* smoothstep */
-                    tcol = from_col + dir_col * 0.4f * s;
-                    trow = from_row + dir_row * 0.4f * s;
+                    tcol = from_col + dir_col * contact * s;
+                    trow = from_row + dir_row * contact * s;
                 } else if (t < 0.75f) {
-                    /* Push: both move one tile. Theseus stays adjacent to box.
-                     * At t=0.25: Theseus at from + 0.4*dir
-                     * At t=0.75: Theseus at to - 0.1*dir (near center of new tile) */
-                    float u = (t - 0.25f) / 0.5f;
+                    /* Push: Theseus stays pressed against box, both slide
+                     * one full tile together.
+                     * At t=0.20: Theseus at from + contact*dir (pressed against box at box_from)
+                     * At t=0.75: Theseus at to + contact*dir (pressed against box at box_to) */
+                    float u = (t - 0.20f) / 0.55f;
                     float s = u * u * (3.0f - 2.0f * u); /* smoothstep */
-                    float push_start_col = from_col + dir_col * 0.4f;
-                    float push_start_row = from_row + dir_row * 0.4f;
-                    float push_end_col   = to_col - dir_col * 0.1f;
-                    float push_end_row   = to_row - dir_row * 0.1f;
+                    float push_start_col = from_col + dir_col * contact;
+                    float push_start_row = from_row + dir_row * contact;
+                    float push_end_col   = to_col + dir_col * contact;
+                    float push_end_row   = to_row + dir_row * contact;
                     tcol = push_start_col + (push_end_col - push_start_col) * s;
                     trow = push_start_row + (push_end_row - push_start_row) * s;
                 } else {
-                    /* Settle: from near-center to center of new tile */
+                    /* Settle: Theseus backs up from box to center of new tile */
                     float u = (t - 0.75f) / 0.25f;
                     float s = u * u * (3.0f - 2.0f * u); /* smoothstep */
-                    float settle_start_col = to_col - dir_col * 0.1f;
-                    float settle_start_row = to_row - dir_row * 0.1f;
+                    float settle_start_col = to_col + dir_col * contact;
+                    float settle_start_row = to_row + dir_row * contact;
                     tcol = settle_start_col + (to_col - settle_start_col) * s;
                     trow = settle_start_row + (to_row - settle_start_row) * s;
                 }
@@ -1462,24 +1469,27 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             }
 
             /* Apply bump offset for failed push animation.
-             * Ease profile: approach (0→0.4), hold (0.4→0.5), return (0.5→1.0).
-             * Max displacement = 0.3 tiles toward the box. */
+             * Ease profile: approach (0→0.30), linger (0.30→0.60), return (0.60→1.0).
+             * Max displacement = 0.35 tiles toward the box. */
             if (ps->bump_active) {
                 float t = ps->bump_timer;
                 float bump_frac;
-                if (t < 0.4f) {
-                    /* Approach: ease out */
-                    float u = t / 0.4f;
-                    bump_frac = u * u * (3.0f - 2.0f * u); /* smoothstep */
-                } else if (t < 0.5f) {
-                    /* Hold at peak */
-                    bump_frac = 1.0f;
+                if (t < 0.30f) {
+                    /* Approach: smoothstep to contact */
+                    float u = t / 0.30f;
+                    bump_frac = u * u * (3.0f - 2.0f * u);
+                } else if (t < 0.60f) {
+                    /* Linger at contact — slight press-in then ease back slightly
+                     * to simulate straining against the immovable box */
+                    float u = (t - 0.30f) / 0.30f;
+                    /* Small oscillation: press 5% further in, then back to 1.0 */
+                    bump_frac = 1.0f + 0.05f * sinf(u * (float)M_PI);
                 } else {
-                    /* Return: ease in */
-                    float u = (t - 0.5f) / 0.5f;
+                    /* Give up and return */
+                    float u = (t - 0.60f) / 0.40f;
                     bump_frac = 1.0f - u * u * (3.0f - 2.0f * u);
                 }
-                float max_disp = 0.3f;
+                float max_disp = 0.35f;
                 tcol += ps->bump_dir_x * bump_frac * max_disp;
                 trow += ps->bump_dir_z * bump_frac * max_disp;
             }
@@ -1679,7 +1689,7 @@ static void puzzle_update(State* self, float dt) {
 
     /* Update bump animation (failed push against groove box) */
     if (ps->bump_active) {
-        #define BUMP_DURATION 0.25f
+        #define BUMP_DURATION 0.40f
         ps->bump_timer += dt / BUMP_DURATION;
         if (ps->bump_timer >= 1.0f) {
             ps->bump_timer = 1.0f;
