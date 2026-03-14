@@ -6,7 +6,7 @@
 - Dimensions are independent (e.g. a 4x12 puzzle is valid).
 - **Coordinate convention:** Columns increase left-to-right (West → East).
   Rows increase bottom-to-top (South → North). **South** is the camera-facing
-  edge (bottom of screen). **North** is the back wall (top/far edge). This
+  edge (bottom of screen). **North** is the far edge (top of screen). This
   convention is used consistently across all design docs and code.
 - Walls exist on **edges between adjacent tiles**, not on tiles themselves.
   - A wall blocks movement between the two tiles it separates.

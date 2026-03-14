@@ -46,7 +46,7 @@ captures the puzzle's silhouette and character without the full geometry
 budget of the playable version:
 
 - **Included:** Floor tiles (checkerboard), walls (simplified block
-  silhouettes), back wall (tall backdrop silhouette), entrance/exit door
+  silhouettes), entrance/exit door
   openings, exit door god-light glow, diorama platform, lantern pillars.
 - **Excluded:** Floor scatter decorations, wall surface detail (moss, cracks),
   mortar gaps, individual paving stones, wall-top crumble, environmental

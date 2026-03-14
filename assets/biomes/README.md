@@ -14,11 +14,11 @@ Biome configuration files for the procedural diorama generator. Each JSON file d
 Each biome JSON contains:
 
 - `id`, `name` — Identifier and display name
-- `palette` — Color arrays for floor (A/B checkerboard), walls, accent, impassable, platform, back wall
+- `palette` — Color arrays for floor (A/B checkerboard), walls, accent, impassable, platform
 - `wall_style` — Block composition parameters (blocks per segment, rows, regularity, roughness, mortar gap)
 - `floor_decorations`, `wall_decorations` — Density, max per tile, prefab name references
 - `lantern_pillars` — Glow color, density, placement rules
-- `platform`, `back_wall`, `edge_border`, `doors` — Structural parameters
+- `platform`, `edge_border`, `doors` — Structural parameters
 - `prefabs` — Inline voxel cluster definitions (named, each with an array of boxes)
 
 Levels reference a biome by its `id` in the level JSON's `"biome"` field.

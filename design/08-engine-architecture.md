@@ -143,7 +143,7 @@ data + biome configuration (see [09 -- Content Pipeline](09-content-pipeline.md)
 **Full-detail mesh** (generated when entering a puzzle):
 - **Static diorama mesh:** Includes floor tiles (checkerboard with paving-
   stone blocks), walls (biome-styled voxel compositions with mortar gaps),
-  back wall (tall thematic backdrop), entrance/exit doors, impassable tile
+  entrance/exit doors, impassable tile
   fill, all decoration layers (floor scatter, wall moss/cracks, wall-top
   crumble), edge borders, lantern pillars, and exit door god-light geometry.
   Packed into a single VBO with vertex colors.
@@ -154,7 +154,7 @@ data + biome configuration (see [09 -- Content Pipeline](09-content-pipeline.md)
 **LOD mesh** (generated for all puzzles when a biome loads):
 - Simplified version of the diorama for overworld display. Includes floor
   tiles (flat checkerboard, no individual paving blocks), wall silhouettes
-  (simplified block shapes), back wall silhouette, entrance/exit door
+  (simplified block shapes), entrance/exit door
   openings, diorama platform, and lantern pillars. Decoration layers are
   omitted. See [09 -- Content Pipeline](09-content-pipeline.md) §3.9.
 - All ~10 LOD meshes for a biome are held in VRAM simultaneously.

@@ -11,12 +11,8 @@ The overall feel is that of a **miniature tabletop diorama** -- the playable
 grid sits on a **raised platform** that is visually elevated above its
 surroundings. The diorama edge drops away into a biome-themed border treatment
 (cliff face, dense foliage, water, stone frame, etc.), reinforcing the sense
-that the player is looking down at a self-contained miniature world. The
-**back wall** (the wall farthest from the camera) is an exception to the
-low-profile wall rule -- it rises tall behind the playable area and serves as
-a **thematic backdrop** with rich biome-specific detailing (e.g. towering
-overgrown ruins, carved stone reliefs, mechanical gantries). The scene should
-feel **intimate and enclosed**, with atmospheric darkness pressing in at the
+that the player is looking down at a self-contained miniature world. The scene
+should feel **intimate and enclosed**, with atmospheric darkness pressing in at the
 edges (aided by the vignette post-processing pass).
 
 ## 2. Geometry
@@ -124,19 +120,6 @@ grid dimensions or screen resolution.
   may form subtle **archway shapes** -- the top edge of the wall curves or
   steps inward toward the gap. This frames passages and makes openings in
   walls visually distinct from simply missing wall segments.
-- **Back wall exception:** The **back wall** -- the wall along the far edge
-  of the diorama (farthest from the camera) -- is exempt from the low-profile
-  height rule. It rises **tall behind the playable area** and serves as a
-  **decorative, thematic backdrop** for the diorama. Because it sits at the
-  back of the orthographic view, it never occludes actors or gameplay
-  elements. The back wall is **mostly aesthetic**, but may contain the
-  entrance or exit door (see [01 -- Core Mechanics](01-core-mechanics.md)
-  §7.1). When the exit door is in the back wall, the wall geometry around
-  the opening must be **transparent or cut away** so the player can see
-  Theseus stepping through it. The back wall's design is rich with
-  biome-specific detail (e.g. towering vine-covered ruins, carved
-  mythological reliefs, massive gear assemblies) and helps frame the diorama
-  as a self-contained miniature world.
 - **Entrance and exit doors:** Two openings in the boundary walls serve as
   the level's entrance and exit (see [01 -- Core Mechanics](01-core-mechanics.md)
   §7). These are the only breaks in the otherwise solid boundary. The
@@ -341,7 +324,6 @@ This constant is the **single source of truth** for camera orientation. All
 downstream systems that depend on the camera angle must derive their values
 from it rather than using independent hard-coded numbers:
 
-- **Back wall height** (how tall before it exits the top of the frame)
 - **Wall occlusion threshold** (max wall height before it blocks tile contents
   behind it at this angle)
 - **Side door visibility** (how much of the virtual exit tile is visible

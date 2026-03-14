@@ -274,7 +274,7 @@ Simplified diorama meshes for overworld level nodes.
 - `src/render/lod_gen.h / .c` — Generates simplified mini-dioramas from level data:
   - Flat checkerboard floor (no paving detail)
   - Wall silhouettes (no mortar/block detail)
-  - Omit decorations, lanterns, back wall details
+  - Omit decorations, lanterns
   - Completion indicator (checkmark/star overlay)
 - Update `src/scene/overworld_scene.c` — Render LOD meshes at each node position
 

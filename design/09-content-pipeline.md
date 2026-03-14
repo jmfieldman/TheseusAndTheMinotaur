@@ -148,8 +148,7 @@ Procedural Diorama Generator (runtime)
     │  1. Build diorama platform (raised base with biome-styled side faces)
     │  2. Lay floor tiles (checkerboard coloring, per-biome palette)
     │  3. Generate walls (stacked-block voxel compositions with archways)
-    │  3a. Generate back wall (tall thematic backdrop along far edge)
-    │  3b. Generate entrance/exit doors (boundary openings, virtual exit tile)
+    │  3a. Generate entrance/exit doors (boundary openings, virtual exit tile)
     │  4. Fill impassable tiles (biome-appropriate blocking geometry)
     │  5. Place environmental features (spike traps, pressure plates, etc.)
     │  6. Scatter floor decorations (biome-themed micro-details)
@@ -241,44 +240,7 @@ Each biome defines a wall generation style that controls:
 | Crystal Caverns    | Crystalline formations mixed with raw rock           |
 | Palace of Knossos  | Ornate painted columns, clean Minoan masonry         |
 
-### 3.3a Back Wall Generation
-
-The **back wall** (the edge of the diorama farthest from the camera) is a
-special-case wall that is exempt from the low-profile height rule. It rises
-**tall behind the playable area** and serves as a **decorative, thematic
-backdrop**. The back wall is primarily aesthetic, but may contain an
-**entrance or exit door** opening (see §3.3b). When a door is present in the
-back wall, the wall geometry around the opening must be **cut away or made
-transparent** so the player can see Theseus passing through it.
-
-The back wall generator:
-
-- **Height:** Significantly taller than gameplay walls -- roughly 3--5x the
-  standard wall height, enough to create an imposing backdrop that frames the
-  scene without overwhelming the diorama.
-- **Composition:** Built from the same biome wall block style (§3.3) but
-  extended vertically and enriched with additional decorative elements.
-- **Biome theming:** Each biome defines back wall prefab clusters and
-  decoration rules:
-
-| Biome              | Back Wall Treatment                                   |
-|--------------------|-------------------------------------------------------|
-| Stone Labyrinth    | Tall sandstone wall with carved geometric reliefs     |
-| Dark Forest        | Overgrown stone ruin, heavy vine/moss coverage        |
-| Mechanical Halls   | Massive gear assemblies, pipes, riveted bronze panels |
-| Catacombs          | Towering rough-hewn rock face, skull niches           |
-| Sunken Ruins       | Partially submerged colonnade, waterfall overflow     |
-| Crystal Caverns    | Jagged crystal formations rising from raw stone       |
-| Palace of Knossos  | Ornate Minoan colonnade with painted fresco panels    |
-
-- **Decoration layers:** The back wall receives its own decoration pass
-  (moss, cracks, hanging vines, embedded crystals, etc.) at higher density
-  than gameplay walls since occlusion is not a concern.
-- **Lighting interaction:** Back walls catch dynamic light from nearby
-  lantern pillars, creating atmospheric shadow interplay (e.g. lantern light
-  casting long shadows of wall relief details).
-
-### 3.3b Entrance and Exit Door Generation
+### 3.3a Entrance and Exit Door Generation
 
 The procedural generator creates two **boundary wall openings** per level
 based on the `entrance` and `exit` fields in the level data (see §2.3a).
@@ -303,10 +265,8 @@ based on the `entrance` and `exit` fields in the level data (see §2.3a).
   outside the logical grid boundary.
 - The exit door opening receives the **god-light effect** (warm golden light
   shining through the opening) and the **finish-flag checkered border**.
-- If the exit is on the **north (back) wall**, the tall back wall geometry
-  is cut away around the opening and the surrounding wall section is made
-  partially transparent so the player can see Theseus stepping through from
-  the fixed camera angle.
+- If the exit is on the **north wall**, the boundary wall geometry around
+  the opening is handled like any other side.
 
 | Biome              | Door Style                                         |
 |--------------------|----------------------------------------------------|
@@ -579,12 +539,6 @@ parameters that control how the diorama generator builds levels for this biome:
     "platform": {
       "elevation": 3,
       "side_style": "rough_stone"
-    },
-    "back_wall": {
-      "height_multiplier": 4.0,
-      "prefabs": ["overgrown_ruin_section", "vine_covered_arch", "crumbled_tower"],
-      "decoration_density": 0.6,
-      "decorations": ["heavy_moss", "hanging_vines", "root_tendrils"]
     },
     "edge_border": {
       "style": "dense_foliage",

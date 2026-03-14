@@ -145,6 +145,7 @@ static struct {
     GLuint voxel_shader;
     GLuint quad_vao;
     GLuint quad_vbo;
+    GLuint fallback_tex;    /* 1×1 white texture — keeps samplers valid */
     float  projection[16];
 } s_renderer;
 
@@ -275,6 +276,21 @@ void renderer_init(void) {
         glUseProgram(0);
     }
 
+    /* Create a 1×1 white fallback texture so samplers are never unbound.
+     * This silences the macOS "unit 0 GLD_TEXTURE_INDEX_2D is unloadable"
+     * warning that fires when a sampler is read before any texture is bound. */
+    {
+        GLubyte white = 255;
+        glGenTextures(1, &s_renderer.fallback_tex);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, s_renderer.fallback_tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, 1, 1, 0,
+                     GL_RED, GL_UNSIGNED_BYTE, &white);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        /* Leave it bound — it acts as the default for unit 0 */
+    }
+
     LOG_INFO("Renderer initialized");
 }
 
@@ -284,6 +300,7 @@ void renderer_shutdown(void) {
     if (s_renderer.voxel_shader)  glDeleteProgram(s_renderer.voxel_shader);
     if (s_renderer.quad_vao)      glDeleteVertexArrays(1, &s_renderer.quad_vao);
     if (s_renderer.quad_vbo)      glDeleteBuffers(1, &s_renderer.quad_vbo);
+    if (s_renderer.fallback_tex)  glDeleteTextures(1, &s_renderer.fallback_tex);
     memset(&s_renderer, 0, sizeof(s_renderer));
     LOG_INFO("Renderer shut down");
 }

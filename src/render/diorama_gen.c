@@ -190,43 +190,118 @@ static void emit_wall_segment(VoxelMesh* mesh, const BiomeConfig* biome,
     }
 }
 
+/*
+ * Wall edge / corner helpers.
+ *
+ * Grid vertices sit at integer coordinates (vx, vz) where
+ *   0 ≤ vx ≤ cols,  0 ≤ vz ≤ rows.
+ *
+ * A "horizontal edge" from (vx,vz) to (vx+1,vz) corresponds to
+ *   the north wall of cell (vx, vz-1)  [if vz > 0]
+ *   or the south wall of cell (vx, vz)  [if vz == 0].
+ *
+ * A "vertical edge" from (vx,vz) to (vx,vz+1) corresponds to
+ *   the east wall of cell (vx-1, vz)  [if vx > 0]
+ *   or the west wall of cell (vx, vz)  [if vx == 0].
+ */
+
+/* True if a non-door horizontal wall exists at z=vz from x=vx to x=vx+1 */
+static bool has_h_wall(const Grid* grid, int vx, int vz) {
+    if (vx < 0 || vx >= grid->cols) return false;
+    if (vz > 0 && vz <= grid->rows) {
+        int r = vz - 1;
+        return grid_has_wall(grid, vx, r, DIR_NORTH) &&
+               !is_door(grid, vx, r, DIR_NORTH);
+    }
+    if (vz == 0) {
+        return grid_has_wall(grid, vx, 0, DIR_SOUTH) &&
+               !is_door(grid, vx, 0, DIR_SOUTH);
+    }
+    return false;
+}
+
+/* True if a non-door vertical wall exists at x=vx from z=vz to z=vz+1 */
+static bool has_v_wall(const Grid* grid, int vx, int vz) {
+    if (vz < 0 || vz >= grid->rows) return false;
+    if (vx > 0 && vx <= grid->cols) {
+        int c = vx - 1;
+        return grid_has_wall(grid, c, vz, DIR_EAST) &&
+               !is_door(grid, c, vz, DIR_EAST);
+    }
+    if (vx == 0) {
+        return grid_has_wall(grid, 0, vz, DIR_WEST) &&
+               !is_door(grid, 0, vz, DIR_WEST);
+    }
+    return false;
+}
+
+/* True if vertex (vx,vz) is a corner where perpendicular walls meet.
+ * This includes L-corners, T-junctions, and crossings. */
+static bool is_wall_corner(const Grid* grid, int vx, int vz) {
+    bool has_horiz = has_h_wall(grid, vx, vz) || has_h_wall(grid, vx - 1, vz);
+    bool has_vert  = has_v_wall(grid, vx, vz) || has_v_wall(grid, vx, vz - 1);
+    return has_horiz && has_vert;
+}
+
 static void gen_walls(VoxelMesh* mesh, const Grid* grid,
                       const BiomeConfig* biome, RNG* rng) {
     float half_t = WALL_THICKNESS * 0.5f;
+    int cols = grid->cols;
+    int rows = grid->rows;
 
-    for (int r = 0; r < grid->rows; r++) {
-        for (int c = 0; c < grid->cols; c++) {
-            /* North wall */
-            if (grid_has_wall(grid, c, r, DIR_NORTH) &&
-                !is_door(grid, c, r, DIR_NORTH)) {
-                emit_wall_segment(mesh, biome, rng,
-                                  (float)c, (float)(r + 1) - half_t,
-                                  1.0f, WALL_THICKNESS);
-            }
+    /* --- Pass 1: Corner blocks at every vertex where walls meet at 90° --- */
+    for (int vz = 0; vz <= rows; vz++) {
+        for (int vx = 0; vx <= cols; vx++) {
+            if (!is_wall_corner(grid, vx, vz)) continue;
 
-            /* South wall — only row 0 */
-            if (r == 0 && grid_has_wall(grid, c, r, DIR_SOUTH) &&
-                !is_door(grid, c, r, DIR_SOUTH)) {
-                emit_wall_segment(mesh, biome, rng,
-                                  (float)c, (float)r - half_t,
-                                  1.0f, WALL_THICKNESS);
-            }
+            float cj = rng_jitter(rng, biome->wall_style.color_jitter);
+            add_box(mesh,
+                    (float)vx - half_t, 0.0f, (float)vz - half_t,
+                    WALL_THICKNESS, WALL_HEIGHT, WALL_THICKNESS,
+                    biome->palette.wall[0] + cj,
+                    biome->palette.wall[1] + cj,
+                    biome->palette.wall[2] + cj,
+                    1.0f, true);
+        }
+    }
 
-            /* East wall */
-            if (grid_has_wall(grid, c, r, DIR_EAST) &&
-                !is_door(grid, c, r, DIR_EAST)) {
-                emit_wall_segment(mesh, biome, rng,
-                                  (float)(c + 1) - half_t, (float)r,
-                                  WALL_THICKNESS, 1.0f);
-            }
+    /* --- Pass 2: Horizontal wall segments (trimmed around corners) --- */
+    for (int vz = 0; vz <= rows; vz++) {
+        for (int vx = 0; vx < cols; vx++) {
+            if (!has_h_wall(grid, vx, vz)) continue;
 
-            /* West wall — only col 0 */
-            if (c == 0 && grid_has_wall(grid, c, r, DIR_WEST) &&
-                !is_door(grid, c, r, DIR_WEST)) {
-                emit_wall_segment(mesh, biome, rng,
-                                  (float)c - half_t, (float)r,
-                                  WALL_THICKNESS, 1.0f);
-            }
+            bool corner_left  = is_wall_corner(grid, vx, vz);
+            bool corner_right = is_wall_corner(grid, vx + 1, vz);
+
+            float start_x = (float)vx + (corner_left  ? half_t : 0.0f);
+            float end_x   = (float)(vx + 1) - (corner_right ? half_t : 0.0f);
+            float seg_len = end_x - start_x;
+
+            if (seg_len <= 0.001f) continue; /* fully covered by corners */
+
+            emit_wall_segment(mesh, biome, rng,
+                              start_x, (float)vz - half_t,
+                              seg_len, WALL_THICKNESS);
+        }
+    }
+
+    /* --- Pass 3: Vertical wall segments (trimmed around corners) --- */
+    for (int vx = 0; vx <= cols; vx++) {
+        for (int vz = 0; vz < rows; vz++) {
+            if (!has_v_wall(grid, vx, vz)) continue;
+
+            bool corner_bottom = is_wall_corner(grid, vx, vz);
+            bool corner_top    = is_wall_corner(grid, vx, vz + 1);
+
+            float start_z = (float)vz + (corner_bottom ? half_t : 0.0f);
+            float end_z   = (float)(vz + 1) - (corner_top ? half_t : 0.0f);
+            float seg_len = end_z - start_z;
+
+            if (seg_len <= 0.001f) continue;
+
+            emit_wall_segment(mesh, biome, rng,
+                              (float)vx - half_t, start_z,
+                              WALL_THICKNESS, seg_len);
         }
     }
 }
@@ -851,7 +926,6 @@ void diorama_generate(VoxelMesh* mesh, const Grid* grid,
      * so below-surface effects like pits remain visible) */
     gen_floor(mesh, grid, biome, &rng);
     gen_walls(mesh, grid, biome, &rng);
-    gen_back_wall(mesh, grid, biome, &rng);
     gen_doors(mesh, grid, biome);
     gen_impassable(mesh, grid, biome, &rng);
     gen_features(mesh, grid, biome);
