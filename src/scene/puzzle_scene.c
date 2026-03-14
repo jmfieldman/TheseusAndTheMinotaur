@@ -1026,9 +1026,7 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
     /* Draw static geometry (floor, walls, exit marker) */
     voxel_mesh_draw(&ps->diorama_mesh);
 
-    /* Enable blending for shadow quads (semi-transparent) */
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    /* Blending is already enabled globally (engine default) for shadow alpha */
 
     /* Draw dynamic actors with per-frame model matrices, AO, and shadows */
     {
@@ -1098,7 +1096,7 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             voxel_mesh_draw(&ps->theseus_mesh);
         }
 
-        glDisable(GL_BLEND);
+        /* Blend stays enabled (engine default) */
 
         /* Reset uniforms for any subsequent draws */
         shader_set_float(shader, "u_ao_intensity", 1.0f);

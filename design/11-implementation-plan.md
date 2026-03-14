@@ -19,14 +19,16 @@ Ordered steps for completing the game, from current state to shippable. Each ste
 Wire the game logic into a playable scene using only the existing 2D UI renderer. No 3D, no diorama — just colored rectangles for tiles, walls, Theseus, and Minotaur.
 
 **Files:**
+
 - `src/scene/puzzle_scene.h / .c` — Implements `State` vtable
 - `assets/levels/tutorial/tutorial-01.json` — First test level (simple 4×4, walls only, no features)
 - `assets/levels/tutorial/tutorial-02.json` — Second test level (introduces spike trap)
 
 **Behaviour:**
+
 - Load level JSON on enter
 - Render grid as colored rectangles (checkerboard floor, walls as thick lines, Theseus as gold square, Minotaur as red square)
-- Accept puzzle input context actions (MOVE_*, WAIT, UNDO, RESET, PAUSE)
+- Accept puzzle input context actions (MOVE\_\*, WAIT, UNDO, RESET, PAUSE)
 - Resolve turns via `turn_resolve()`
 - Display turn counter, win/loss text
 - UNDO/RESET work correctly
@@ -44,6 +46,7 @@ Implement all feature types from the design doc (§03 §3.2). Each is a
 self-contained `.c` file + registration in the feature registry.
 
 **Files (one pair each):**
+
 - `src/game/features/pressure_plate.h / .c` — Permanently toggles linked walls/tile passability when Theseus steps on it. Color-coded tints for visual association. Minotaur does not trigger.
 - `src/game/features/locking_gate.h / .c` — One-way door that locks (bars come up) permanently after any actor passes through.
 - `src/game/features/auto_turnstile.h / .c` — Automatic turnstile at junction of 4 tiles. Rotates 90° each environment phase, moving walls, actors, and features on those tiles.
@@ -56,6 +59,7 @@ self-contained `.c` file + registration in the feature registry.
 - `src/game/features/groove_box.h / .c` — Heavy box in a fixed groove track. Theseus can push it along the groove. Blocks both actors. Minotaur cannot push.
 
 **Also:**
+
 - Test levels in `assets/levels/test/` for each feature type
 - Update `feature_registry.c` with all new factories
 - Update `turn.c` to call `on_pre_move` and `on_push` hooks
@@ -69,6 +73,7 @@ self-contained `.c` file + registration in the feature registry.
 Tween-based animation framework with event-driven per-feature playback and input buffering. Game logic resolves instantly and records typed animation events (`AnimEvent`) into the `TurnRecord`. The animation queue replays these events with per-feature visual effects. Animations always play out fully; when the player buffers input, remaining animations play at a user-configurable speed (default 2×, range 1×–4×, set in Settings). The input buffer window is open during any animation phase (forward or reverse). See [01 -- Core Mechanics](01-core-mechanics.md) §10 for the full input buffering specification.
 
 **Files:**
+
 - `src/engine/tween.h / .c` — Tween primitives: lerp position, lerp rotation, lerp color, easing functions (linear, ease-in-out, parabolic arc for hop, out-back, quad, cubic). Tween struct with start/end values, duration, elapsed, easing function pointer.
 - `src/game/anim_event.h` — Animation event types. Defines `AnimEventType` enum (13 event types), `AnimEventPhase` enum (Theseus / Theseus-effect / Environment), and `AnimEvent` tagged union with type-specific data (positions, waypoints, directions, actor flags). Events are recorded during `turn_resolve()` and replayed by the animation queue. Max 32 events per turn.
 - `src/engine/anim_queue.h / .c` — Turn animation sequencer. Plays the turn's animation in a 5-phase sequence: Theseus move → Theseus on-leave effects → Environment phase → Minotaur step 1 → Minotaur step 2. Scans `TurnRecord` events to determine animation type and dispatches to sub-phase logic:
@@ -83,12 +88,14 @@ Tween-based animation framework with event-driven per-feature playback and input
 - `src/engine/input_buffer.h / .c` — Single-slot input buffer. Buffer window is open during any animation phase (forward or reverse). Accepts fresh key presses (not held). Last press wins. Commit on animation complete. Distinguishes held keys (ignored) from fresh presses (buffered). When a buffered action is pending, remaining animations play at user-configurable speed (`g_settings.anim_speed`, default 2×, range 1×–4×).
 
 **AnimEvent recording mechanism:**
+
 - `Grid` holds a transient `active_record` pointer (set at start of `turn_resolve()`, cleared at end)
 - Features push events from existing vtable hooks via `turn_record_push_event()` — no vtable signature changes needed
 - `turn.c` records `THESEUS_HOP` for normal moves and `THESEUS_ICE_SLIDE` with waypoint data for ice slides
 - Each feature file adds ~10 lines of event recording in its hook (on_enter, on_leave, on_push, on_environment_phase)
 
 **Input buffer rules:**
+
 - Buffer window is open during **any** animation phase (forward or reverse)
 - Only fresh key-down events accepted (held keys ignored)
 - Last press wins if multiple presses during window
@@ -100,6 +107,7 @@ Tween-based animation framework with event-driven per-feature playback and input
 - Undo from death plays death animation in reverse (e.g. voxels reconstitute)
 
 **Reverse undo animation:**
+
 - `TurnRecord` is stored alongside each `UndoSnapshot` via `undo_store_turn_record()` after `turn_resolve()` fills it
 - `anim_queue_start_reverse()` plays the record backward at 2× speed with reversed phase order (Mino2 → Mino1 → Env → Effects → Theseus)
 - Grid restore (`undo_pop()`) is deferred until the reverse animation completes
@@ -115,6 +123,7 @@ Tween-based animation framework with event-driven per-feature playback and input
 Switch from 2D rectangles to actual 3D voxel rendering. Freeform box placement, orthographic projection, depth buffer, basic lighting, baked ambient occlusion.
 
 **Files:**
+
 - `src/render/camera.h / .c` — Orthographic camera positioned for isometric-style diorama view. Handles viewport sizing (square sub-region on mobile). View + projection matrices.
 - `src/render/voxel_mesh.h / .c` — Freeform box mesh builder. Accumulates axis-aligned boxes at arbitrary positions and dimensions into a single VBO (position + normal + color + uv per vertex = 12 floats). Boxes can be flagged `no_cull` for thin geometry (walls). API: `voxel_mesh_begin()`, `voxel_mesh_add_box(pos, size, color, no_cull)`, `voxel_mesh_build(cell_size)` → VAO/VBO + AO texture, `voxel_mesh_draw()`. During `build()`:
   1. Rasterizes all boxes into a coarse occupancy grid (~16 subdivisions per game tile)
@@ -136,6 +145,7 @@ Switch from 2D rectangles to actual 3D voxel rendering. Freeform box placement, 
 Generate full diorama meshes from level data + biome config, following the 12-step pipeline from design doc §09.
 
 **Files:**
+
 - `src/render/diorama_gen.h / .c` — Takes a `Grid*` + `BiomeConfig*` → populates `VoxelMesh` + returns `DioramaGenResult` with point lights. 12-step pipeline:
   1. Platform base (large box under grid with overhang)
   2. Floor tiles (2×2 paving stones per tile with mortar gaps, color jitter)
@@ -149,8 +159,8 @@ Generate full diorama meshes from level data + biome config, following the 12-st
   10. Lantern pillars (at wall corners/endpoints, glow boxes, point lights)
   11. Exit light (amber beam boxes, warm point light)
   12. Edge border (ring of boxes around platform perimeter)
-  AO baking happens automatically during `voxel_mesh_build()` (Step 4 raytraced AO textures).
-  Uses seeded xorshift32 RNG (seed from `hash(level_id)`) for deterministic decoration.
+      AO baking happens automatically during `voxel_mesh_build()` (Step 4 raytraced AO textures).
+      Uses seeded xorshift32 RNG (seed from `hash(level_id)`) for deterministic decoration.
 - `src/data/biome_config.h / .c` — BiomeConfig struct hierarchy (palette, wall style, decorations, lanterns, prefabs). JSON loader via cJSON. `biome_config_defaults()` provides stone-labyrinth fallback.
 - `assets/biomes/stone_labyrinth.json` — Default biome (warm sandstone)
 - `assets/biomes/dark_forest.json` — Forest biome (dark greens, moss, mushrooms)
@@ -164,7 +174,8 @@ Generate full diorama meshes from level data + biome config, following the 12-st
 Procedural actor models with proper animations, including per-cause death animations with undo reversal.
 
 **Files:**
-- `src/render/actor_render.h / .c` — Generates Theseus and Minotaur voxel models. Theseus: beveled golden cube (~40-50% tile), composed of individual boxes that can separate for death animations. Minotaur: larger dark red cube (~75% tile) with white horn nubs and face detail. Renders at interpolated animation position each frame.
+
+- `src/render/actor_render.h / .c` — Generates Theseus and Minotaur voxel models. Theseus: beveled blue cube (~40-50% tile), composed of individual boxes that can separate for death animations. Minotaur: larger dark red cube (~75% tile) with white horn nubs and face detail. Renders at interpolated animation position each frame. See 02-visual-style.md Actor Geometry for color detail.
 - Update `src/engine/anim_queue.c` with actor-specific animations:
   - Theseus: parabolic hop (no rotation), lean into jump, squash on landing
   - Minotaur: 90° roll per step (horns retract before roll, extend after)
@@ -187,6 +198,7 @@ Procedural actor models with proper animations, including per-cause death animat
 Visual polish pass per design doc §02.
 
 **Files:**
+
 - `src/render/post_process.h / .c` — Render to FBO, then fullscreen quad with:
   - Vignette (darken edges)
   - Bloom on emissive surfaces (lantern glow, exit god-light)
@@ -202,6 +214,7 @@ Visual polish pass per design doc §02.
 In-game HUD rendered over the 3D scene during puzzle play.
 
 **Files:**
+
 - Update `src/scene/puzzle_scene.c` — HUD layer:
   - Turn counter (always visible, top area)
   - Level name (always visible)
@@ -218,6 +231,7 @@ In-game HUD rendered over the 3D scene during puzzle play.
 End-of-level flow with star display and progression.
 
 **Files:**
+
 - `src/scene/results_scene.h / .c` — Shown after level win:
   - Display stars earned (1 for completion, 2 if turns ≤ optimal)
   - Show turn count vs. optimal
@@ -233,6 +247,7 @@ End-of-level flow with star display and progression.
 Per-biome level-selection diorama with graph navigation.
 
 **Files:**
+
 - `src/scene/overworld_scene.h / .c` — Implements `State` vtable:
   - Load overworld graph definition (YAML) for current biome
   - Render biome diorama with level nodes as mini-dioramas
@@ -255,6 +270,7 @@ Per-biome level-selection diorama with graph navigation.
 Simplified diorama meshes for overworld level nodes.
 
 **Files:**
+
 - `src/render/lod_gen.h / .c` — Generates simplified mini-dioramas from level data:
   - Flat checkerboard floor (no paving detail)
   - Wall silhouettes (no mortar/block detail)
@@ -271,6 +287,7 @@ Simplified diorama meshes for overworld level nodes.
 Seamless zoom between overworld and puzzle views.
 
 **Files:**
+
 - `src/scene/zoom_transition.h / .c` — Transition state pushed between overworld and puzzle:
   - Zoom camera from overworld view → close-up on selected node
   - Crossfade LOD mesh → full-detail diorama mesh
@@ -287,6 +304,7 @@ Seamless zoom between overworld and puzzle views.
 Sound effects, music, and ambient audio.
 
 **Files:**
+
 - `src/audio/audio_manager.h / .c` — SDL3 audio backend:
   - Music playback (OGG Vorbis) with crossfade on biome transitions
   - SFX playback (WAV) — fire-and-forget, multiple simultaneous
@@ -308,6 +326,7 @@ Sound effects, music, and ambient audio.
 On-screen controls for iOS/iPadOS (portrait mode).
 
 **Files:**
+
 - `src/input/touch_adapter.h / .c` — Touch → semantic action mapping:
   - Virtual D-pad (bottom-left)
   - Action buttons (bottom-right): Wait, Undo, Reset, Pause
@@ -325,6 +344,7 @@ On-screen controls for iOS/iPadOS (portrait mode).
 Siri Remote and MFi gamepad support for tvOS.
 
 **Files:**
+
 - `src/input/remote_adapter.h / .c` — Apple TV Siri Remote → semantic action:
   - Clickpad directions → movement/navigation
   - Center click → CONFIRM / WAIT
@@ -342,6 +362,7 @@ Siri Remote and MFi gamepad support for tvOS.
 Author all level JSON files and overworld graphs for every biome.
 
 **Content:**
+
 - Ship of Theseus (tutorial): 3 levels introducing movement, Minotaur, exit
 - Stone Labyrinth: ~10 levels (walls only, core mechanic mastery)
 - Dark Forest: ~10 levels (introduces spike traps)
@@ -358,6 +379,7 @@ Author all level JSON files and overworld graphs for every biome.
 Replace placeholder audio with final assets.
 
 **Content:**
+
 - Title theme music
 - Per-biome music tracks (12+)
 - Per-biome ambient loops
@@ -372,6 +394,7 @@ Replace placeholder audio with final assets.
 Replace placeholder font and add any remaining visual assets.
 
 **Content:**
+
 - Final thematic font (theseus.ttf replacement)
 - Any static textures needed (unlikely given procedural approach)
 - App icons for each platform
@@ -385,6 +408,7 @@ Replace placeholder font and add any remaining visual assets.
 Build, test, and fix per-platform issues.
 
 **Tasks:**
+
 - Windows build (MSVC + MinGW)
 - macOS universal build (arm64 + x86_64)
 - Linux build (GCC)
@@ -405,6 +429,7 @@ Build, test, and fix per-platform issues.
 Final pass before release.
 
 **Tasks:**
+
 - Difficulty tuning (adjust optimal turn counts, star gate thresholds)
 - Animation timing polish
 - Visual consistency pass (biome palettes, decoration density)
