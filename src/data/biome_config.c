@@ -70,6 +70,17 @@ static void parse_wall_style(const cJSON* obj, WallStyle* ws) {
     ws->mortar_gap = parse_float(obj, "mortar_gap", ws->mortar_gap);
 }
 
+static void parse_floor_style(const cJSON* obj, FloorStyle* fs) {
+    if (!obj) return;
+    fs->subdivisions = parse_int(obj, "subdivisions", fs->subdivisions);
+    fs->regularity = parse_float(obj, "regularity", fs->regularity);
+    fs->edge_inset = parse_float(obj, "edge_inset", fs->edge_inset);
+    fs->inner_gap = parse_float(obj, "inner_gap", fs->inner_gap);
+    fs->height_variation = parse_float(obj, "height_variation", fs->height_variation);
+    fs->color_jitter = parse_float(obj, "color_jitter", fs->color_jitter);
+    fs->size_jitter = parse_float(obj, "size_jitter", fs->size_jitter);
+}
+
 static void parse_decoration_layer(const cJSON* obj, DecorationLayer* dl) {
     if (!obj) return;
     dl->density = parse_float(obj, "density", dl->density);
@@ -158,6 +169,15 @@ void biome_config_defaults(BiomeConfig* cfg) {
     cfg->wall_style.color_jitter = 0.06f;
     cfg->wall_style.mortar_gap = 0.015f;
 
+    /* Floor style */
+    cfg->floor_style.subdivisions = 2;
+    cfg->floor_style.regularity = 0.85f;
+    cfg->floor_style.edge_inset = 0.015f;
+    cfg->floor_style.inner_gap = 0.008f;
+    cfg->floor_style.height_variation = 0.004f;
+    cfg->floor_style.color_jitter = 0.02f;
+    cfg->floor_style.size_jitter = 0.06f;
+
     /* Floor decorations */
     cfg->floor_decorations.density = 0.10f;
     cfg->floor_decorations.max_per_tile = 1;
@@ -219,6 +239,7 @@ bool biome_config_load(BiomeConfig* cfg, const char* json_path) {
     /* Sections */
     parse_palette(cJSON_GetObjectItemCaseSensitive(root, "palette"), &cfg->palette);
     parse_wall_style(cJSON_GetObjectItemCaseSensitive(root, "wall_style"), &cfg->wall_style);
+    parse_floor_style(cJSON_GetObjectItemCaseSensitive(root, "floor_style"), &cfg->floor_style);
     parse_decoration_layer(cJSON_GetObjectItemCaseSensitive(root, "floor_decorations"),
                            &cfg->floor_decorations);
     parse_decoration_layer(cJSON_GetObjectItemCaseSensitive(root, "wall_decorations"),

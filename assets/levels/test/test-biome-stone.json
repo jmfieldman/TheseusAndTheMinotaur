@@ -1,0 +1,26 @@
+{
+  "id": "test-biome-stone",
+  "name": "Biome: Stone Labyrinth",
+  "biome": "stone_labyrinth",
+  "difficulty": 1,
+  "optimal_turns": 99,
+  "grid": { "width": 6, "height": 6 },
+  "entrance": { "col": 0, "row": 5, "side": "south" },
+  "exit":     { "col": 5, "row": 0, "side": "east" },
+  "theseus":  { "col": 1, "row": 4 },
+  "minotaur": { "col": 4, "row": 1 },
+  "walls": [
+    { "col": 2, "row": 1, "side": "east" },
+    { "col": 2, "row": 2, "side": "east" },
+    { "col": 2, "row": 2, "side": "south" },
+    { "col": 3, "row": 4, "side": "north" },
+    { "col": 4, "row": 4, "side": "north" },
+    { "col": 4, "row": 3, "side": "west" },
+    { "col": 1, "row": 0, "side": "east" },
+    { "col": 0, "row": 2, "side": "north" }
+  ],
+  "impassable": [
+    { "col": 3, "row": 2 }
+  ],
+  "features": []
+}

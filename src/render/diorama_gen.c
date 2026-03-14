@@ -88,40 +88,97 @@ static bool is_door(const Grid* grid, int col, int row, Direction side) {
 
 static void gen_floor(VoxelMesh* mesh, const Grid* grid,
                       const BiomeConfig* biome, RNG* rng) {
-    float mortar = biome->wall_style.mortar_gap;
-    /* 2x2 paving stones per tile, with mortar gaps at tile edges too.
-     * Inset each tile by half-mortar so inter-tile and intra-tile gaps
-     * are the same width, creating a uniform paving grid. */
-    float tile_inset = mortar * 0.5f;
-    float inner = 1.0f - mortar;  /* tile interior after edge insets */
-    float stone_size = (inner - mortar) * 0.5f;  /* two stones + one gap */
+    const FloorStyle* fs = &biome->floor_style;
+    int N = fs->subdivisions;
+    if (N < 1) N = 1;
+    if (N > 4) N = 4;
+
+    float edge = fs->edge_inset;
+    float gap  = fs->inner_gap;
+    float tile_inner = 1.0f - 2.0f * edge;  /* usable space inside tile border */
 
     for (int r = 0; r < grid->rows; r++) {
         for (int c = 0; c < grid->cols; c++) {
             const Cell* cell = grid_cell_const(grid, c, r);
             if (cell->impassable) continue;
 
-            for (int sv = 0; sv < 2; sv++) {
-                for (int su = 0; su < 2; su++) {
-                    /* Pick color A or B in checkerboard */
-                    const float* base_color;
-                    if ((c + r + su + sv) % 2 == 0) {
-                        base_color = biome->palette.floor_a;
-                    } else {
-                        base_color = biome->palette.floor_b;
-                    }
+            /* Checkerboard per logical tile */
+            const float* base_color;
+            if ((c + r) % 2 == 0) {
+                base_color = biome->palette.floor_a;
+            } else {
+                base_color = biome->palette.floor_b;
+            }
 
-                    float jitter = rng_jitter(rng, biome->wall_style.color_jitter);
-                    float height_j = rng_float(rng) * 0.005f;
+            /* Per-tile color offset (very subtle, same tone) */
+            float tile_jitter = rng_jitter(rng, fs->color_jitter * 0.5f);
 
-                    float fx = (float)c + tile_inset + (float)su * (stone_size + mortar);
-                    float fz = (float)r + tile_inset + (float)sv * (stone_size + mortar);
+            /* Compute split positions along X and Z within the tile.
+             * Start with uniform N-way split, then perturb based on regularity. */
+            float splits_x[5];  /* N+1 edges, max N=4 */
+            float splits_z[5];
+            for (int i = 0; i <= N; i++) {
+                float t = (float)i / (float)N;
+                float pos = t * (tile_inner - (float)(N - 1) * gap);
+                /* Add back gap offsets for positions after the first */
+                if (i > 0) pos += (float)i * gap;
+                splits_x[i] = pos;
+                splits_z[i] = pos;
+            }
 
-                    add_box(mesh, fx, -FLOOR_THICKNESS - height_j, fz,
-                            stone_size, FLOOR_THICKNESS + height_j, stone_size,
-                            base_color[0] + jitter,
-                            base_color[1] + jitter,
-                            base_color[2] + jitter,
+            /* Perturb internal split positions (not edges) for irregularity */
+            float jitter_range = fs->size_jitter * tile_inner / (float)N;
+            float irregularity = 1.0f - fs->regularity;
+            for (int i = 1; i < N; i++) {
+                splits_x[i] += rng_jitter(rng, jitter_range * irregularity);
+                splits_z[i] += rng_jitter(rng, jitter_range * irregularity);
+            }
+
+            /* Clamp splits to ensure no degenerate sub-voxels */
+            float min_size = 0.04f;
+            for (int i = 1; i < N; i++) {
+                if (splits_x[i] - splits_x[i-1] < min_size + gap)
+                    splits_x[i] = splits_x[i-1] + min_size + gap;
+                if (splits_x[i] > splits_x[N] - min_size * (float)(N - i))
+                    splits_x[i] = splits_x[N] - min_size * (float)(N - i);
+
+                if (splits_z[i] - splits_z[i-1] < min_size + gap)
+                    splits_z[i] = splits_z[i-1] + min_size + gap;
+                if (splits_z[i] > splits_z[N] - min_size * (float)(N - i))
+                    splits_z[i] = splits_z[N] - min_size * (float)(N - i);
+            }
+
+            /* Emit sub-voxels */
+            float tile_x = (float)c + edge;
+            float tile_z = (float)r + edge;
+
+            for (int sz = 0; sz < N; sz++) {
+                for (int sx = 0; sx < N; sx++) {
+                    float x0 = splits_x[sx];
+                    float x1 = splits_x[sx + 1];
+                    float z0 = splits_z[sz];
+                    float z1 = splits_z[sz + 1];
+
+                    /* Sub-voxel dimensions (subtract gap from trailing edge) */
+                    float sub_w = x1 - x0 - gap;
+                    float sub_d = z1 - z0 - gap;
+                    if (sub_w < min_size) sub_w = min_size;
+                    if (sub_d < min_size) sub_d = min_size;
+
+                    /* Per-sub-voxel color jitter (within tile tone) */
+                    float cj = rng_jitter(rng, fs->color_jitter);
+                    float height_j = rng_float(rng) * fs->height_variation;
+
+                    add_box(mesh,
+                            tile_x + x0,
+                            -FLOOR_THICKNESS - height_j,
+                            tile_z + z0,
+                            sub_w,
+                            FLOOR_THICKNESS + height_j,
+                            sub_d,
+                            base_color[0] + tile_jitter + cj,
+                            base_color[1] + tile_jitter + cj,
+                            base_color[2] + tile_jitter + cj,
                             1.0f, false);
                 }
             }

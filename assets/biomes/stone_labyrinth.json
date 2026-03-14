@@ -3,8 +3,8 @@
     "name": "Stone Labyrinth",
 
     "palette": {
-        "floor_a":        [0.35, 0.37, 0.33],
-        "floor_b":        [0.42, 0.44, 0.40],
+        "floor_a":        [0.32, 0.34, 0.30],
+        "floor_b":        [0.44, 0.46, 0.42],
         "wall":           [0.55, 0.50, 0.42],
         "wall_jitter":    0.06,
         "accent":         [0.65, 0.60, 0.45],
@@ -21,6 +21,16 @@
         "height_variation":   0.05,
         "color_jitter":       0.06,
         "mortar_gap":         0.015
+    },
+
+    "floor_style": {
+        "subdivisions":     2,
+        "regularity":       0.85,
+        "edge_inset":       0.015,
+        "inner_gap":        0.008,
+        "height_variation": 0.004,
+        "color_jitter":     0.02,
+        "size_jitter":      0.06
     },
 
     "floor_decorations": {

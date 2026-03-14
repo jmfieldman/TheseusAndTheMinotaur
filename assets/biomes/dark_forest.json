@@ -3,8 +3,8 @@
     "name": "Dark Forest",
 
     "palette": {
-        "floor_a":        [0.18, 0.22, 0.15],
-        "floor_b":        [0.22, 0.26, 0.18],
+        "floor_a":        [0.16, 0.20, 0.13],
+        "floor_b":        [0.24, 0.28, 0.20],
         "wall":           [0.30, 0.28, 0.22],
         "wall_jitter":    0.08,
         "accent":         [0.50, 0.55, 0.30],
@@ -21,6 +21,16 @@
         "height_variation":   0.08,
         "color_jitter":       0.08,
         "mortar_gap":         0.02
+    },
+
+    "floor_style": {
+        "subdivisions":     3,
+        "regularity":       0.3,
+        "edge_inset":       0.01,
+        "inner_gap":        0.012,
+        "height_variation": 0.008,
+        "color_jitter":     0.04,
+        "size_jitter":      0.15
     },
 
     "floor_decorations": {

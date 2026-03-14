@@ -87,6 +87,17 @@ typedef struct {
     int depth;                 /* border width in half-tiles */
 } EdgeBorderConfig;
 
+/* Floor tile sub-voxel style */
+typedef struct {
+    int   subdivisions;       /* NxN sub-stones per tile (2-4) */
+    float regularity;         /* 0=very irregular sizes, 1=uniform grid */
+    float edge_inset;         /* mortar/gap at logical tile boundary */
+    float inner_gap;          /* gap between sub-voxels within a tile */
+    float height_variation;   /* max random height offset per sub-voxel */
+    float color_jitter;       /* per-sub-voxel color variation (within same tone) */
+    float size_jitter;        /* random size variation per sub-voxel (0..1) */
+} FloorStyle;
+
 /* Door style configuration */
 typedef struct {
     int frame_height_blocks;   /* door frame height in blocks */
@@ -98,6 +109,7 @@ typedef struct {
     char             name[64];
     BiomePalette     palette;
     WallStyle        wall_style;
+    FloorStyle       floor_style;
     DecorationLayer  floor_decorations;
     DecorationLayer  wall_decorations;
     LanternConfig    lanterns;
