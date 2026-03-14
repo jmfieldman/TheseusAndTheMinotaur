@@ -559,6 +559,10 @@ static void gen_features(VoxelMesh* mesh, const Grid* grid,
                                 0.08f, 0.04f, 0.08f,
                                 0.55f, 0.30f, 0.70f, 1.0f, false);
                     }
+                } else if (strcmp(name, "groove_box") == 0) {
+                    /* Groove boxes are rendered dynamically in puzzle_scene —
+                     * skip static geometry so they can animate when pushed. */
+                    continue;
                 } else if (strcmp(name, "ice_tile") == 0) {
                     /* Tinted floor overlay (lighter blue tint) */
                     add_box(mesh, fx + 0.02f, 0.001f, fz + 0.02f,

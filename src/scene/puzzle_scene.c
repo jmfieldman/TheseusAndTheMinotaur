@@ -136,6 +136,7 @@ typedef struct {
     VoxelMesh       diorama_mesh;    /* static geometry (floor, walls, exit) */
     VoxelMesh       theseus_mesh;    /* dynamic actor: Theseus (blue cube) */
     VoxelMesh       minotaur_mesh;   /* dynamic actor: Minotaur (red cube) */
+    VoxelMesh       groove_box_mesh; /* dynamic: groove box (wooden crate) */
     GLuint          shadow_vao;
     GLuint          shadow_vbo;      /* simple quad for actor shadow */
     int             shadow_vertex_count;
@@ -148,6 +149,12 @@ typedef struct {
     DioramaCamera   diorama_cam;
     LightingState   diorama_light;
     WallStyle       wall_style;      /* cached for shader uniforms at render time */
+
+    /* Failed push "bump" animation (no game state change, purely visual) */
+    bool            bump_active;
+    float           bump_timer;      /* 0→1 progress */
+    float           bump_dir_x;      /* direction of bump (+1/-1/0) */
+    float           bump_dir_z;      /* direction of bump (+1/-1/0) */
 } PuzzleScene;
 
 /* ---------- Layout calculation ---------- */
@@ -266,6 +273,9 @@ static Direction action_to_direction(SemanticAction action) {
  * or resolves a move/wait through the turn system with animation.
  */
 static void resolve_action(PuzzleScene* ps, SemanticAction action) {
+    /* Block input during bump animation */
+    if (ps->bump_active) return;
+
     if (ps->show_result) {
         /* In result state, only undo/reset/back allowed */
         if (action == ACTION_UNDO) {
@@ -350,6 +360,36 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
     if (result == TURN_RESULT_BLOCKED) {
         /* Move was blocked, undo the snapshot we just pushed */
         undo_pop(&ps->undo, ps->grid);
+
+        /* Check if there's a groove box at the target tile — if so,
+         * play a "bump" animation (Theseus approaches, pushes briefly,
+         * then returns to center). No game state change. */
+        if (!is_wait && ps->render_3d) {
+            int tc = ps->grid->theseus_col + direction_dcol(dir);
+            int tr = ps->grid->theseus_row + direction_drow(dir);
+            const Cell* target = grid_cell_const(ps->grid, tc, tr);
+            bool has_box = false;
+            if (target) {
+                for (int fi = 0; fi < target->feature_count; fi++) {
+                    if (target->features[fi] && target->features[fi]->vt &&
+                        target->features[fi]->vt->name &&
+                        strcmp(target->features[fi]->vt->name, "groove_box") == 0) {
+                        /* Check if the box is actually at this position */
+                        if (target->features[fi]->col == tc &&
+                            target->features[fi]->row == tr) {
+                            has_box = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (has_box) {
+                ps->bump_active = true;
+                ps->bump_timer = 0.0f;
+                ps->bump_dir_x = (float)direction_dcol(dir);
+                ps->bump_dir_z = (float)direction_drow(dir);
+            }
+        }
         return;
     }
 
@@ -1011,6 +1051,7 @@ static void build_diorama(PuzzleScene* ps) {
         voxel_mesh_destroy(&ps->diorama_mesh);
         voxel_mesh_destroy(&ps->theseus_mesh);
         voxel_mesh_destroy(&ps->minotaur_mesh);
+        voxel_mesh_destroy(&ps->groove_box_mesh);
         destroy_shadow_resources(ps);
     }
 
@@ -1111,6 +1152,49 @@ static void build_diorama(PuzzleScene* ps) {
         voxel_mesh_build(&ps->minotaur_mesh, size * 0.25f);
     }
 
+    /* Groove box — wooden crate */
+    {
+        /* Wall thickness matches diorama_gen.c WALL_THICKNESS (0.20).
+         * Box fills tile minus wall inset on each side. */
+        float inset = 0.12f;
+        float box_sz = 1.0f - 2.0f * inset;
+        float box_h  = 0.30f;
+        float half   = box_sz * 0.5f;
+        voxel_mesh_begin(&ps->groove_box_mesh);
+        /* Main crate body */
+        voxel_mesh_add_box(&ps->groove_box_mesh,
+                            -half, 0.0f, -half,
+                            box_sz, box_h, box_sz,
+                            0.55f, 0.40f, 0.25f, 1.0f,
+                            true);
+        /* Darker trim bands on top edges */
+        float trim = 0.04f;
+        float trim_h = 0.03f;
+        /* North/south trim */
+        voxel_mesh_add_box(&ps->groove_box_mesh,
+                            -half, box_h - trim_h, -half,
+                            box_sz, trim_h, trim,
+                            0.40f, 0.28f, 0.16f, 1.0f, true);
+        voxel_mesh_add_box(&ps->groove_box_mesh,
+                            -half, box_h - trim_h, half - trim,
+                            box_sz, trim_h, trim,
+                            0.40f, 0.28f, 0.16f, 1.0f, true);
+        /* East/west trim */
+        voxel_mesh_add_box(&ps->groove_box_mesh,
+                            -half, box_h - trim_h, -half,
+                            trim, trim_h, box_sz,
+                            0.40f, 0.28f, 0.16f, 1.0f, true);
+        voxel_mesh_add_box(&ps->groove_box_mesh,
+                            half - trim, box_h - trim_h, -half,
+                            trim, trim_h, box_sz,
+                            0.40f, 0.28f, 0.16f, 1.0f, true);
+        /* Ground plane occluder for AO bake */
+        voxel_mesh_add_occluder(&ps->groove_box_mesh,
+                                 -2.0f, -0.05f, -2.0f,
+                                 4.0f, 0.05f, 4.0f);
+        voxel_mesh_build(&ps->groove_box_mesh, box_sz * 0.25f);
+    }
+
     /* Precomputed blurred rectangular shadow textures + quad.
      * Uses the same blur/softness/intensity as floor wall shadows. */
     build_shadow_resources(ps, &biome.actor_shadow);
@@ -1186,6 +1270,106 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
 
     /* Blending is already enabled globally (engine default) for shadow alpha */
 
+    /* Draw dynamic groove boxes */
+    {
+        bool animating = anim_queue_is_playing(&ps->anim);
+
+        /* During a push animation, one groove box is interpolated via aux tweens.
+         * Grid state is already updated (box at destination), so we match
+         * the animated box by its destination (to) position. */
+        bool box_animating = false;
+        int anim_box_to_col = -1, anim_box_to_row = -1;
+        float anim_box_col = 0.0f, anim_box_row = 0.0f;
+
+        if (animating &&
+            anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
+            anim_queue_theseus_event_type(&ps->anim) == ANIM_EVT_BOX_SLIDE) {
+            /* Find the BOX_SLIDE event to get the "to" position for matching */
+            const TurnRecord* rec = &ps->anim.record;
+            for (int ei = 0; ei < rec->event_count; ei++) {
+                if (rec->events[ei].type == ANIM_EVT_BOX_SLIDE) {
+                    anim_box_to_col = rec->events[ei].box.box_to_col;
+                    anim_box_to_row = rec->events[ei].box.box_to_row;
+                    break;
+                }
+            }
+
+            /* Compute piecewise box position:
+             * Phase 1 (0.0–0.25): box stays at from position
+             * Phase 2 (0.25–0.75): box slides from→to with smoothstep
+             * Phase 3 (0.75–1.0): box at to position */
+            float t = tween_progress(&ps->anim.aux_x);
+            float box_from_col = ps->anim.aux_x.start;
+            float box_from_row = ps->anim.aux_y.start;
+            float box_to_col   = ps->anim.aux_x.end;
+            float box_to_row   = ps->anim.aux_y.end;
+
+            if (t < 0.25f) {
+                anim_box_col = box_from_col;
+                anim_box_row = box_from_row;
+            } else if (t < 0.75f) {
+                float u = (t - 0.25f) / 0.5f;
+                float s = u * u * (3.0f - 2.0f * u); /* smoothstep */
+                anim_box_col = box_from_col + (box_to_col - box_from_col) * s;
+                anim_box_row = box_from_row + (box_to_row - box_from_row) * s;
+            } else {
+                anim_box_col = box_to_col;
+                anim_box_row = box_to_row;
+            }
+            box_animating = true;
+        }
+
+        shader_set_int(shader, "u_has_ao",
+                       voxel_mesh_has_ao(&ps->groove_box_mesh) ? 1 : 0);
+        shader_set_float(shader, "u_ao_intensity", 1.0f);
+
+        for (int fi = 0; fi < ps->grid->feature_count; fi++) {
+            const Feature* feat = ps->grid->features[fi];
+            if (!feat || !feat->vt || !feat->vt->name) continue;
+            if (strcmp(feat->vt->name, "groove_box") != 0) continue;
+
+            /* GrooveBoxData layout: first two ints are groove_cols[32],
+             * groove_rows[32], groove_length, then box_col, box_row.
+             * But that's the internal struct — we can also just read
+             * feat->col/feat->row which are kept in sync with box position. */
+            int box_col = feat->col;
+            int box_row = feat->row;
+
+            float render_col, render_row;
+
+            /* Check if this is the box currently being animated.
+             * Grid already moved box to destination, so match on to-position. */
+            if (box_animating &&
+                box_col == anim_box_to_col && box_row == anim_box_to_row) {
+                render_col = anim_box_col;
+                render_row = anim_box_row;
+            } else {
+                render_col = (float)box_col;
+                render_row = (float)box_row;
+            }
+
+            float model[16];
+            memset(model, 0, sizeof(model));
+            model[0]  = 1.0f;
+            model[5]  = 1.0f;
+            model[10] = 1.0f;
+            model[15] = 1.0f;
+            model[12] = render_col + 0.5f;
+            model[13] = 0.0f;
+            model[14] = render_row + 0.5f;
+            shader_set_mat4(shader, "u_model", model);
+            voxel_mesh_draw(&ps->groove_box_mesh);
+        }
+
+        /* Reset model matrix */
+        {
+            float ident[16];
+            memset(ident, 0, sizeof(ident));
+            ident[0] = ident[5] = ident[10] = ident[15] = 1.0f;
+            shader_set_mat4(shader, "u_model", ident);
+        }
+    }
+
     /* Draw dynamic actors with per-frame model matrices, AO, and shadows */
     {
         bool animating = anim_queue_is_playing(&ps->anim);
@@ -1225,12 +1409,81 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
         {
             float tcol, trow;
             float thop = 0.0f;
-            if (animating) {
+            if (animating &&
+                anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
+                anim_queue_theseus_event_type(&ps->anim) == ANIM_EVT_BOX_SLIDE) {
+                /* Multi-phase push rendering:
+                 * The tweens are linear 0→1. We remap progress to create:
+                 * Phase 1 (0.0–0.25): approach — Theseus moves to edge near box
+                 * Phase 2 (0.25–0.75): push — Theseus adjacent to box, both slide
+                 * Phase 3 (0.75–1.0): settle — Theseus slides to center of new tile
+                 */
+                float t = tween_progress(&ps->anim.move_x);
+                float from_col = ps->anim.move_x.start;
+                float from_row = ps->anim.move_y.start;
+                float to_col   = ps->anim.move_x.end;
+                float to_row   = ps->anim.move_y.end;
+                float dir_col  = to_col - from_col; /* +1, -1, or 0 */
+                float dir_row  = to_row - from_row;
+
+                if (t < 0.25f) {
+                    /* Approach: from center to edge (0.4 tiles toward box) */
+                    float u = t / 0.25f;
+                    float s = u * u * (3.0f - 2.0f * u); /* smoothstep */
+                    tcol = from_col + dir_col * 0.4f * s;
+                    trow = from_row + dir_row * 0.4f * s;
+                } else if (t < 0.75f) {
+                    /* Push: both move one tile. Theseus stays adjacent to box.
+                     * At t=0.25: Theseus at from + 0.4*dir
+                     * At t=0.75: Theseus at to - 0.1*dir (near center of new tile) */
+                    float u = (t - 0.25f) / 0.5f;
+                    float s = u * u * (3.0f - 2.0f * u); /* smoothstep */
+                    float push_start_col = from_col + dir_col * 0.4f;
+                    float push_start_row = from_row + dir_row * 0.4f;
+                    float push_end_col   = to_col - dir_col * 0.1f;
+                    float push_end_row   = to_row - dir_row * 0.1f;
+                    tcol = push_start_col + (push_end_col - push_start_col) * s;
+                    trow = push_start_row + (push_end_row - push_start_row) * s;
+                } else {
+                    /* Settle: from near-center to center of new tile */
+                    float u = (t - 0.75f) / 0.25f;
+                    float s = u * u * (3.0f - 2.0f * u); /* smoothstep */
+                    float settle_start_col = to_col - dir_col * 0.1f;
+                    float settle_start_row = to_row - dir_row * 0.1f;
+                    tcol = settle_start_col + (to_col - settle_start_col) * s;
+                    trow = settle_start_row + (to_row - settle_start_row) * s;
+                }
+                thop = 0.0f;
+            } else if (animating) {
                 anim_queue_theseus_pos(&ps->anim, &tcol, &trow, &thop);
             } else {
                 tcol = (float)ps->grid->theseus_col;
                 trow = (float)ps->grid->theseus_row;
             }
+
+            /* Apply bump offset for failed push animation.
+             * Ease profile: approach (0→0.4), hold (0.4→0.5), return (0.5→1.0).
+             * Max displacement = 0.3 tiles toward the box. */
+            if (ps->bump_active) {
+                float t = ps->bump_timer;
+                float bump_frac;
+                if (t < 0.4f) {
+                    /* Approach: ease out */
+                    float u = t / 0.4f;
+                    bump_frac = u * u * (3.0f - 2.0f * u); /* smoothstep */
+                } else if (t < 0.5f) {
+                    /* Hold at peak */
+                    bump_frac = 1.0f;
+                } else {
+                    /* Return: ease in */
+                    float u = (t - 0.5f) / 0.5f;
+                    bump_frac = 1.0f - u * u * (3.0f - 2.0f * u);
+                }
+                float max_disp = 0.3f;
+                tcol += ps->bump_dir_x * bump_frac * max_disp;
+                trow += ps->bump_dir_z * bump_frac * max_disp;
+            }
+
             float hop_y = thop * 0.3f;
 
             /* Soft ground shadow — shrinks with hop height */
@@ -1299,6 +1552,8 @@ static void puzzle_on_enter(State* self) {
     /* Initialize animation system */
     anim_queue_init(&ps->anim);
     input_buffer_init(&ps->input_buf);
+    ps->bump_active = false;
+    ps->bump_timer = 0.0f;
 
     /* Build 3D diorama for verification */
     ps->render_3d = false;
@@ -1319,6 +1574,7 @@ static void puzzle_on_exit(State* self) {
         voxel_mesh_destroy(&ps->diorama_mesh);
         voxel_mesh_destroy(&ps->theseus_mesh);
         voxel_mesh_destroy(&ps->minotaur_mesh);
+        voxel_mesh_destroy(&ps->groove_box_mesh);
         destroy_shadow_resources(ps);
         ps->diorama_built = false;
     }
@@ -1419,6 +1675,16 @@ static void puzzle_update(State* self, float dt) {
 
     if (ps->status_timer > 0.0f) {
         ps->status_timer -= dt;
+    }
+
+    /* Update bump animation (failed push against groove box) */
+    if (ps->bump_active) {
+        #define BUMP_DURATION 0.25f
+        ps->bump_timer += dt / BUMP_DURATION;
+        if (ps->bump_timer >= 1.0f) {
+            ps->bump_timer = 1.0f;
+            ps->bump_active = false;
+        }
     }
 
     /* Update animation */
@@ -1537,6 +1803,7 @@ static void puzzle_destroy(State* self) {
         voxel_mesh_destroy(&ps->diorama_mesh);
         voxel_mesh_destroy(&ps->theseus_mesh);
         voxel_mesh_destroy(&ps->minotaur_mesh);
+        voxel_mesh_destroy(&ps->groove_box_mesh);
         destroy_shadow_resources(ps);
     }
     if (ps->grid) {

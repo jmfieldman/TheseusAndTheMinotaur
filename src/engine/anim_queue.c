@@ -124,19 +124,21 @@ static void start_theseus_phase(AnimQueue* aq) {
         }
 
         if (box_evt && push_evt) {
-            /* Groove box push */
+            /* Groove box push — visual multi-phase effect is handled
+             * in puzzle_scene rendering by remapping tween progress.
+             * Here we just set up standard tweens over a longer duration. */
             aq->theseus_event_type = ANIM_EVT_BOX_SLIDE;
             aq->theseus_sub = THESEUS_SUB_PUSH;
-            float dur = ANIM_PUSH_DURATION;
+            float dur = ANIM_PUSH_DURATION * 2.5f; /* ~0.375s for 3-phase feel */
             tween_init(&aq->move_x, (float)push_evt->from_col,
-                       (float)push_evt->to_col, dur, ease_out_cubic);
+                       (float)push_evt->to_col, dur, ease_linear);
             tween_init(&aq->move_y, (float)push_evt->from_row,
-                       (float)push_evt->to_row, dur, ease_out_cubic);
+                       (float)push_evt->to_row, dur, ease_linear);
             tween_init(&aq->hop, 0.0f, 0.0f, 0.001f, ease_linear);
             tween_init(&aq->aux_x, (float)box_evt->box.box_from_col,
-                       (float)box_evt->box.box_to_col, dur, ease_out_cubic);
+                       (float)box_evt->box.box_to_col, dur, ease_linear);
             tween_init(&aq->aux_y, (float)box_evt->box.box_from_row,
-                       (float)box_evt->box.box_to_row, dur, ease_out_cubic);
+                       (float)box_evt->box.box_to_row, dur, ease_linear);
             return;
         }
 
@@ -699,16 +701,16 @@ static void start_reverse_theseus_phase(AnimQueue* aq) {
         if (box_evt && push_evt) {
             aq->theseus_event_type = ANIM_EVT_BOX_SLIDE;
             aq->theseus_sub = THESEUS_SUB_PUSH;
-            float dur = rev_dur(ANIM_PUSH_DURATION);
+            float dur = rev_dur(ANIM_PUSH_DURATION * 2.5f);
             tween_init(&aq->move_x, (float)push_evt->to_col,
-                       (float)push_evt->from_col, dur, ease_out_cubic);
+                       (float)push_evt->from_col, dur, ease_linear);
             tween_init(&aq->move_y, (float)push_evt->to_row,
-                       (float)push_evt->from_row, dur, ease_out_cubic);
+                       (float)push_evt->from_row, dur, ease_linear);
             tween_init(&aq->hop, 0.0f, 0.0f, 0.001f, ease_linear);
             tween_init(&aq->aux_x, (float)box_evt->box.box_to_col,
-                       (float)box_evt->box.box_from_col, dur, ease_out_cubic);
+                       (float)box_evt->box.box_from_col, dur, ease_linear);
             tween_init(&aq->aux_y, (float)box_evt->box.box_to_row,
-                       (float)box_evt->box.box_from_row, dur, ease_out_cubic);
+                       (float)box_evt->box.box_from_row, dur, ease_linear);
             return;
         }
 
