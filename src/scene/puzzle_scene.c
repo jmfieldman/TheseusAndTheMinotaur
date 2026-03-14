@@ -1067,6 +1067,8 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                          ws->bevel_darkness, ws->color_variation);
         shader_set_vec4(shader, "u_wall_stone_c",
                          ws->grain_intensity, ws->grain_scale, ws->wear, 0.0f);
+        shader_set_vec4(shader, "u_wall_stone_d",
+                         ws->gap_color[0], ws->gap_color[1], ws->gap_color[2], 0.0f);
     }
 
     /* Draw static geometry (floor, walls, exit marker) */

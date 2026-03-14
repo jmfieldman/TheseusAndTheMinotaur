@@ -59,6 +59,7 @@ typedef struct {
     float grain_intensity;     /* surface FBM noise magnitude (0=smooth, 0.10=strong) */
     float grain_scale;         /* surface FBM frequency multiplier (10=fine stone, 4=coarse wood) */
     float wear;                /* edge wear amount (0=pristine straight edges, 1=heavily worn/chipped) */
+    float gap_color[3];        /* RGB color blended into mortar/bevel gaps (default 0,0,0 = black) */
 } WallStyle;
 
 /* Decoration layer configuration */

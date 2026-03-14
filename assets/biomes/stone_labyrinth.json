@@ -24,7 +24,8 @@
         "color_variation":    0.20,
         "grain_intensity":    0.10,
         "grain_scale":        10.0,
-        "wear":               0.4
+        "wear":               0.4,
+        "gap_color":          [0.18, 0.14, 0.10]
     },
 
     "floor_style": {

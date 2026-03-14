@@ -72,6 +72,8 @@ static void parse_wall_style(const cJSON* obj, WallStyle* ws) {
     ws->grain_intensity = parse_float(obj, "grain_intensity", ws->grain_intensity);
     ws->grain_scale = parse_float(obj, "grain_scale", ws->grain_scale);
     ws->wear = parse_float(obj, "wear", ws->wear);
+    cJSON* gc = cJSON_GetObjectItemCaseSensitive(obj, "gap_color");
+    if (gc) parse_color3(gc, ws->gap_color);
 }
 
 static void parse_floor_style(const cJSON* obj, FloorStyle* fs) {
@@ -176,6 +178,9 @@ void biome_config_defaults(BiomeConfig* cfg) {
     cfg->wall_style.grain_intensity = 0.10f;
     cfg->wall_style.grain_scale = 10.0f;
     cfg->wall_style.wear = 0.0f;
+    cfg->wall_style.gap_color[0] = 0.0f;
+    cfg->wall_style.gap_color[1] = 0.0f;
+    cfg->wall_style.gap_color[2] = 0.0f;
 
     /* Floor style */
     cfg->floor_style.subdivisions = 2;
