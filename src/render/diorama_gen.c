@@ -88,21 +88,12 @@ static bool is_door(const Grid* grid, int col, int row, Direction side) {
 
 static void gen_floor(VoxelMesh* mesh, const Grid* grid,
                       const BiomeConfig* biome, RNG* rng) {
-    const FloorStyle* fs = &biome->floor_style;
-    int N = fs->subdivisions;
-    if (N < 1) N = 1;
-    if (N > 4) N = 4;
-
-    float edge = fs->edge_inset;
-    float gap  = fs->inner_gap;
-    float tile_inner = 1.0f - 2.0f * edge;  /* usable space inside tile border */
-
     for (int r = 0; r < grid->rows; r++) {
         for (int c = 0; c < grid->cols; c++) {
             const Cell* cell = grid_cell_const(grid, c, r);
             if (cell->impassable) continue;
 
-            /* Checkerboard per logical tile */
+            /* Checkerboard: one flat box per logical tile */
             const float* base_color;
             if ((c + r) % 2 == 0) {
                 base_color = biome->palette.floor_a;
@@ -110,83 +101,16 @@ static void gen_floor(VoxelMesh* mesh, const Grid* grid,
                 base_color = biome->palette.floor_b;
             }
 
-            /* Per-tile color offset (very subtle, same tone) */
-            float tile_jitter = rng_jitter(rng, fs->color_jitter * 0.5f);
+            /* Very subtle per-tile color jitter for natural variation */
+            float cj = rng_jitter(rng, biome->floor_style.color_jitter);
 
-            /* Compute split positions along X and Z within the tile.
-             * Start with uniform N-way split, then perturb based on regularity. */
-            float splits_x[5];  /* N+1 edges, max N=4 */
-            float splits_z[5];
-            for (int i = 0; i <= N; i++) {
-                float t = (float)i / (float)N;
-                float pos = t * (tile_inner - (float)(N - 1) * gap);
-                /* Add back gap offsets for positions after the first */
-                if (i > 0) pos += (float)i * gap;
-                splits_x[i] = pos;
-                splits_z[i] = pos;
-            }
-
-            /* Perturb internal split positions (not edges) for irregularity */
-            float jitter_range = fs->size_jitter * tile_inner / (float)N;
-            float irregularity = 1.0f - fs->regularity;
-            for (int i = 1; i < N; i++) {
-                splits_x[i] += rng_jitter(rng, jitter_range * irregularity);
-                splits_z[i] += rng_jitter(rng, jitter_range * irregularity);
-            }
-
-            /* Clamp splits to ensure no degenerate sub-voxels */
-            float min_size = 0.04f;
-            for (int i = 1; i < N; i++) {
-                if (splits_x[i] - splits_x[i-1] < min_size + gap)
-                    splits_x[i] = splits_x[i-1] + min_size + gap;
-                if (splits_x[i] > splits_x[N] - min_size * (float)(N - i))
-                    splits_x[i] = splits_x[N] - min_size * (float)(N - i);
-
-                if (splits_z[i] - splits_z[i-1] < min_size + gap)
-                    splits_z[i] = splits_z[i-1] + min_size + gap;
-                if (splits_z[i] > splits_z[N] - min_size * (float)(N - i))
-                    splits_z[i] = splits_z[N] - min_size * (float)(N - i);
-            }
-
-            /* Emit sub-voxels */
-            float tile_x = (float)c + edge;
-            float tile_z = (float)r + edge;
-
-            for (int sz = 0; sz < N; sz++) {
-                for (int sx = 0; sx < N; sx++) {
-                    float x0 = splits_x[sx];
-                    float x1 = splits_x[sx + 1];
-                    float z0 = splits_z[sz];
-                    float z1 = splits_z[sz + 1];
-
-                    /* Sub-voxel dimensions (subtract gap from trailing edge) */
-                    float sub_w = x1 - x0 - gap;
-                    float sub_d = z1 - z0 - gap;
-                    if (sub_w < min_size) sub_w = min_size;
-                    if (sub_d < min_size) sub_d = min_size;
-
-                    /* Per-sub-voxel color jitter (within tile tone) */
-                    float cj = rng_jitter(rng, fs->color_jitter);
-
-                    /* Height variation: bipolar so some sub-voxels protrude
-                     * above y=0 and some are recessed below. AO will darken
-                     * the crevices between differently-heighted neighbors,
-                     * creating soft textured appearance without physical gaps. */
-                    float top_j = rng_jitter(rng, fs->height_variation);
-
-                    add_box(mesh,
-                            tile_x + x0,
-                            -FLOOR_THICKNESS,
-                            tile_z + z0,
-                            sub_w,
-                            FLOOR_THICKNESS + top_j,
-                            sub_d,
-                            base_color[0] + tile_jitter + cj,
-                            base_color[1] + tile_jitter + cj,
-                            base_color[2] + tile_jitter + cj,
-                            1.0f, false);
-                }
-            }
+            add_box(mesh,
+                    (float)c, -FLOOR_THICKNESS, (float)r,
+                    1.0f, FLOOR_THICKNESS, 1.0f,
+                    base_color[0] + cj,
+                    base_color[1] + cj,
+                    base_color[2] + cj,
+                    1.0f, false);
         }
     }
 }
@@ -206,10 +130,7 @@ static void emit_wall_segment(VoxelMesh* mesh, const BiomeConfig* biome,
                                float base_x, float base_z,
                                float seg_len_x, float seg_len_z) {
     int bps = biome->wall_style.blocks_per_segment;
-    int rob = biome->wall_style.rows_of_blocks;
-    float mortar = biome->wall_style.mortar_gap;
     float regularity = biome->wall_style.block_regularity;
-    float roughness = biome->wall_style.roughness;
 
     /* Determine if this is an X-aligned or Z-aligned wall */
     bool x_aligned = (seg_len_x > seg_len_z);
@@ -217,70 +138,55 @@ static void emit_wall_segment(VoxelMesh* mesh, const BiomeConfig* biome,
     float total_len = x_aligned ? seg_len_x : seg_len_z;
     float thickness = x_aligned ? seg_len_z : seg_len_x;
 
-    float row_height = (WALL_HEIGHT - mortar * (float)(rob - 1)) / (float)rob;
+    /* All blocks share the same uniform height and thickness.
+     * Only the length along the edge varies. */
+    float block_height = WALL_HEIGHT;
 
-    for (int row_i = 0; row_i < rob; row_i++) {
-        float by = (float)row_i * (row_height + mortar);
+    /* Compute block lengths with variation */
+    float block_lengths[16];
+    if (bps > 16) bps = 16;
+    float base_len = total_len / (float)bps;
 
-        /* Height variation on top row for weathered look */
-        float h_var = 0.0f;
-        if (row_i == rob - 1) {
-            h_var = rng_jitter(rng, biome->wall_style.height_variation);
+    for (int bi = 0; bi < bps; bi++) {
+        float variation = (1.0f - regularity) * rng_jitter(rng, base_len * 0.35f);
+        block_lengths[bi] = base_len + variation;
+    }
+
+    /* Normalize so they sum to total_len exactly */
+    float sum = 0.0f;
+    for (int bi = 0; bi < bps; bi++) sum += block_lengths[bi];
+    float scale = total_len / sum;
+    for (int bi = 0; bi < bps; bi++) block_lengths[bi] *= scale;
+
+    /* Emit blocks — same height, same thickness, varying length */
+    float offset = 0.0f;
+    for (int bi = 0; bi < bps; bi++) {
+        float bl = block_lengths[bi];
+
+        /* Per-block color jitter */
+        float cj = rng_jitter(rng, biome->wall_style.color_jitter);
+
+        float bx, bz, bsx, bsz;
+        if (x_aligned) {
+            bx = base_x + offset;
+            bz = base_z;
+            bsx = bl;
+            bsz = thickness;
+        } else {
+            bx = base_x;
+            bz = base_z + offset;
+            bsx = thickness;
+            bsz = bl;
         }
 
-        /* Compute block lengths with regularity */
-        float block_lengths[16];
-        if (bps > 16) bps = 16;
-        float usable = total_len - mortar * (float)(bps - 1);
-        float base_len = usable / (float)bps;
+        add_box(mesh, bx, 0.0f, bz,
+                bsx, block_height, bsz,
+                biome->palette.wall[0] + cj,
+                biome->palette.wall[1] + cj,
+                biome->palette.wall[2] + cj,
+                1.0f, true);
 
-        for (int bi = 0; bi < bps; bi++) {
-            float variation = (1.0f - regularity) * rng_jitter(rng, base_len * 0.3f);
-            block_lengths[bi] = base_len + variation;
-        }
-
-        /* Normalize so they sum to usable */
-        float sum = 0.0f;
-        for (int bi = 0; bi < bps; bi++) sum += block_lengths[bi];
-        float scale = usable / sum;
-        for (int bi = 0; bi < bps; bi++) block_lengths[bi] *= scale;
-
-        /* Emit blocks */
-        float offset = 0.0f;
-        for (int bi = 0; bi < bps; bi++) {
-            float bl = block_lengths[bi];
-            float bh = row_height + h_var;
-            if (bh < 0.02f) bh = 0.02f;
-
-            /* Position jitter */
-            float dx = rng_jitter(rng, roughness * 0.02f);
-            float dz = rng_jitter(rng, roughness * 0.02f);
-
-            /* Color jitter */
-            float cj = rng_jitter(rng, biome->wall_style.color_jitter);
-
-            float bx, bz, bsx, bsz;
-            if (x_aligned) {
-                bx = base_x + offset + dx;
-                bz = base_z + dz;
-                bsx = bl;
-                bsz = thickness;
-            } else {
-                bx = base_x + dx;
-                bz = base_z + offset + dz;
-                bsx = thickness;
-                bsz = bl;
-            }
-
-            add_box(mesh, bx, by, bz,
-                    bsx, bh, bsz,
-                    biome->palette.wall[0] + cj,
-                    biome->palette.wall[1] + cj,
-                    biome->palette.wall[2] + cj,
-                    1.0f, true);
-
-            offset += bl + mortar;
-        }
+        offset += bl;
     }
 }
 

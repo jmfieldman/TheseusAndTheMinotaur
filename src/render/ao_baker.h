@@ -17,13 +17,13 @@
  */
 
 /* Number of hemisphere rays per texel. More = smoother but slower.
- * 16 rays with 32×32 tile size gives smooth results — the higher
- * spatial resolution compensates for fewer rays per texel. */
-#define AO_RAY_COUNT 16
+ * 24 rays with 32×32 tile size gives smooth wall shadow gradients. */
+#define AO_RAY_COUNT 24
 
 /* Maximum ray march distance in grid cells. Controls how far AO influence
- * extends. 8 cells ≈ ~0.25 world units at cell_size=0.03125. */
-#define AO_MAX_STEPS 8
+ * extends. 12 cells ≈ ~0.75 world units at cell_size=0.0625 — gives
+ * wide soft shadows from walls onto adjacent floor tiles. */
+#define AO_MAX_STEPS 12
 
 /*
  * Bake AO for a single face tile.

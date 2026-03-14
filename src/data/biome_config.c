@@ -142,14 +142,14 @@ void biome_config_defaults(BiomeConfig* cfg) {
     strncpy(cfg->id, "stone_labyrinth", sizeof(cfg->id) - 1);
     strncpy(cfg->name, "Stone Labyrinth", sizeof(cfg->name) - 1);
 
-    /* Palette — warm sandstone */
-    float fa[3] = {0.35f, 0.37f, 0.33f};
-    float fb[3] = {0.42f, 0.44f, 0.40f};
-    float w[3]  = {0.55f, 0.50f, 0.42f};
-    float ac[3] = {0.65f, 0.60f, 0.45f};
-    float im[3] = {0.30f, 0.28f, 0.25f};
-    float ps[3] = {0.25f, 0.23f, 0.20f};
-    float bw[3] = {0.50f, 0.47f, 0.40f};
+    /* Palette — warm stone */
+    float fa[3] = {0.33f, 0.31f, 0.28f};
+    float fb[3] = {0.44f, 0.42f, 0.38f};
+    float w[3]  = {0.50f, 0.47f, 0.40f};
+    float ac[3] = {0.75f, 0.65f, 0.25f};
+    float im[3] = {0.25f, 0.23f, 0.20f};
+    float ps[3] = {0.22f, 0.20f, 0.18f};
+    float bw[3] = {0.45f, 0.42f, 0.36f};
 
     memcpy(cfg->palette.floor_a, fa, sizeof(fa));
     memcpy(cfg->palette.floor_b, fb, sizeof(fb));
@@ -175,7 +175,7 @@ void biome_config_defaults(BiomeConfig* cfg) {
     cfg->floor_style.edge_inset = 0.0f;
     cfg->floor_style.inner_gap = 0.0f;
     cfg->floor_style.height_variation = 0.003f;
-    cfg->floor_style.color_jitter = 0.025f;
+    cfg->floor_style.color_jitter = 0.01f;
     cfg->floor_style.size_jitter = 0.06f;
 
     /* Floor decorations */
