@@ -180,16 +180,31 @@ grid dimensions or screen resolution.
 
 - **Soft baked lighting** -- the primary illumination is pre-computed per
   diorama, not dynamic.
-- **Baked ambient occlusion** -- computed offline during the voxel mesh
-  generation phase (not per-frame). After all boxes are placed, the mesh
-  builder rasterizes them into the coarse occupancy grid (see §2.1.1).
-  For each emitted vertex, it samples the 3 neighboring occupancy cells at
-  that corner to compute a 0.0--1.0 occlusion multiplier, which is baked
-  directly into the **vertex color** as a darkening factor. This adds depth
-  at voxel junctions, wall-floor seams, inside corners, and beneath
-  overhangs without any runtime cost. The AO calculation runs once when the
-  diorama mesh is built and the shading is permanently encoded in the vertex
-  data.
+- **Three-tier ambient occlusion** -- computed offline during the voxel mesh
+  generation phase (not per-frame), using three different techniques matched
+  to the predictability of each geometry type:
+  1. **Floor faces → shadow lightmap.** Wall and obstacle footprints are
+     projected top-down onto a 2D lightmap texture, Gaussian-blurred for
+     soft edges, and composited with per-tile surface effects (edge darkening
+     + grain noise). The shader samples this lightmap for floor faces. Shadow
+     parameters (scale, offset, blur radius, intensity, resolution) are
+     configurable per biome via `FloorShadowConfig`, allowing shadows to be
+     larger than the wall footprint and offset to simulate a light angle.
+  2. **Wall faces → vertex-color heuristics.** Walls use deterministic
+     darkening gradients baked directly into vertex colors: a floor-seam
+     gradient (darkest at y=0, fading by ~30% wall height) and a subtle top
+     lip darkening. No texture sampling is needed at runtime.
+  3. **Complex geometry → raytraced AO atlas.** Decorations, door frames,
+     lanterns, and other freeform geometry use the existing per-texel
+     hemisphere raycasting into the occupancy grid, producing an AO texture
+     atlas (32×32 texels per face, 24 rays, 12 max steps). Surface effects
+     (edge darkening + grain noise) are applied post-bake.
+
+  Each box is tagged with an `AoMode` (NONE/ATLAS/LIGHTMAP) by the diorama
+  generator. The vertex layout carries this mode as a per-vertex float, and
+  the fragment shader branches on it to select the appropriate AO source.
+  This produces smooth, tunable shadows on floors (no banding), clean
+  gradients on walls, and detailed AO on complex decorative geometry.
 - **Gentle gradients** across surfaces (e.g. slight darkening toward the bottom
   of walls, subtle sky-light from above). These can also be baked into vertex
   colors during generation.

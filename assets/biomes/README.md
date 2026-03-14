@@ -19,6 +19,7 @@ Each biome JSON contains:
 - `floor_decorations`, `wall_decorations` — Density, max per tile, prefab name references
 - `lantern_pillars` — Glow color, density, placement rules
 - `platform`, `edge_border`, `doors` — Structural parameters
+- `floor_shadow` — Shadow lightmap parameters (shadow_scale, shadow_offset_x/z, shadow_blur_radius, shadow_intensity, shadow_resolution)
 - `prefabs` — Inline voxel cluster definitions (named, each with an array of boxes)
 
 Levels reference a biome by its `id` in the level JSON's `"biome"` field.

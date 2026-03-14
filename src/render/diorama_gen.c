@@ -59,7 +59,14 @@ static void add_box(VoxelMesh* mesh, float x, float y, float z,
                     float sx, float sy, float sz,
                     float r, float g, float b, float a,
                     bool no_cull) {
-    voxel_mesh_add_box(mesh, x, y, z, sx, sy, sz, r, g, b, a, no_cull);
+    voxel_mesh_add_box_ex(mesh, x, y, z, sx, sy, sz, r, g, b, a, no_cull, AO_MODE_ATLAS);
+}
+
+static void add_box_ao(VoxelMesh* mesh, float x, float y, float z,
+                        float sx, float sy, float sz,
+                        float r, float g, float b, float a,
+                        bool no_cull, AoMode ao_mode) {
+    voxel_mesh_add_box_ex(mesh, x, y, z, sx, sy, sz, r, g, b, a, no_cull, ao_mode);
 }
 
 static void add_light(DioramaGenResult* result,
@@ -104,13 +111,13 @@ static void gen_floor(VoxelMesh* mesh, const Grid* grid,
             /* Very subtle per-tile color jitter for natural variation */
             float cj = rng_jitter(rng, biome->floor_style.color_jitter);
 
-            add_box(mesh,
-                    (float)c, -FLOOR_THICKNESS, (float)r,
-                    1.0f, FLOOR_THICKNESS, 1.0f,
-                    base_color[0] + cj,
-                    base_color[1] + cj,
-                    base_color[2] + cj,
-                    1.0f, false);
+            add_box_ao(mesh,
+                       (float)c, -FLOOR_THICKNESS, (float)r,
+                       1.0f, FLOOR_THICKNESS, 1.0f,
+                       base_color[0] + cj,
+                       base_color[1] + cj,
+                       base_color[2] + cj,
+                       1.0f, false, AO_MODE_LIGHTMAP);
         }
     }
 }
@@ -179,12 +186,12 @@ static void emit_wall_segment(VoxelMesh* mesh, const BiomeConfig* biome,
             bsz = bl;
         }
 
-        add_box(mesh, bx, 0.0f, bz,
-                bsx, block_height, bsz,
-                biome->palette.wall[0] + cj,
-                biome->palette.wall[1] + cj,
-                biome->palette.wall[2] + cj,
-                1.0f, true);
+        add_box_ao(mesh, bx, 0.0f, bz,
+                   bsx, block_height, bsz,
+                   biome->palette.wall[0] + cj,
+                   biome->palette.wall[1] + cj,
+                   biome->palette.wall[2] + cj,
+                   1.0f, true, AO_MODE_NONE);
 
         offset += bl;
     }
@@ -255,13 +262,13 @@ static void gen_walls(VoxelMesh* mesh, const Grid* grid,
             if (!is_wall_corner(grid, vx, vz)) continue;
 
             float cj = rng_jitter(rng, biome->wall_style.color_jitter);
-            add_box(mesh,
-                    (float)vx - half_t, 0.0f, (float)vz - half_t,
-                    WALL_THICKNESS, WALL_HEIGHT, WALL_THICKNESS,
-                    biome->palette.wall[0] + cj,
-                    biome->palette.wall[1] + cj,
-                    biome->palette.wall[2] + cj,
-                    1.0f, true);
+            add_box_ao(mesh,
+                       (float)vx - half_t, 0.0f, (float)vz - half_t,
+                       WALL_THICKNESS, WALL_HEIGHT, WALL_THICKNESS,
+                       biome->palette.wall[0] + cj,
+                       biome->palette.wall[1] + cj,
+                       biome->palette.wall[2] + cj,
+                       1.0f, true, AO_MODE_NONE);
         }
     }
 
@@ -867,49 +874,49 @@ static void gen_edge_border(VoxelMesh* mesh, const Grid* grid,
     for (int i = 0; i < depth; i++) {
         float z = -(float)(i + 1) * 0.5f - overhang + (float)i * 0.5f;
         z = -overhang - (float)i * 0.5f;
-        add_box(mesh,
-                -overhang, -FLOOR_THICKNESS, z,
-                (float)grid->cols + 2.0f * overhang, border_h, 0.5f,
-                biome->palette.platform_side[0] * 0.9f,
-                biome->palette.platform_side[1] * 0.9f,
-                biome->palette.platform_side[2] * 0.9f,
-                1.0f, false);
+        add_box_ao(mesh,
+                   -overhang, -FLOOR_THICKNESS, z,
+                   (float)grid->cols + 2.0f * overhang, border_h, 0.5f,
+                   biome->palette.platform_side[0] * 0.9f,
+                   biome->palette.platform_side[1] * 0.9f,
+                   biome->palette.platform_side[2] * 0.9f,
+                   1.0f, false, AO_MODE_NONE);
     }
 
     /* North edge */
     for (int i = 0; i < depth; i++) {
         float z = (float)grid->rows + overhang + (float)i * 0.5f;
-        add_box(mesh,
-                -overhang, -FLOOR_THICKNESS, z,
-                (float)grid->cols + 2.0f * overhang, border_h, 0.5f,
-                biome->palette.platform_side[0] * 0.9f,
-                biome->palette.platform_side[1] * 0.9f,
-                biome->palette.platform_side[2] * 0.9f,
-                1.0f, false);
+        add_box_ao(mesh,
+                   -overhang, -FLOOR_THICKNESS, z,
+                   (float)grid->cols + 2.0f * overhang, border_h, 0.5f,
+                   biome->palette.platform_side[0] * 0.9f,
+                   biome->palette.platform_side[1] * 0.9f,
+                   biome->palette.platform_side[2] * 0.9f,
+                   1.0f, false, AO_MODE_NONE);
     }
 
     /* West edge */
     for (int i = 0; i < depth; i++) {
         float x = -overhang - (float)i * 0.5f;
-        add_box(mesh,
-                x - 0.5f, -FLOOR_THICKNESS, -overhang,
-                0.5f, border_h, (float)grid->rows + 2.0f * overhang,
-                biome->palette.platform_side[0] * 0.9f,
-                biome->palette.platform_side[1] * 0.9f,
-                biome->palette.platform_side[2] * 0.9f,
-                1.0f, false);
+        add_box_ao(mesh,
+                   x - 0.5f, -FLOOR_THICKNESS, -overhang,
+                   0.5f, border_h, (float)grid->rows + 2.0f * overhang,
+                   biome->palette.platform_side[0] * 0.9f,
+                   biome->palette.platform_side[1] * 0.9f,
+                   biome->palette.platform_side[2] * 0.9f,
+                   1.0f, false, AO_MODE_NONE);
     }
 
     /* East edge */
     for (int i = 0; i < depth; i++) {
         float x = (float)grid->cols + overhang + (float)i * 0.5f;
-        add_box(mesh,
-                x, -FLOOR_THICKNESS, -overhang,
-                0.5f, border_h, (float)grid->rows + 2.0f * overhang,
-                biome->palette.platform_side[0] * 0.9f,
-                biome->palette.platform_side[1] * 0.9f,
-                biome->palette.platform_side[2] * 0.9f,
-                1.0f, false);
+        add_box_ao(mesh,
+                   x, -FLOOR_THICKNESS, -overhang,
+                   0.5f, border_h, (float)grid->rows + 2.0f * overhang,
+                   biome->palette.platform_side[0] * 0.9f,
+                   biome->palette.platform_side[1] * 0.9f,
+                   biome->palette.platform_side[2] * 0.9f,
+                   1.0f, false, AO_MODE_NONE);
     }
 }
 
@@ -934,6 +941,9 @@ void diorama_generate(VoxelMesh* mesh, const Grid* grid,
     gen_lanterns(mesh, grid, biome, &rng, result);
     gen_exit_light(mesh, grid, biome, result);
     gen_edge_border(mesh, grid, biome);
+
+    result->grid_cols = grid->cols;
+    result->grid_rows = grid->rows;
 
     LOG_INFO("diorama_generate: %d boxes queued for biome '%s'",
              mesh->box_count, biome->id);

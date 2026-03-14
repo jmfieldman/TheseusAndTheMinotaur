@@ -57,6 +57,7 @@ static const char* s_voxel_vert_src =
     "layout(location = 1) in vec3 a_normal;\n"
     "layout(location = 2) in vec4 a_color;\n"
     "layout(location = 3) in vec2 a_uv;\n"
+    "layout(location = 4) in float a_ao_mode;\n"
     "\n"
     "uniform mat4 u_vp;\n"           /* view-projection */
     "uniform mat4 u_model;\n"        /* model transform */
@@ -65,6 +66,7 @@ static const char* s_voxel_vert_src =
     "out vec3 v_normal;\n"
     "out vec4 v_color;\n"
     "out vec2 v_uv;\n"
+    "out float v_ao_mode;\n"
     "\n"
     "void main() {\n"
     "    vec4 world = u_model * vec4(a_position, 1.0);\n"
@@ -72,6 +74,7 @@ static const char* s_voxel_vert_src =
     "    v_normal = mat3(u_model) * a_normal;\n"
     "    v_color = a_color;\n"
     "    v_uv = a_uv;\n"
+    "    v_ao_mode = a_ao_mode;\n"
     "    gl_Position = u_vp * world;\n"
     "}\n";
 
@@ -82,6 +85,7 @@ static const char* s_voxel_frag_src =
     "in vec3 v_normal;\n"
     "in vec4 v_color;\n"
     "in vec2 v_uv;\n"
+    "in float v_ao_mode;\n"
     "\n"
     "out vec4 FragColor;\n"
     "\n"
@@ -96,21 +100,35 @@ static const char* s_voxel_frag_src =
     "uniform vec4 u_point_color[8];\n"
     "uniform float u_point_radius[8];\n"
     "\n"
-    "/* AO texture */\n"
+    "/* AO texture atlas (unit 0) */\n"
     "uniform sampler2D u_ao_texture;\n"
     "uniform int u_has_ao;\n"          /* 1 if AO texture is bound */
-    "uniform float u_ao_intensity;\n"  /* 0..1: lerp between no-AO and full-AO, also scales vertex alpha */
+    "uniform float u_ao_intensity;\n"  /* 0..1: lerp between no-AO and full-AO */
+    "\n"
+    "/* Floor lightmap (unit 1) */\n"
+    "uniform sampler2D u_floor_lightmap;\n"
+    "uniform vec4 u_lightmap_bounds;\n"  /* origin_x, origin_z, extent_x, extent_z */
     "\n"
     "void main() {\n"
     "    vec3 N = normalize(v_normal);\n"
     "    vec3 base_color = v_color.rgb;\n"
     "\n"
-    "    /* Apply AO from texture if available, modulated by intensity */\n"
+    "    /* Three-tier AO system:\n"
+    "     *   ao_mode > 1.5 → floor lightmap\n"
+    "     *   ao_mode > 0.5 → raytraced AO atlas\n"
+    "     *   ao_mode <= 0.5 → vertex color already darkened (wall heuristic) */\n"
     "    float ao = 1.0;\n"
-    "    if (u_has_ao != 0) {\n"
+    "    if (v_ao_mode > 1.5) {\n"
+    "        /* Floor lightmap */\n"
+    "        vec2 lm_uv = (v_world_pos.xz - u_lightmap_bounds.xy) / u_lightmap_bounds.zw;\n"
+    "        float lm_sample = texture(u_floor_lightmap, lm_uv).r;\n"
+    "        ao = mix(1.0, lm_sample, u_ao_intensity);\n"
+    "    } else if (v_ao_mode > 0.5 && u_has_ao != 0) {\n"
+    "        /* Raytraced AO atlas */\n"
     "        float ao_sample = texture(u_ao_texture, v_uv).r;\n"
     "        ao = mix(1.0, ao_sample, u_ao_intensity);\n"
     "    }\n"
+    "    /* ao_mode=0: vertex color already darkened, ao stays 1.0 */\n"
     "\n"
     "    /* Apply AO to base color */\n"
     "    base_color *= ao;\n"
@@ -273,6 +291,8 @@ void renderer_init(void) {
         shader_use(s_renderer.voxel_shader);
         shader_set_float(s_renderer.voxel_shader, "u_ao_intensity", 1.0f);
         shader_set_int(s_renderer.voxel_shader, "u_ao_texture", 0);
+        shader_set_int(s_renderer.voxel_shader, "u_floor_lightmap", 1);
+        shader_set_vec4(s_renderer.voxel_shader, "u_lightmap_bounds", 0.0f, 0.0f, 1.0f, 1.0f);
         glUseProgram(0);
     }
 
@@ -289,6 +309,11 @@ void renderer_init(void) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         /* Leave it bound — it acts as the default for unit 0 */
+
+        /* Also bind fallback to unit 1 for floor lightmap sampler */
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, s_renderer.fallback_tex);
+        glActiveTexture(GL_TEXTURE0);
     }
 
     LOG_INFO("Renderer initialized");

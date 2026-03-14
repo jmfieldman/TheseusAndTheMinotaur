@@ -206,6 +206,14 @@ void biome_config_defaults(BiomeConfig* cfg) {
 
     /* Doors */
     cfg->doors.frame_height_blocks = 4;
+
+    /* Floor shadow lightmap */
+    cfg->floor_shadow.shadow_scale = 1.3f;
+    cfg->floor_shadow.shadow_offset_x = 0.05f;
+    cfg->floor_shadow.shadow_offset_z = -0.05f;
+    cfg->floor_shadow.shadow_blur_radius = 3.0f;
+    cfg->floor_shadow.shadow_intensity = 0.4f;
+    cfg->floor_shadow.shadow_resolution = 32;
 }
 
 bool biome_config_load(BiomeConfig* cfg, const char* json_path) {
@@ -281,6 +289,23 @@ bool biome_config_load(BiomeConfig* cfg, const char* json_path) {
     if (doors) {
         cfg->doors.frame_height_blocks = parse_int(doors, "frame_height_blocks",
                                                     cfg->doors.frame_height_blocks);
+    }
+
+    /* Floor shadow */
+    const cJSON* fs = cJSON_GetObjectItemCaseSensitive(root, "floor_shadow");
+    if (fs) {
+        cfg->floor_shadow.shadow_scale = parse_float(fs, "shadow_scale",
+                                                      cfg->floor_shadow.shadow_scale);
+        cfg->floor_shadow.shadow_offset_x = parse_float(fs, "shadow_offset_x",
+                                                          cfg->floor_shadow.shadow_offset_x);
+        cfg->floor_shadow.shadow_offset_z = parse_float(fs, "shadow_offset_z",
+                                                          cfg->floor_shadow.shadow_offset_z);
+        cfg->floor_shadow.shadow_blur_radius = parse_float(fs, "shadow_blur_radius",
+                                                             cfg->floor_shadow.shadow_blur_radius);
+        cfg->floor_shadow.shadow_intensity = parse_float(fs, "shadow_intensity",
+                                                           cfg->floor_shadow.shadow_intensity);
+        cfg->floor_shadow.shadow_resolution = parse_int(fs, "shadow_resolution",
+                                                          cfg->floor_shadow.shadow_resolution);
     }
 
     /* Prefabs */

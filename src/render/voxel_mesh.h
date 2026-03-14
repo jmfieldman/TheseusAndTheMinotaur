@@ -9,11 +9,12 @@
  * positions and dimensions into a single VBO.
  *
  * Vertex layout: position (vec3) + normal (vec3) + color (vec4) + uv (vec2)
- *   = 12 floats per vertex, 48 bytes.
+ *   + ao_mode (float) = 13 floats per vertex, 52 bytes.
  *
- * AO is computed via raytraced precomputed textures rather than per-vertex
- * baking. Each visible face gets an 8×8 texel tile in an AO texture atlas.
- * The shader samples the AO texture and multiplies it into the base color.
+ * Three-tier AO system:
+ *   AO_MODE_NONE (0)     — wall heuristic: darkening baked into vertex color
+ *   AO_MODE_ATLAS (1)    — raytraced AO texture atlas (complex geometry)
+ *   AO_MODE_LIGHTMAP (2) — floor shadow lightmap (smooth, tunable)
  *
  * Usage:
  *   VoxelMesh mesh;
@@ -44,12 +45,20 @@
  * 32 texels per face side gives good quality at reasonable cost. */
 #define AO_TILE_SIZE 32
 
+/* AO mode for each box — controls how ambient occlusion is computed. */
+typedef enum {
+    AO_MODE_NONE     = 0,  /* Wall heuristic: darkening baked into vertex color */
+    AO_MODE_ATLAS    = 1,  /* Raytraced AO texture atlas (complex geometry) */
+    AO_MODE_LIGHTMAP = 2,  /* Floor shadow lightmap (smooth, tunable) */
+} AoMode;
+
 typedef struct {
     float x, y, z;       /* position (min corner) */
     float sx, sy, sz;    /* size (extents) */
     float r, g, b, a;    /* color */
     bool  no_cull;       /* if true, all 6 faces are always emitted (for thin geometry like walls) */
     bool  occluder_only; /* if true, contributes to occupancy grid for AO but emits no faces */
+    uint8_t ao_mode;     /* AoMode — controls per-face AO routing (default AO_MODE_ATLAS) */
 } VoxelBox;
 
 typedef struct {
@@ -66,6 +75,15 @@ typedef struct {
     int      vertex_count;
     bool     built;
     bool     has_ao;         /* true if AO texture was generated */
+
+    /* Floor lightmap (set before build, used by lightmap-mode faces) */
+    GLuint   floor_lm_texture;  /* R8 texture handle (0 if none) */
+    float    floor_lm_origin_x; /* world-space lightmap origin X */
+    float    floor_lm_origin_z; /* world-space lightmap origin Z */
+    float    floor_lm_extent_x; /* world-space lightmap extent X */
+    float    floor_lm_extent_z; /* world-space lightmap extent Z */
+    int      floor_lm_cols;     /* grid cols for UV computation */
+    int      floor_lm_rows;     /* grid rows for UV computation */
 } VoxelMesh;
 
 /* Initialize mesh for accumulating boxes. */
@@ -105,11 +123,28 @@ int voxel_mesh_get_vertex_count(const VoxelMesh* mesh);
 /* Query whether mesh has an AO texture. */
 bool voxel_mesh_has_ao(const VoxelMesh* mesh);
 
+/* Add a box with explicit AO mode. This is the extended version of
+ * voxel_mesh_add_box() that allows specifying how AO should be computed
+ * for this box's faces. */
+void voxel_mesh_add_box_ex(VoxelMesh* mesh,
+                            float x, float y, float z,
+                            float sx, float sy, float sz,
+                            float r, float g, float b, float a,
+                            bool no_cull, AoMode ao_mode);
+
 /* Add an occluder-only box. Contributes to the occupancy grid for AO
  * raycasting but emits no visible faces. Use to simulate a ground plane
  * or other invisible geometry that should cast AO shadows. */
 void voxel_mesh_add_occluder(VoxelMesh* mesh,
                               float x, float y, float z,
                               float sx, float sy, float sz);
+
+/* Set the floor lightmap texture for lightmap-mode faces.
+ * Must be called before voxel_mesh_build(). The mesh takes ownership
+ * of the texture handle (will delete it in voxel_mesh_destroy). */
+void voxel_mesh_set_floor_lightmap(VoxelMesh* mesh, GLuint texture,
+                                    float origin_x, float origin_z,
+                                    float extent_x, float extent_z,
+                                    int cols, int rows);
 
 #endif /* VOXEL_MESH_H */

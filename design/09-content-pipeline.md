@@ -384,12 +384,16 @@ After all boxes are placed, the builder rasterizes them into a **coarse
 occupancy grid** (~8 subdivisions per game tile) used for:
 
 1. **Hidden face culling** — skip faces fully occluded by neighboring geometry
-2. **Baked ambient occlusion** — sample 3 neighboring occupancy cells per
-   vertex corner, darken vertex colors at seams and overhangs
+2. **Raytraced AO atlas** — for complex geometry (decorations, door frames,
+   lanterns), per-texel hemisphere rays are cast against the occupancy grid
+   to produce an AO texture atlas
 
-The occupancy grid is discarded after mesh construction. The final vertex
-format is: position + normal + color (with AO baked into color). See
-[02 -- Visual Style](02-visual-style.md) §2.1.1 for details.
+The occupancy grid is discarded after mesh construction. AO uses a three-tier
+system: floor faces sample a projected shadow lightmap (configurable per biome),
+wall faces use vertex-color heuristic darkening, and complex geometry uses the
+raytraced AO atlas. The final vertex format is: position + normal + color + UV
++ ao_mode (13 floats). See [02 -- Visual Style](02-visual-style.md) §4.1 for
+details.
 
 Decoration prefabs (voxel clusters for floor scatter, wall decorations,
 lantern pillars, etc.) are defined as **positioned box arrays** in the

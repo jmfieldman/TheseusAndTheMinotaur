@@ -44,6 +44,8 @@
 typedef struct {
     PointLight lights[LIGHTING_MAX_POINT_LIGHTS];
     int light_count;
+    int grid_cols;    /* grid dimensions (for lightmap generation) */
+    int grid_rows;
 } DioramaGenResult;
 
 /*

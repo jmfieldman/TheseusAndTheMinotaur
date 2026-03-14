@@ -11,6 +11,7 @@
 #include "render/camera.h"
 #include "render/lighting.h"
 #include "render/diorama_gen.h"
+#include "render/floor_lightmap.h"
 #include "data/biome_config.h"
 #include "input/input_manager.h"
 #include "platform/platform.h"
@@ -923,6 +924,22 @@ static void build_diorama(PuzzleScene* ps) {
     DioramaGenResult gen_result;
     diorama_generate(&ps->diorama_mesh, ps->grid, &biome, &gen_result);
 
+    /* Generate floor shadow lightmap before building the mesh */
+    {
+        FloorLightmap floor_lm;
+        floor_lightmap_generate(&floor_lm,
+                                 ps->diorama_mesh.boxes, ps->diorama_mesh.box_count,
+                                 gen_result.grid_cols, gen_result.grid_rows,
+                                 &biome.floor_shadow);
+        if (floor_lm.texture) {
+            voxel_mesh_set_floor_lightmap(&ps->diorama_mesh, floor_lm.texture,
+                                           floor_lm.origin_x, floor_lm.origin_z,
+                                           floor_lm.extent_x, floor_lm.extent_z,
+                                           gen_result.grid_cols, gen_result.grid_rows);
+            /* Don't call floor_lightmap_destroy — mesh took ownership of texture */
+        }
+    }
+
     voxel_mesh_build(&ps->diorama_mesh, 0.0625f);
 
     /* Set up camera */
@@ -1022,6 +1039,16 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
     shader_set_int(shader, "u_ao_texture", 0);  /* texture unit 0 */
     shader_set_int(shader, "u_has_ao", voxel_mesh_has_ao(&ps->diorama_mesh) ? 1 : 0);
     shader_set_float(shader, "u_ao_intensity", 1.0f);
+
+    /* Set floor lightmap uniforms */
+    shader_set_int(shader, "u_floor_lightmap", 1);  /* texture unit 1 */
+    if (ps->diorama_mesh.floor_lm_texture) {
+        shader_set_vec4(shader, "u_lightmap_bounds",
+                         ps->diorama_mesh.floor_lm_origin_x,
+                         ps->diorama_mesh.floor_lm_origin_z,
+                         ps->diorama_mesh.floor_lm_extent_x,
+                         ps->diorama_mesh.floor_lm_extent_z);
+    }
 
     /* Draw static geometry (floor, walls, exit marker) */
     voxel_mesh_draw(&ps->diorama_mesh);

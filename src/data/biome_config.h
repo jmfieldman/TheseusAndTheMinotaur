@@ -98,6 +98,16 @@ typedef struct {
     float size_jitter;        /* random size variation per sub-voxel (0..1) */
 } FloorStyle;
 
+/* Floor shadow lightmap configuration (per-biome tuning) */
+typedef struct {
+    float shadow_scale;       /* footprint multiplier (>1 = shadows larger than walls), default 1.3 */
+    float shadow_offset_x;    /* world offset X (simulates light angle), default 0.05 */
+    float shadow_offset_z;    /* world offset Z, default -0.05 */
+    float shadow_blur_radius; /* blur kernel radius in texels, default 3.0 */
+    float shadow_intensity;   /* max darkness 0..1, default 0.4 */
+    int   shadow_resolution;  /* texels per tile, default 32 */
+} FloorShadowConfig;
+
 /* Door style configuration */
 typedef struct {
     int frame_height_blocks;   /* door frame height in blocks */
@@ -117,6 +127,7 @@ typedef struct {
     BackWallConfig   back_wall;
     EdgeBorderConfig edge_border;
     DoorConfig       doors;
+    FloorShadowConfig floor_shadow;
 
     /* Prefab library (referenced by name from decoration layers) */
     BiomePrefab      prefabs[BIOME_MAX_PREFABS];
