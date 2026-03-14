@@ -221,6 +221,18 @@ void voxel_mesh_add_box_ex(VoxelMesh* mesh,
     box->no_cull = no_cull;
     box->occluder_only = false;
     box->ao_mode = (uint8_t)ao_mode;
+    box->wall_orient = WALL_ORIENT_H;  /* default, only meaningful for AO_MODE_NONE */
+}
+
+void voxel_mesh_add_wall(VoxelMesh* mesh,
+                          float x, float y, float z,
+                          float sx, float sy, float sz,
+                          float r, float g, float b, float a,
+                          bool no_cull, WallOrient orient) {
+    voxel_mesh_add_box_ex(mesh, x, y, z, sx, sy, sz, r, g, b, a, no_cull, AO_MODE_NONE);
+    if (mesh->box_count > 0) {
+        mesh->boxes[mesh->box_count - 1].wall_orient = (uint8_t)orient;
+    }
 }
 
 void voxel_mesh_add_occluder(VoxelMesh* mesh,
@@ -517,8 +529,20 @@ void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
                     /* Apply heuristic darkening to vertex color */
                     apply_wall_heuristic(&dst[6], dst[1], wall_h, mesh->shadow_softness);
 
-                    dst[10] = 0.0f;
-                    dst[11] = 0.0f;
+                    /* UV encoding for wall stone shader:
+                     *   uv.x = local position along slab axis (interpolated)
+                     *   uv.y = orient * 100 + segment_length */
+                    float local_slab = 0.0f;
+                    float seg_len = 0.0f;
+                    if (box->wall_orient == WALL_ORIENT_H) {
+                        local_slab = face->verts[v][0] * box->sx;
+                        seg_len = box->sx;
+                    } else if (box->wall_orient == WALL_ORIENT_V) {
+                        local_slab = face->verts[v][2] * box->sz;
+                        seg_len = box->sz;
+                    }
+                    dst[10] = local_slab;
+                    dst[11] = (float)box->wall_orient * 100.0f + seg_len;
                     dst[12] = 0.0f;  /* AO_MODE_NONE */
                     vert_count++;
                 }

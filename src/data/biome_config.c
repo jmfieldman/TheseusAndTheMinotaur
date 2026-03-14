@@ -61,13 +61,16 @@ static void parse_palette(const cJSON* obj, BiomePalette* pal) {
 
 static void parse_wall_style(const cJSON* obj, WallStyle* ws) {
     if (!obj) return;
-    ws->block_length_min = parse_float(obj, "block_length_min", ws->block_length_min);
-    ws->block_length_max = parse_float(obj, "block_length_max", ws->block_length_max);
-    ws->rows_of_blocks = parse_int(obj, "rows_of_blocks", ws->rows_of_blocks);
-    ws->roughness = parse_float(obj, "roughness", ws->roughness);
-    ws->height_variation = parse_float(obj, "height_variation", ws->height_variation);
-    ws->color_jitter = parse_float(obj, "color_jitter", ws->color_jitter);
-    ws->mortar_gap = parse_float(obj, "mortar_gap", ws->mortar_gap);
+    ws->stone_height = parse_float(obj, "stone_height", ws->stone_height);
+    ws->stone_width_min = parse_float(obj, "stone_width_min", ws->stone_width_min);
+    ws->stone_width_max = parse_float(obj, "stone_width_max", ws->stone_width_max);
+    ws->mortar_width = parse_float(obj, "mortar_width", ws->mortar_width);
+    ws->mortar_darkness = parse_float(obj, "mortar_darkness", ws->mortar_darkness);
+    ws->bevel_width = parse_float(obj, "bevel_width", ws->bevel_width);
+    ws->bevel_darkness = parse_float(obj, "bevel_darkness", ws->bevel_darkness);
+    ws->color_variation = parse_float(obj, "color_variation", ws->color_variation);
+    ws->grain_intensity = parse_float(obj, "grain_intensity", ws->grain_intensity);
+    ws->grain_scale = parse_float(obj, "grain_scale", ws->grain_scale);
 }
 
 static void parse_floor_style(const cJSON* obj, FloorStyle* fs) {
@@ -160,14 +163,17 @@ void biome_config_defaults(BiomeConfig* cfg) {
     memcpy(cfg->palette.platform_side, ps, sizeof(ps));
     memcpy(cfg->palette.back_wall, bw, sizeof(bw));
 
-    /* Wall style */
-    cfg->wall_style.block_length_min = 0.15f;
-    cfg->wall_style.block_length_max = 0.45f;
-    cfg->wall_style.rows_of_blocks = 2;
-    cfg->wall_style.roughness = 0.1f;
-    cfg->wall_style.height_variation = 0.05f;
-    cfg->wall_style.color_jitter = 0.06f;
-    cfg->wall_style.mortar_gap = 0.0f;
+    /* Wall surface texture style — weathered stone */
+    cfg->wall_style.stone_height = 0.09f;
+    cfg->wall_style.stone_width_min = 0.15f;
+    cfg->wall_style.stone_width_max = 0.30f;
+    cfg->wall_style.mortar_width = 0.06f;
+    cfg->wall_style.mortar_darkness = 0.50f;
+    cfg->wall_style.bevel_width = 0.22f;
+    cfg->wall_style.bevel_darkness = 0.12f;
+    cfg->wall_style.color_variation = 0.20f;
+    cfg->wall_style.grain_intensity = 0.10f;
+    cfg->wall_style.grain_scale = 10.0f;
 
     /* Floor style */
     cfg->floor_style.subdivisions = 2;

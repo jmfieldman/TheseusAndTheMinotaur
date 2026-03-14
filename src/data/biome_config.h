@@ -44,15 +44,20 @@ typedef struct {
     float back_wall[3];      /* back wall base color */
 } BiomePalette;
 
-/* Wall block composition style */
+/* Wall surface texture style — controls the procedural stone/brick/wood/metal
+ * pattern rendered on wall faces in the fragment shader. All visual detail
+ * is shader-based; walls are single prisms in geometry. */
 typedef struct {
-    float block_length_min;    /* minimum block length in world units, default 0.15 */
-    float block_length_max;    /* maximum block length in world units, default 0.45 */
-    int   rows_of_blocks;      /* vertical layers (2-3) */
-    float roughness;           /* position jitter magnitude */
-    float height_variation;    /* top-row random height offset */
-    float color_jitter;        /* per-block color variation */
-    float mortar_gap;          /* gap between blocks in world units */
+    float stone_height;        /* row height in world units (0.09 = ~3 rows on wall) */
+    float stone_width_min;     /* min stone width in world units */
+    float stone_width_max;     /* max stone width in world units */
+    float mortar_width;        /* mortar line thickness as fraction of stone (0=none, 0.06=thin) */
+    float mortar_darkness;     /* mortar darkening (0=invisible, 1=black). 0.50 = half-dark */
+    float bevel_width;         /* rounded-edge gradient width as fraction of stone (0=sharp, 0.3=very round) */
+    float bevel_darkness;      /* bevel edge darkening (0=none, 1=black). 0.12 = subtle */
+    float color_variation;     /* per-stone color variation magnitude (0=uniform, 0.20=strong) */
+    float grain_intensity;     /* surface FBM noise magnitude (0=smooth, 0.10=strong) */
+    float grain_scale;         /* surface FBM frequency multiplier (10=fine stone, 4=coarse wood) */
 } WallStyle;
 
 /* Decoration layer configuration */

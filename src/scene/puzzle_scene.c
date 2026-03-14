@@ -141,6 +141,7 @@ typedef struct {
     int             shadow_vertex_count;
     DioramaCamera   diorama_cam;
     LightingState   diorama_light;
+    WallStyle       wall_style;      /* cached for shader uniforms at render time */
 } PuzzleScene;
 
 /* ---------- Layout calculation ---------- */
@@ -933,6 +934,8 @@ static void build_diorama(PuzzleScene* ps) {
                                  &biome.floor_shadow);
         /* Pass universal shadow softness to mesh for wall heuristic */
         ps->diorama_mesh.shadow_softness = biome.floor_shadow.shadow_softness;
+        /* Cache wall style for shader uniforms at render time */
+        ps->wall_style = biome.wall_style;
 
         if (floor_lm.texture) {
             voxel_mesh_set_floor_lightmap(&ps->diorama_mesh, floor_lm.texture,
@@ -1051,6 +1054,19 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                          ps->diorama_mesh.floor_lm_origin_z,
                          ps->diorama_mesh.floor_lm_extent_x,
                          ps->diorama_mesh.floor_lm_extent_z);
+    }
+
+    /* Set wall stone texture uniforms from biome config */
+    {
+        const WallStyle* ws = &ps->wall_style;
+        shader_set_vec4(shader, "u_wall_stone_a",
+                         ws->stone_height, ws->stone_width_min,
+                         ws->stone_width_max, ws->mortar_width);
+        shader_set_vec4(shader, "u_wall_stone_b",
+                         ws->mortar_darkness, ws->bevel_width,
+                         ws->bevel_darkness, ws->color_variation);
+        shader_set_vec4(shader, "u_wall_stone_c",
+                         ws->grain_intensity, ws->grain_scale, 0.0f, 0.0f);
     }
 
     /* Draw static geometry (floor, walls, exit marker) */

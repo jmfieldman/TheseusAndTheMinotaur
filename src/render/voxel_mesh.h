@@ -52,6 +52,15 @@ typedef enum {
     AO_MODE_LIGHTMAP = 2,  /* Floor shadow lightmap (smooth, tunable) */
 } AoMode;
 
+/* Wall orientation — controls which axis the slab pattern divides along.
+ * Only meaningful when ao_mode == AO_MODE_NONE. Passed to the shader
+ * via the UV.x channel. */
+typedef enum {
+    WALL_ORIENT_H      = 0,  /* Horizontal wall: slabs divide along X */
+    WALL_ORIENT_V      = 1,  /* Vertical wall: slabs divide along Z */
+    WALL_ORIENT_CORNER = 2,  /* Corner block: slab edges on all sides */
+} WallOrient;
+
 typedef struct {
     float x, y, z;       /* position (min corner) */
     float sx, sy, sz;    /* size (extents) */
@@ -59,6 +68,7 @@ typedef struct {
     bool  no_cull;       /* if true, all 6 faces are always emitted (for thin geometry like walls) */
     bool  occluder_only; /* if true, contributes to occupancy grid for AO but emits no faces */
     uint8_t ao_mode;     /* AoMode — controls per-face AO routing (default AO_MODE_ATLAS) */
+    uint8_t wall_orient; /* WallOrient — slab axis for AO_MODE_NONE walls (default WALL_ORIENT_H) */
 } VoxelBox;
 
 typedef struct {
@@ -136,6 +146,14 @@ void voxel_mesh_add_box_ex(VoxelMesh* mesh,
                             float sx, float sy, float sz,
                             float r, float g, float b, float a,
                             bool no_cull, AoMode ao_mode);
+
+/* Add a wall box with explicit AO mode and wall orientation.
+ * wall_orient controls which axis the procedural slab pattern divides along. */
+void voxel_mesh_add_wall(VoxelMesh* mesh,
+                          float x, float y, float z,
+                          float sx, float sy, float sz,
+                          float r, float g, float b, float a,
+                          bool no_cull, WallOrient orient);
 
 /* Add an occluder-only box. Contributes to the occupancy grid for AO
  * raycasting but emits no visible faces. Use to simulate a ground plane

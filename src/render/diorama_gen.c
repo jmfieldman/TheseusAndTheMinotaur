@@ -132,74 +132,23 @@ static void gen_floor(VoxelMesh* mesh, const Grid* grid,
  *   - Skip entrance/exit door segments
  */
 
+/* Emit a single wall prism for one grid edge.
+ * Stone block detail (mortar lines, beveled edges, per-stone color variation,
+ * surface grain) is handled procedurally in the fragment shader — no need for
+ * multiple geometry blocks per edge. */
 static void emit_wall_segment(VoxelMesh* mesh, const BiomeConfig* biome,
                                RNG* rng,
                                float base_x, float base_z,
-                               float seg_len_x, float seg_len_z) {
-    float len_min = biome->wall_style.block_length_min;
-    float len_max = biome->wall_style.block_length_max;
+                               float seg_len_x, float seg_len_z,
+                               WallOrient orient) {
+    (void)rng;  /* no longer needed — all variation is in the shader */
 
-    /* Determine if this is an X-aligned or Z-aligned wall */
-    bool x_aligned = (seg_len_x > seg_len_z);
-
-    float total_len = x_aligned ? seg_len_x : seg_len_z;
-    float thickness = x_aligned ? seg_len_z : seg_len_x;
-
-    float block_height = WALL_HEIGHT;
-
-    /* Generate random block lengths until the edge is filled.
-     * Each block gets a random length in [len_min, len_max].
-     * The last block is sized to fill the remaining space exactly. */
-    float block_lengths[32];
-    int block_count = 0;
-    float remaining = total_len;
-
-    while (remaining > 0.001f && block_count < 32) {
-        float bl;
-        if (remaining <= len_max) {
-            /* Last block: fill whatever remains */
-            bl = remaining;
-        } else {
-            bl = len_min + rng_float(rng) * (len_max - len_min);
-            /* Don't leave a remainder smaller than len_min */
-            if (remaining - bl < len_min) {
-                bl = remaining;
-            }
-        }
-        block_lengths[block_count++] = bl;
-        remaining -= bl;
-    }
-
-    /* Emit blocks — same height, same thickness, random lengths */
-    float offset = 0.0f;
-    for (int bi = 0; bi < block_count; bi++) {
-        float bl = block_lengths[bi];
-
-        /* Per-block color jitter */
-        float cj = rng_jitter(rng, biome->wall_style.color_jitter);
-
-        float bx, bz, bsx, bsz;
-        if (x_aligned) {
-            bx = base_x + offset;
-            bz = base_z;
-            bsx = bl;
-            bsz = thickness;
-        } else {
-            bx = base_x;
-            bz = base_z + offset;
-            bsx = thickness;
-            bsz = bl;
-        }
-
-        add_box_ao(mesh, bx, 0.0f, bz,
-                   bsx, block_height, bsz,
-                   biome->palette.wall[0] + cj,
-                   biome->palette.wall[1] + cj,
-                   biome->palette.wall[2] + cj,
-                   1.0f, true, AO_MODE_NONE);
-
-        offset += bl;
-    }
+    voxel_mesh_add_wall(mesh, base_x, 0.0f, base_z,
+                        seg_len_x, WALL_HEIGHT, seg_len_z,
+                        biome->palette.wall[0],
+                        biome->palette.wall[1],
+                        biome->palette.wall[2],
+                        1.0f, true, orient);
 }
 
 /*
@@ -266,14 +215,13 @@ static void gen_walls(VoxelMesh* mesh, const Grid* grid,
         for (int vx = 0; vx <= cols; vx++) {
             if (!is_wall_corner(grid, vx, vz)) continue;
 
-            float cj = rng_jitter(rng, biome->wall_style.color_jitter);
-            add_box_ao(mesh,
+            voxel_mesh_add_wall(mesh,
                        (float)vx - half_t, 0.0f, (float)vz - half_t,
                        WALL_THICKNESS, WALL_HEIGHT, WALL_THICKNESS,
-                       biome->palette.wall[0] + cj,
-                       biome->palette.wall[1] + cj,
-                       biome->palette.wall[2] + cj,
-                       1.0f, true, AO_MODE_NONE);
+                       biome->palette.wall[0],
+                       biome->palette.wall[1],
+                       biome->palette.wall[2],
+                       1.0f, true, WALL_ORIENT_CORNER);
         }
     }
 
@@ -293,7 +241,7 @@ static void gen_walls(VoxelMesh* mesh, const Grid* grid,
 
             emit_wall_segment(mesh, biome, rng,
                               start_x, (float)vz - half_t,
-                              seg_len, WALL_THICKNESS);
+                              seg_len, WALL_THICKNESS, WALL_ORIENT_H);
         }
     }
 
@@ -313,7 +261,7 @@ static void gen_walls(VoxelMesh* mesh, const Grid* grid,
 
             emit_wall_segment(mesh, biome, rng,
                               (float)vx - half_t, start_z,
-                              WALL_THICKNESS, seg_len);
+                              WALL_THICKNESS, seg_len, WALL_ORIENT_V);
         }
     }
 }
@@ -327,12 +275,11 @@ static void gen_back_wall(VoxelMesh* mesh, const Grid* grid,
 
     /* Back wall runs along the north edge of the grid */
     for (int c = 0; c < grid->cols; c++) {
-        float cj = rng_jitter(rng, biome->wall_style.color_jitter);
         add_box(mesh, (float)c, 0.0f, (float)grid->rows - half_t,
                 1.0f, bw_height, WALL_THICKNESS,
-                biome->palette.back_wall[0] + cj,
-                biome->palette.back_wall[1] + cj,
-                biome->palette.back_wall[2] + cj,
+                biome->palette.back_wall[0],
+                biome->palette.back_wall[1],
+                biome->palette.back_wall[2],
                 1.0f, true);
     }
 
@@ -500,8 +447,6 @@ static void gen_impassable(VoxelMesh* mesh, const Grid* grid,
             const Cell* cell = grid_cell_const(grid, c, r);
             if (!cell->impassable) continue;
 
-            float cj = rng_jitter(rng, biome->wall_style.color_jitter);
-
             /* Try to use a prefab for visual variety */
             bool used_prefab = false;
             if (biome->floor_decorations.prefab_count > 0 && rng_float(rng) > 0.3f) {
@@ -542,9 +487,9 @@ static void gen_impassable(VoxelMesh* mesh, const Grid* grid,
                 add_box(mesh,
                         (float)c, -FLOOR_THICKNESS, (float)r,
                         1.0f, FLOOR_THICKNESS + WALL_HEIGHT * 1.5f, 1.0f,
-                        biome->palette.impassable[0] + cj,
-                        biome->palette.impassable[1] + cj,
-                        biome->palette.impassable[2] + cj,
+                        biome->palette.impassable[0],
+                        biome->palette.impassable[1],
+                        biome->palette.impassable[2],
                         1.0f, false);
             }
         }

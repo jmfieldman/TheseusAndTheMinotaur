@@ -14,13 +14,16 @@
     },
 
     "wall_style": {
-        "block_length_min":   0.12,
-        "block_length_max":   0.55,
-        "rows_of_blocks":     3,
-        "roughness":          0.3,
-        "height_variation":   0.08,
-        "color_jitter":       0.08,
-        "mortar_gap":         0.0
+        "stone_height":       0.15,
+        "stone_width_min":    0.25,
+        "stone_width_max":    0.60,
+        "mortar_width":       0.04,
+        "mortar_darkness":    0.35,
+        "bevel_width":        0.15,
+        "bevel_darkness":     0.08,
+        "color_variation":    0.25,
+        "grain_intensity":    0.12,
+        "grain_scale":        5.0
     },
 
     "floor_style": {
@@ -70,12 +73,12 @@
     },
 
     "floor_shadow": {
-        "shadow_softness":    0.2,
+        "shadow_softness":    0.1,
         "shadow_scale":       1.4,
-        "shadow_offset_x":    0.06,
-        "shadow_offset_z":   -0.04,
+        "shadow_offset_x":    0.02,
+        "shadow_offset_z":   -0.02,
         "shadow_blur_radius": 7.0,
-        "shadow_intensity":   0.55,
+        "shadow_intensity":   0.45,
         "shadow_resolution":  32
     },
 
