@@ -1514,8 +1514,11 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             /* Compute groove Y offset for minotaur */
             float mino_gy = actor_groove_y(ps, mcol, mrow);
 
-            /* Soft ground shadow */
-            draw_shadow_at_y(ps, shader, mcol + 0.5f, mino_gy + 0.01f,
+            /* Soft ground shadow — always at Y=0.01 (floor level).
+             * GL_LESS passes on rim (Y=0), trench floor (Y=-depth),
+             * and normal floor, but correctly fails against groove box
+             * top (Y=0.45) so shadow doesn't render on it. */
+            draw_shadow_at_y(ps, shader, mcol + 0.5f, 0.01f,
                              mrow + 0.5f, 1.0f,
                              ps->shadow_tex_minotaur, ps->shadow_extent_m);
 
@@ -1629,9 +1632,12 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             float thes_gy = actor_groove_y(ps, tcol, trow);
             float hop_y = thop * 0.3f;
 
-            /* Soft ground shadow — shrinks with hop height */
+            /* Soft ground shadow — shrinks with hop height.
+             * Always at Y=0.01 (floor level) regardless of trench.
+             * GL_LESS passes on rim, trench floor, and normal floor,
+             * but correctly fails against groove box top (Y=0.45). */
             float shadow_scale = 1.0f - thop * 0.5f;
-            draw_shadow_at_y(ps, shader, tcol + 0.5f, thes_gy + 0.01f,
+            draw_shadow_at_y(ps, shader, tcol + 0.5f, 0.01f,
                              trow + 0.5f, shadow_scale,
                              ps->shadow_tex_theseus, ps->shadow_extent_t);
 
