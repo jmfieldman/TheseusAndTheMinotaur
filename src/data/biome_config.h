@@ -124,6 +124,19 @@ typedef struct {
     int   shadow_resolution;  /* texels per tile, default 32 */
 } FloorShadowConfig;
 
+/* Actor shadow configuration (per-biome, independent of floor shadows).
+ * Controls the blurred rectangular shadow rendered under Theseus/Minotaur.
+ * Same parameter semantics as FloorShadowConfig but tuned separately. */
+typedef struct {
+    float shadow_softness;    /* blur softness 0..1 (0=hard, 1=soft), default 0.4 */
+    float shadow_scale;       /* footprint multiplier (>1 = wider shadow), default 1.3 */
+    float shadow_offset_x;    /* world offset X (simulates light angle), default 0.05 */
+    float shadow_offset_z;    /* world offset Z, default -0.05 */
+    float shadow_blur_radius; /* max blur radius in texels (scaled by softness), default 6.0 */
+    float shadow_intensity;   /* max darkness 0..1, default 0.55 */
+    int   shadow_resolution;  /* reference resolution for blur conversion, default 32 */
+} ActorShadowConfig;
+
 /* Door style configuration */
 typedef struct {
     int frame_height_blocks;   /* door frame height in blocks */
@@ -143,7 +156,8 @@ typedef struct {
     BackWallConfig   back_wall;
     EdgeBorderConfig edge_border;
     DoorConfig       doors;
-    FloorShadowConfig floor_shadow;
+    FloorShadowConfig  floor_shadow;
+    ActorShadowConfig  actor_shadow;
 
     /* Prefab library (referenced by name from decoration layers) */
     BiomePrefab      prefabs[BIOME_MAX_PREFABS];

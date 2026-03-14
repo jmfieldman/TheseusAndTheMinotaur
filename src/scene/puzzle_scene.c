@@ -137,8 +137,14 @@ typedef struct {
     VoxelMesh       theseus_mesh;    /* dynamic actor: Theseus (blue cube) */
     VoxelMesh       minotaur_mesh;   /* dynamic actor: Minotaur (red cube) */
     GLuint          shadow_vao;
-    GLuint          shadow_vbo;      /* tessellated disc with radial alpha falloff */
+    GLuint          shadow_vbo;      /* simple quad for actor shadow */
     int             shadow_vertex_count;
+    GLuint          shadow_tex_theseus;  /* R8 blurred rectangular shadow texture */
+    GLuint          shadow_tex_minotaur;
+    float           shadow_extent_t;     /* world-space half-extent of Theseus shadow quad */
+    float           shadow_extent_m;     /* world-space half-extent of Minotaur shadow quad */
+    float           shadow_offset_x;     /* world-space shadow offset (simulates light angle) */
+    float           shadow_offset_z;
     DioramaCamera   diorama_cam;
     LightingState   diorama_light;
     WallStyle       wall_style;      /* cached for shader uniforms at render time */
@@ -760,84 +766,172 @@ static void render_result_overlay(const PuzzleScene* ps, int vw, int vh) {
 /* Generate a precomputed soft radial shadow texture and a flat quad to render it.
  * The texture is a 64×64 R8 image with a smooth gaussian-like falloff from center.
  * The quad uses the same vertex layout as voxel meshes (pos + normal + color + uv). */
-#define SHADOW_RADIUS       0.45f
-#define SHADOW_PEAK_ALPHA   0.50f
-#define SHADOW_RINGS        5
-#define SHADOW_SEGMENTS     32
-#define SHADOW_FLOATS_PER_VERT 12  /* pos(3)+norm(3)+col(4)+uv(2) */
+#define SHADOW_TEX_SIZE     64   /* texels per side for actor shadow texture */
+#define SHADOW_FLOATS_PER_VERT 13  /* pos(3)+norm(3)+col(4)+uv(2)+ao_mode(1) */
 
-/* Smoothstep falloff for shadow alpha based on normalized distance [0,1] */
-static float shadow_falloff(float d) {
-    float t = 1.0f - d;
-    if (t < 0.0f) t = 0.0f;
-    return t * t * (3.0f - 2.0f * t);
+/* ---------- Gaussian blur (same algorithm as floor_lightmap) ---------- */
+
+static void shadow_gaussian_blur(float* data, int w, int h, float radius) {
+    if (radius < 0.5f) return;
+    int half_k = (int)ceilf(radius * 2.0f);
+    if (half_k < 1) half_k = 1;
+    if (half_k > 32) half_k = 32;
+    int ks = half_k * 2 + 1;
+    float* kernel = (float*)malloc((size_t)ks * sizeof(float));
+    float sigma = radius, sum = 0.0f;
+    for (int i = 0; i < ks; i++) {
+        float x = (float)(i - half_k);
+        kernel[i] = expf(-(x * x) / (2.0f * sigma * sigma));
+        sum += kernel[i];
+    }
+    for (int i = 0; i < ks; i++) kernel[i] /= sum;
+    float* temp = (float*)malloc((size_t)w * (size_t)h * sizeof(float));
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            float v = 0.0f;
+            for (int k = -half_k; k <= half_k; k++) {
+                int sx = x + k; if (sx < 0) sx = 0; if (sx >= w) sx = w - 1;
+                v += data[y * w + sx] * kernel[k + half_k];
+            }
+            temp[y * w + x] = v;
+        }
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            float v = 0.0f;
+            for (int k = -half_k; k <= half_k; k++) {
+                int sy = y + k; if (sy < 0) sy = 0; if (sy >= h) sy = h - 1;
+                v += temp[sy * w + x] * kernel[k + half_k];
+            }
+            data[y * w + x] = v;
+        }
+    free(temp);
+    free(kernel);
 }
 
-static void build_shadow_resources(PuzzleScene* ps) {
-    /* Tessellated disc: center hub + SHADOW_RINGS concentric rings,
-     * each with SHADOW_SEGMENTS angular slices. Radial falloff is
-     * baked into vertex alpha — no texture needed. */
-    int tri_count = SHADOW_SEGMENTS + SHADOW_SEGMENTS * (SHADOW_RINGS - 1) * 2;
-    int vert_count = tri_count * 3;
-    float* verts = (float*)malloc((size_t)vert_count * SHADOW_FLOATS_PER_VERT * sizeof(float));
+/*
+ * Generate a blurred rectangular shadow texture for an actor.
+ *
+ * footprint: world-space footprint size (square actor)
+ * cfg:       floor shadow config (softness, blur_radius, intensity, scale)
+ * out_tex:   receives the GL texture handle
+ * out_extent: receives the world-space half-extent of the shadow quad
+ */
+static void generate_actor_shadow_texture(float footprint, float actor_height,
+                                           const ActorShadowConfig* cfg,
+                                           GLuint* out_tex, float* out_extent) {
+    int tex_size = SHADOW_TEX_SIZE;
 
-    float ring_radii[SHADOW_RINGS + 1];
-    float ring_alpha[SHADOW_RINGS + 1];
-    ring_radii[0] = 0.0f;
-    ring_alpha[0] = SHADOW_PEAK_ALPHA;
-    for (int i = 1; i <= SHADOW_RINGS; i++) {
-        float t = (float)i / (float)SHADOW_RINGS;
-        ring_radii[i] = SHADOW_RADIUS * t;
-        ring_alpha[i] = SHADOW_PEAK_ALPHA * shadow_falloff(t);
-    }
+    /* Convert floor lightmap blur parameters to world-space sigma.
+     * The floor lightmap uses blur_radius in texels at shadow_resolution
+     * texels per tile (1 tile = 1.0 world units). */
+    float resolution = (float)cfg->shadow_resolution;
+    if (resolution < 4.0f) resolution = 4.0f;
+    float world_sigma = cfg->shadow_softness * cfg->shadow_blur_radius / resolution;
 
-    /* Precompute sin/cos for angular segments */
-    float sin_table[SHADOW_SEGMENTS + 1];
-    float cos_table[SHADOW_SEGMENTS + 1];
-    for (int s = 0; s <= SHADOW_SEGMENTS; s++) {
-        float angle = (float)s / (float)SHADOW_SEGMENTS * 2.0f * 3.14159265f;
-        sin_table[s] = sinf(angle);
-        cos_table[s] = cosf(angle);
-    }
+    /* Shadow scale: taller actors cast slightly wider shadows (simulates
+     * a non-point overhead light source). Base scale from config, plus
+     * a height-proportional expansion. */
+    float height_factor = 1.0f + actor_height * 0.5f;
+    float scaled_foot = footprint * cfg->shadow_scale * height_factor;
 
-    int vi = 0;  /* vertex index */
+    /* Shadow extent: half-footprint + 4*sigma padding for full blur decay */
+    float world_extent = scaled_foot * 0.5f + world_sigma * 4.0f;
+    if (world_extent < scaled_foot * 0.6f) world_extent = scaled_foot * 0.6f;
 
-    /* Helper: emit one vertex */
-    #define EMIT_VERT(px, pz, alpha) do { \
-        float* dst = &verts[vi * SHADOW_FLOATS_PER_VERT]; \
-        dst[0] = (px); dst[1] = 0.0f; dst[2] = (pz); \
-        dst[3] = 0.0f; dst[4] = 1.0f; dst[5] = 0.0f; \
-        dst[6] = 0.0f; dst[7] = 0.0f; dst[8] = 0.0f; dst[9] = (alpha); \
-        dst[10] = 0.0f; dst[11] = 0.0f; \
-        vi++; \
-    } while (0)
+    /* Rasterize footprint into float buffer */
+    float* shadow = (float*)calloc((size_t)tex_size * (size_t)tex_size, sizeof(float));
+    float half_foot = scaled_foot * 0.5f;
 
-    /* Center fan (ring 0 → ring 1) */
-    for (int s = 0; s < SHADOW_SEGMENTS; s++) {
-        int s1 = s + 1;
-        EMIT_VERT(0.0f, 0.0f, ring_alpha[0]);
-        EMIT_VERT(ring_radii[1] * cos_table[s1], ring_radii[1] * sin_table[s1], ring_alpha[1]);
-        EMIT_VERT(ring_radii[1] * cos_table[s],  ring_radii[1] * sin_table[s],  ring_alpha[1]);
-    }
+    for (int ty = 0; ty < tex_size; ty++) {
+        for (int tx = 0; tx < tex_size; tx++) {
+            /* Map texel to world-space offset from center */
+            float wx = ((float)tx + 0.5f) / (float)tex_size * 2.0f * world_extent - world_extent;
+            float wz = ((float)ty + 0.5f) / (float)tex_size * 2.0f * world_extent - world_extent;
 
-    /* Outer ring strips (ring i → ring i+1) */
-    for (int i = 1; i < SHADOW_RINGS; i++) {
-        float r0 = ring_radii[i], r1 = ring_radii[i + 1];
-        float a0 = ring_alpha[i], a1 = ring_alpha[i + 1];
-        for (int s = 0; s < SHADOW_SEGMENTS; s++) {
-            int s1 = s + 1;
-            /* Triangle 1: inner[s], outer[s1], outer[s] */
-            EMIT_VERT(r0 * cos_table[s],  r0 * sin_table[s],  a0);
-            EMIT_VERT(r1 * cos_table[s1], r1 * sin_table[s1], a1);
-            EMIT_VERT(r1 * cos_table[s],  r1 * sin_table[s],  a1);
-            /* Triangle 2: inner[s], inner[s1], outer[s1] */
-            EMIT_VERT(r0 * cos_table[s],  r0 * sin_table[s],  a0);
-            EMIT_VERT(r0 * cos_table[s1], r0 * sin_table[s1], a0);
-            EMIT_VERT(r1 * cos_table[s1], r1 * sin_table[s1], a1);
+            /* Inside the scaled footprint? */
+            if (fabsf(wx) <= half_foot && fabsf(wz) <= half_foot) {
+                shadow[ty * tex_size + tx] = cfg->shadow_intensity;
+            }
         }
     }
 
-    #undef EMIT_VERT
+    /* Convert world-space sigma to texel-space blur for this texture.
+     * texels_per_unit = tex_size / (2 * world_extent). */
+    float texels_per_unit = (float)tex_size / (2.0f * world_extent);
+    float actual_blur = world_sigma * texels_per_unit;
+    shadow_gaussian_blur(shadow, tex_size, tex_size, actual_blur);
+
+    /* Convert to "lit" space: 1=lit, 0=dark (matches floor lightmap convention) */
+    for (int i = 0; i < tex_size * tex_size; i++) {
+        shadow[i] = 1.0f - shadow[i];
+    }
+
+    /* Convert to uint8 and upload as R8 texture */
+    uint8_t* texels = (uint8_t*)malloc((size_t)tex_size * (size_t)tex_size);
+    for (int i = 0; i < tex_size * tex_size; i++) {
+        float v = shadow[i];
+        if (v < 0.0f) v = 0.0f;
+        if (v > 1.0f) v = 1.0f;
+        texels[i] = (uint8_t)(v * 255.0f + 0.5f);
+    }
+    free(shadow);
+
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, tex_size, tex_size, 0,
+                 GL_RED, GL_UNSIGNED_BYTE, texels);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    free(texels);
+
+    *out_tex = tex;
+    *out_extent = world_extent;
+}
+
+static void build_shadow_resources(PuzzleScene* ps, const ActorShadowConfig* cfg) {
+    /* Generate blurred rectangular shadow textures for each actor.
+     * Uses the same blur/softness/intensity parameters as wall floor shadows. */
+    /* Theseus: cube (size × size × size), so height = size */
+    generate_actor_shadow_texture(THESEUS_SIZE_FRAC, THESEUS_SIZE_FRAC, cfg,
+                                   &ps->shadow_tex_theseus, &ps->shadow_extent_t);
+    /* Minotaur: slightly shorter (size × size*0.8 × size) */
+    generate_actor_shadow_texture(MINOTAUR_SIZE_FRAC, MINOTAUR_SIZE_FRAC * 0.8f, cfg,
+                                   &ps->shadow_tex_minotaur, &ps->shadow_extent_m);
+
+    /* Cache shadow offsets for draw-time positioning (same as wall shadows) */
+    ps->shadow_offset_x = cfg->shadow_offset_x;
+    ps->shadow_offset_z = cfg->shadow_offset_z;
+
+    /* Build a simple quad (2 triangles, 6 vertices).
+     * Positions span [-1, +1] in X and Z — scaled by model matrix.
+     * UVs span [0, 1] for shadow texture sampling.
+     * ao_mode = AO_MODE_SHADOW (3.0) so the shader samples the texture. */
+    float verts[6 * SHADOW_FLOATS_PER_VERT];
+    int vi = 0;
+
+    #define SHADOW_VERT(px, pz, u, v) do { \
+        float* dst = &verts[vi * SHADOW_FLOATS_PER_VERT]; \
+        dst[0] = (px); dst[1] = 0.0f; dst[2] = (pz); \
+        dst[3] = 0.0f; dst[4] = 1.0f; dst[5] = 0.0f; \
+        dst[6] = 0.0f; dst[7] = 0.0f; dst[8] = 0.0f; dst[9] = 1.0f; \
+        dst[10] = (u); dst[11] = (v); \
+        dst[12] = 3.0f; /* AO_MODE_SHADOW */ \
+        vi++; \
+    } while (0)
+
+    /* Two triangles: (-1,-1) to (+1,+1) */
+    SHADOW_VERT(-1.0f, -1.0f, 0.0f, 0.0f);
+    SHADOW_VERT( 1.0f, -1.0f, 1.0f, 0.0f);
+    SHADOW_VERT( 1.0f,  1.0f, 1.0f, 1.0f);
+    SHADOW_VERT(-1.0f, -1.0f, 0.0f, 0.0f);
+    SHADOW_VERT( 1.0f,  1.0f, 1.0f, 1.0f);
+    SHADOW_VERT(-1.0f,  1.0f, 0.0f, 1.0f);
+
+    #undef SHADOW_VERT
 
     ps->shadow_vertex_count = vi;
 
@@ -846,7 +940,7 @@ static void build_shadow_resources(PuzzleScene* ps) {
     glBindVertexArray(ps->shadow_vao);
     glBindBuffer(GL_ARRAY_BUFFER, ps->shadow_vbo);
     glBufferData(GL_ARRAY_BUFFER,
-                 (GLsizeiptr)((size_t)vi * SHADOW_FLOATS_PER_VERT * sizeof(float)),
+                 (GLsizeiptr)(sizeof(verts)),
                  verts, GL_STATIC_DRAW);
 
     size_t stride = SHADOW_FLOATS_PER_VERT * sizeof(float);
@@ -858,36 +952,44 @@ static void build_shadow_resources(PuzzleScene* ps) {
     glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)(6 * sizeof(float)));
     glEnableVertexAttribArray(3);
     glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)(10 * sizeof(float)));
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)(12 * sizeof(float)));
 
     glBindVertexArray(0);
-    free(verts);
 }
 
 static void destroy_shadow_resources(PuzzleScene* ps) {
     if (ps->shadow_vao) { glDeleteVertexArrays(1, &ps->shadow_vao); ps->shadow_vao = 0; }
     if (ps->shadow_vbo) { glDeleteBuffers(1, &ps->shadow_vbo); ps->shadow_vbo = 0; }
+    if (ps->shadow_tex_theseus) { glDeleteTextures(1, &ps->shadow_tex_theseus); ps->shadow_tex_theseus = 0; }
+    if (ps->shadow_tex_minotaur) { glDeleteTextures(1, &ps->shadow_tex_minotaur); ps->shadow_tex_minotaur = 0; }
     ps->shadow_vertex_count = 0;
 }
 
 static void draw_shadow(const PuzzleScene* ps, GLuint shader,
-                         float x, float z, float scale) {
-    if (ps->shadow_vertex_count == 0) return;
+                         float x, float z, float scale,
+                         GLuint shadow_tex, float extent) {
+    if (ps->shadow_vertex_count == 0 || !shadow_tex) return;
 
-    /* No AO texture needed — falloff is baked in vertex alpha */
-    shader_set_int(shader, "u_has_ao", 0);
+    /* Bind actor shadow texture to unit 1 (temporarily replaces floor lightmap) */
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, shadow_tex);
+    glActiveTexture(GL_TEXTURE0);
 
     /* Disable depth writes so shadow doesn't block actor rendering */
     glDepthMask(GL_FALSE);
 
+    /* Quad spans [-1,+1] in local space; scale to shadow extent */
+    float s = extent * scale;
     float model[16];
     memset(model, 0, sizeof(model));
-    model[0]  = scale;
+    model[0]  = s;
     model[5]  = 1.0f;
-    model[10] = scale;
+    model[10] = s;
     model[15] = 1.0f;
-    model[12] = x;
+    model[12] = x + ps->shadow_offset_x;
     model[13] = 0.01f;  /* just above floor */
-    model[14] = z;
+    model[14] = z + ps->shadow_offset_z;
     shader_set_mat4(shader, "u_model", model);
 
     glBindVertexArray(ps->shadow_vao);
@@ -895,6 +997,13 @@ static void draw_shadow(const PuzzleScene* ps, GLuint shader,
     glBindVertexArray(0);
 
     glDepthMask(GL_TRUE);
+
+    /* Restore floor lightmap on unit 1 */
+    if (ps->diorama_mesh.floor_lm_texture) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, ps->diorama_mesh.floor_lm_texture);
+        glActiveTexture(GL_TEXTURE0);
+    }
 }
 
 static void build_diorama(PuzzleScene* ps) {
@@ -1002,8 +1111,9 @@ static void build_diorama(PuzzleScene* ps) {
         voxel_mesh_build(&ps->minotaur_mesh, size * 0.25f);
     }
 
-    /* Precomputed soft radial shadow texture + quad */
-    build_shadow_resources(ps);
+    /* Precomputed blurred rectangular shadow textures + quad.
+     * Uses the same blur/softness/intensity as floor wall shadows. */
+    build_shadow_resources(ps, &biome.actor_shadow);
 
     ps->diorama_built = true;
 
@@ -1091,7 +1201,8 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             }
 
             /* Soft ground shadow */
-            draw_shadow(ps, shader, mcol + 0.5f, mrow + 0.5f, 1.0f);
+            draw_shadow(ps, shader, mcol + 0.5f, mrow + 0.5f, 1.0f,
+                        ps->shadow_tex_minotaur, ps->shadow_extent_m);
 
             /* Actor with full AO */
             shader_set_int(shader, "u_has_ao",
@@ -1124,7 +1235,8 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
 
             /* Soft ground shadow — shrinks with hop height */
             float shadow_scale = 1.0f - thop * 0.5f;
-            draw_shadow(ps, shader, tcol + 0.5f, trow + 0.5f, shadow_scale);
+            draw_shadow(ps, shader, tcol + 0.5f, trow + 0.5f, shadow_scale,
+                        ps->shadow_tex_theseus, ps->shadow_extent_t);
 
             /* Actor with AO fading based on hop */
             float ao_intensity = 1.0f - thop;

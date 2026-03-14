@@ -228,6 +228,15 @@ void biome_config_defaults(BiomeConfig* cfg) {
     cfg->floor_shadow.shadow_blur_radius = 6.0f;
     cfg->floor_shadow.shadow_intensity = 0.55f;
     cfg->floor_shadow.shadow_resolution = 32;
+
+    /* Actor shadow (independent from floor shadows) */
+    cfg->actor_shadow.shadow_softness = 0.4f;
+    cfg->actor_shadow.shadow_scale = 1.3f;
+    cfg->actor_shadow.shadow_offset_x = 0.05f;
+    cfg->actor_shadow.shadow_offset_z = -0.05f;
+    cfg->actor_shadow.shadow_blur_radius = 6.0f;
+    cfg->actor_shadow.shadow_intensity = 0.55f;
+    cfg->actor_shadow.shadow_resolution = 32;
 }
 
 bool biome_config_load(BiomeConfig* cfg, const char* json_path) {
@@ -322,6 +331,25 @@ bool biome_config_load(BiomeConfig* cfg, const char* json_path) {
                                                            cfg->floor_shadow.shadow_intensity);
         cfg->floor_shadow.shadow_resolution = parse_int(fs, "shadow_resolution",
                                                           cfg->floor_shadow.shadow_resolution);
+    }
+
+    /* Actor shadow (independent from floor) */
+    const cJSON* as = cJSON_GetObjectItemCaseSensitive(root, "actor_shadow");
+    if (as) {
+        cfg->actor_shadow.shadow_softness = parse_float(as, "shadow_softness",
+                                                          cfg->actor_shadow.shadow_softness);
+        cfg->actor_shadow.shadow_scale = parse_float(as, "shadow_scale",
+                                                      cfg->actor_shadow.shadow_scale);
+        cfg->actor_shadow.shadow_offset_x = parse_float(as, "shadow_offset_x",
+                                                          cfg->actor_shadow.shadow_offset_x);
+        cfg->actor_shadow.shadow_offset_z = parse_float(as, "shadow_offset_z",
+                                                          cfg->actor_shadow.shadow_offset_z);
+        cfg->actor_shadow.shadow_blur_radius = parse_float(as, "shadow_blur_radius",
+                                                             cfg->actor_shadow.shadow_blur_radius);
+        cfg->actor_shadow.shadow_intensity = parse_float(as, "shadow_intensity",
+                                                           cfg->actor_shadow.shadow_intensity);
+        cfg->actor_shadow.shadow_resolution = parse_int(as, "shadow_resolution",
+                                                          cfg->actor_shadow.shadow_resolution);
     }
 
     /* Prefabs */

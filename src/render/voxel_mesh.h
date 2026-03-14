@@ -50,6 +50,7 @@ typedef enum {
     AO_MODE_NONE     = 0,  /* Wall heuristic: darkening baked into vertex color */
     AO_MODE_ATLAS    = 1,  /* Raytraced AO texture atlas (complex geometry) */
     AO_MODE_LIGHTMAP = 2,  /* Floor shadow lightmap (smooth, tunable) */
+    AO_MODE_SHADOW   = 3,  /* Actor shadow: samples shadow texture as alpha */
 } AoMode;
 
 /* Wall orientation — controls which axis the slab pattern divides along.

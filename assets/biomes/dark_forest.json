@@ -76,11 +76,21 @@
 
     "floor_shadow": {
         "shadow_softness":    0.1,
-        "shadow_scale":       1.1,
+        "shadow_scale":       1.2,
         "shadow_offset_x":    0.00,
         "shadow_offset_z":   -0.00,
         "shadow_blur_radius": 7.0,
-        "shadow_intensity":   0.45,
+        "shadow_intensity":   0.35,
+        "shadow_resolution":  32
+    },
+
+    "actor_shadow": {
+        "shadow_softness":    0.2,
+        "shadow_scale":       1.1,
+        "shadow_offset_x":    0.00,
+        "shadow_offset_z":    0.00,
+        "shadow_blur_radius": 7.0,
+        "shadow_intensity":   0.30,
         "shadow_resolution":  32
     },
 
