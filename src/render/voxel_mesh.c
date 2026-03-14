@@ -354,6 +354,14 @@ void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
             ao_baker_bake_face(tile_texels, face_origin, face_u_axis, face_v_axis,
                                face_normal, tile_px, occ);
 
+            /* Apply surface effects: soft edge darkening + weathered grain.
+             * Seed from box index + face index for deterministic variation. */
+            uint32_t fx_seed = (uint32_t)(i * 6 + f) * 2654435761u;
+            ao_baker_apply_surface_effects(tile_texels, tile_px, fx_seed,
+                                           0.15f,   /* edge_width: ~1 texel of fade */
+                                           0.12f,   /* edge_darkness: 12% darker at edges */
+                                           0.06f);  /* grain: 6% subtle variation */
+
             /* Copy tile texels into atlas */
             int atlas_x = tile_col * tile_px;
             int atlas_y = tile_row * tile_px;

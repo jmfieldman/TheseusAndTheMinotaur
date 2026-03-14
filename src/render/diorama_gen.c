@@ -167,14 +167,19 @@ static void gen_floor(VoxelMesh* mesh, const Grid* grid,
 
                     /* Per-sub-voxel color jitter (within tile tone) */
                     float cj = rng_jitter(rng, fs->color_jitter);
-                    float height_j = rng_float(rng) * fs->height_variation;
+
+                    /* Height variation: bipolar so some sub-voxels protrude
+                     * above y=0 and some are recessed below. AO will darken
+                     * the crevices between differently-heighted neighbors,
+                     * creating soft textured appearance without physical gaps. */
+                    float top_j = rng_jitter(rng, fs->height_variation);
 
                     add_box(mesh,
                             tile_x + x0,
-                            -FLOOR_THICKNESS - height_j,
+                            -FLOOR_THICKNESS,
                             tile_z + z0,
                             sub_w,
-                            FLOOR_THICKNESS + height_j,
+                            FLOOR_THICKNESS + top_j,
                             sub_d,
                             base_color[0] + tile_jitter + cj,
                             base_color[1] + tile_jitter + cj,

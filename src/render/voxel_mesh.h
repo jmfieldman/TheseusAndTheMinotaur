@@ -39,8 +39,10 @@
  * Sized for an 8×8 grid plus walls, impassable blocks, and decorations. */
 #define VOXEL_MESH_MAX_BOXES 8192
 
-/* AO texture tile size (texels per face side) */
-#define AO_TILE_SIZE 8
+/* AO texture tile size (texels per face side).
+ * Higher values give smoother edge/grain effects but use more atlas space.
+ * 32 texels per face side gives good quality at reasonable cost. */
+#define AO_TILE_SIZE 32
 
 typedef struct {
     float x, y, z;       /* position (min corner) */

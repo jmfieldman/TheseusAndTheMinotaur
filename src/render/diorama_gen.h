@@ -36,7 +36,7 @@
  *   DioramaGenResult result;
  *   diorama_generate(&mesh, grid, &biome, &result);
  *
- *   voxel_mesh_build(&mesh, 0.0625f);
+ *   voxel_mesh_build(&mesh, 0.03125f);
  *
  *   // Apply point lights from result to your LightingState
  */

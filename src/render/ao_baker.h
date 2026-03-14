@@ -17,12 +17,13 @@
  */
 
 /* Number of hemisphere rays per texel. More = smoother but slower.
- * 32 is a good balance for small tile sizes (8×8 texels). */
-#define AO_RAY_COUNT 32
+ * 16 rays with 32×32 tile size gives smooth results — the higher
+ * spatial resolution compensates for fewer rays per texel. */
+#define AO_RAY_COUNT 16
 
 /* Maximum ray march distance in grid cells. Controls how far AO influence
- * extends. 6 cells ≈ ~0.375 world units at cell_size=0.0625. */
-#define AO_MAX_STEPS 6
+ * extends. 8 cells ≈ ~0.25 world units at cell_size=0.03125. */
+#define AO_MAX_STEPS 8
 
 /*
  * Bake AO for a single face tile.
@@ -43,5 +44,22 @@ void ao_baker_bake_face(uint8_t* out_texels,
                          const float face_normal[3],
                          int tile_size,
                          const OccupancyGrid* grid);
+
+/*
+ * Apply surface effects to an already-baked AO tile.
+ * Adds edge darkening (soft bevel) and grain noise (weathered texture).
+ *
+ * texels:        AO tile data (tile_size × tile_size uint8_t values)
+ * tile_size:     number of texels per side
+ * seed:          per-face seed for deterministic grain noise
+ * edge_width:    fraction of face where edge darkening applies (0..0.5)
+ * edge_darkness: maximum darkening at edge (0..1, e.g. 0.3 = 30% darker)
+ * grain_amount:  grain noise amplitude (0..1, e.g. 0.1 = 10% variation)
+ */
+void ao_baker_apply_surface_effects(uint8_t* texels, int tile_size,
+                                     uint32_t seed,
+                                     float edge_width,
+                                     float edge_darkness,
+                                     float grain_amount);
 
 #endif /* AO_BAKER_H */

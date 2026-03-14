@@ -106,6 +106,26 @@ static void build_tangent_basis(const float n[3], float t[3], float b[3]) {
     b[2] = n[0] * t[1] - n[1] * t[0];
 }
 
+/* ---------- Smoothstep ---------- */
+
+static float smoothstep(float edge0, float edge1, float x) {
+    if (x <= edge0) return 0.0f;
+    if (x >= edge1) return 1.0f;
+    float t = (x - edge0) / (edge1 - edge0);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+/* ---------- Integer hash for grain noise ---------- */
+
+static uint32_t hash32(uint32_t x) {
+    x ^= x >> 16;
+    x *= 0x45d9f3bU;
+    x ^= x >> 16;
+    x *= 0x45d9f3bU;
+    x ^= x >> 16;
+    return x;
+}
+
 /* ---------- Public API ---------- */
 
 void ao_baker_bake_face(uint8_t* out_texels,
@@ -160,6 +180,43 @@ void ao_baker_bake_face(uint8_t* out_texels,
             /* AO value: 0 = fully occluded, 255 = fully lit */
             float ao = (float)unoccluded / (float)AO_RAY_COUNT;
             out_texels[tv * tile_size + tu] = (uint8_t)(ao * 255.0f + 0.5f);
+        }
+    }
+}
+
+void ao_baker_apply_surface_effects(uint8_t* texels, int tile_size,
+                                     uint32_t seed,
+                                     float edge_width,
+                                     float edge_darkness,
+                                     float grain_amount) {
+    for (int tv = 0; tv < tile_size; tv++) {
+        for (int tu = 0; tu < tile_size; tu++) {
+            float fu = ((float)tu + 0.5f) / (float)tile_size;
+            float fv = ((float)tv + 0.5f) / (float)tile_size;
+
+            /* ---- Edge darkening (soft bevel) ---- */
+            /* Distance from nearest edge in UV space */
+            float du = fu < 0.5f ? fu : 1.0f - fu;
+            float dv = fv < 0.5f ? fv : 1.0f - fv;
+            float d = du < dv ? du : dv;
+
+            /* Smooth falloff: 1 at center, (1-edge_darkness) at edge */
+            float edge_factor = smoothstep(0.0f, edge_width, d);
+            float edge_mult = 1.0f - edge_darkness * (1.0f - edge_factor);
+
+            /* ---- Grain noise (weathered texture) ---- */
+            uint32_t h = hash32(seed ^ ((uint32_t)tu * 374761393u +
+                                        (uint32_t)tv * 668265263u));
+            /* Map hash to [-1, +1] */
+            float noise = ((float)(h & 0xFFFF) / 32767.5f) - 1.0f;
+            float grain_mult = 1.0f - grain_amount * noise;
+
+            /* Apply both effects to existing AO value */
+            float val = (float)texels[tv * tile_size + tu];
+            val *= edge_mult * grain_mult;
+            if (val < 0.0f) val = 0.0f;
+            if (val > 255.0f) val = 255.0f;
+            texels[tv * tile_size + tu] = (uint8_t)(val + 0.5f);
         }
     }
 }

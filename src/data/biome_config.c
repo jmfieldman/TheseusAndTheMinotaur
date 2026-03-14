@@ -167,15 +167,15 @@ void biome_config_defaults(BiomeConfig* cfg) {
     cfg->wall_style.roughness = 0.1f;
     cfg->wall_style.height_variation = 0.05f;
     cfg->wall_style.color_jitter = 0.06f;
-    cfg->wall_style.mortar_gap = 0.015f;
+    cfg->wall_style.mortar_gap = 0.0f;
 
     /* Floor style */
     cfg->floor_style.subdivisions = 2;
     cfg->floor_style.regularity = 0.85f;
-    cfg->floor_style.edge_inset = 0.015f;
-    cfg->floor_style.inner_gap = 0.008f;
-    cfg->floor_style.height_variation = 0.004f;
-    cfg->floor_style.color_jitter = 0.02f;
+    cfg->floor_style.edge_inset = 0.0f;
+    cfg->floor_style.inner_gap = 0.0f;
+    cfg->floor_style.height_variation = 0.003f;
+    cfg->floor_style.color_jitter = 0.025f;
     cfg->floor_style.size_jitter = 0.06f;
 
     /* Floor decorations */

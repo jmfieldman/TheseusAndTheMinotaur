@@ -923,7 +923,7 @@ static void build_diorama(PuzzleScene* ps) {
     DioramaGenResult gen_result;
     diorama_generate(&ps->diorama_mesh, ps->grid, &biome, &gen_result);
 
-    voxel_mesh_build(&ps->diorama_mesh, 0.0625f);
+    voxel_mesh_build(&ps->diorama_mesh, 0.03125f);
 
     /* Set up camera */
     diorama_camera_init(&ps->diorama_cam, cols, rows);
