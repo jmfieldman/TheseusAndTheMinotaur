@@ -142,8 +142,10 @@ typedef struct {
     int             shadow_vertex_count;
     GLuint          shadow_tex_theseus;  /* R8 blurred rectangular shadow texture */
     GLuint          shadow_tex_minotaur;
+    GLuint          shadow_tex_groovebox;
     float           shadow_extent_t;     /* world-space half-extent of Theseus shadow quad */
     float           shadow_extent_m;     /* world-space half-extent of Minotaur shadow quad */
+    float           shadow_extent_gb;    /* world-space half-extent of groove box shadow quad */
     float           shadow_offset_x;     /* world-space shadow offset (simulates light angle) */
     float           shadow_offset_z;
     DioramaCamera   diorama_cam;
@@ -941,6 +943,10 @@ static void build_shadow_resources(PuzzleScene* ps, const ActorShadowConfig* cfg
     /* Minotaur: slightly shorter (size × size*0.8 × size) */
     generate_actor_shadow_texture(MINOTAUR_SIZE_FRAC, MINOTAUR_SIZE_FRAC * 0.8f, cfg,
                                    &ps->shadow_tex_minotaur, &ps->shadow_extent_m);
+    /* Groove box: footprint = tile minus inset, height matches box_h */
+    float gb_footprint = 1.0f - 2.0f * 0.12f;  /* matches groove box inset */
+    generate_actor_shadow_texture(gb_footprint, 0.45f, cfg,
+                                   &ps->shadow_tex_groovebox, &ps->shadow_extent_gb);
 
     /* Cache shadow offsets for draw-time positioning (same as wall shadows) */
     ps->shadow_offset_x = cfg->shadow_offset_x;
@@ -1003,6 +1009,7 @@ static void destroy_shadow_resources(PuzzleScene* ps) {
     if (ps->shadow_vbo) { glDeleteBuffers(1, &ps->shadow_vbo); ps->shadow_vbo = 0; }
     if (ps->shadow_tex_theseus) { glDeleteTextures(1, &ps->shadow_tex_theseus); ps->shadow_tex_theseus = 0; }
     if (ps->shadow_tex_minotaur) { glDeleteTextures(1, &ps->shadow_tex_minotaur); ps->shadow_tex_minotaur = 0; }
+    if (ps->shadow_tex_groovebox) { glDeleteTextures(1, &ps->shadow_tex_groovebox); ps->shadow_tex_groovebox = 0; }
     ps->shadow_vertex_count = 0;
 }
 
@@ -1158,7 +1165,7 @@ static void build_diorama(PuzzleScene* ps) {
          * Box fills tile minus wall inset on each side. */
         float inset = 0.12f;
         float box_sz = 1.0f - 2.0f * inset;
-        float box_h  = 0.30f;
+        float box_h  = 0.45f;
         float half   = box_sz * 0.5f;
         voxel_mesh_begin(&ps->groove_box_mesh);
         /* Main crate body */
@@ -1347,6 +1354,11 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 render_col = (float)box_col;
                 render_row = (float)box_row;
             }
+
+            /* Draw ground shadow under groove box */
+            draw_shadow(ps, shader,
+                        render_col + 0.5f, render_row + 0.5f, 1.0f,
+                        ps->shadow_tex_groovebox, ps->shadow_extent_gb);
 
             float model[16];
             memset(model, 0, sizeof(model));
