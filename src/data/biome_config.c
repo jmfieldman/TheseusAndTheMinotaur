@@ -61,9 +61,9 @@ static void parse_palette(const cJSON* obj, BiomePalette* pal) {
 
 static void parse_wall_style(const cJSON* obj, WallStyle* ws) {
     if (!obj) return;
-    ws->blocks_per_segment = parse_int(obj, "blocks_per_segment", ws->blocks_per_segment);
+    ws->block_length_min = parse_float(obj, "block_length_min", ws->block_length_min);
+    ws->block_length_max = parse_float(obj, "block_length_max", ws->block_length_max);
     ws->rows_of_blocks = parse_int(obj, "rows_of_blocks", ws->rows_of_blocks);
-    ws->block_regularity = parse_float(obj, "block_regularity", ws->block_regularity);
     ws->roughness = parse_float(obj, "roughness", ws->roughness);
     ws->height_variation = parse_float(obj, "height_variation", ws->height_variation);
     ws->color_jitter = parse_float(obj, "color_jitter", ws->color_jitter);
@@ -161,9 +161,9 @@ void biome_config_defaults(BiomeConfig* cfg) {
     memcpy(cfg->palette.back_wall, bw, sizeof(bw));
 
     /* Wall style */
-    cfg->wall_style.blocks_per_segment = 4;
+    cfg->wall_style.block_length_min = 0.15f;
+    cfg->wall_style.block_length_max = 0.45f;
     cfg->wall_style.rows_of_blocks = 2;
-    cfg->wall_style.block_regularity = 0.7f;
     cfg->wall_style.roughness = 0.1f;
     cfg->wall_style.height_variation = 0.05f;
     cfg->wall_style.color_jitter = 0.06f;
@@ -208,11 +208,12 @@ void biome_config_defaults(BiomeConfig* cfg) {
     cfg->doors.frame_height_blocks = 4;
 
     /* Floor shadow lightmap */
+    cfg->floor_shadow.shadow_softness = 0.4f;
     cfg->floor_shadow.shadow_scale = 1.3f;
     cfg->floor_shadow.shadow_offset_x = 0.05f;
     cfg->floor_shadow.shadow_offset_z = -0.05f;
-    cfg->floor_shadow.shadow_blur_radius = 3.0f;
-    cfg->floor_shadow.shadow_intensity = 0.4f;
+    cfg->floor_shadow.shadow_blur_radius = 6.0f;
+    cfg->floor_shadow.shadow_intensity = 0.55f;
     cfg->floor_shadow.shadow_resolution = 32;
 }
 
@@ -294,6 +295,8 @@ bool biome_config_load(BiomeConfig* cfg, const char* json_path) {
     /* Floor shadow */
     const cJSON* fs = cJSON_GetObjectItemCaseSensitive(root, "floor_shadow");
     if (fs) {
+        cfg->floor_shadow.shadow_softness = parse_float(fs, "shadow_softness",
+                                                          cfg->floor_shadow.shadow_softness);
         cfg->floor_shadow.shadow_scale = parse_float(fs, "shadow_scale",
                                                       cfg->floor_shadow.shadow_scale);
         cfg->floor_shadow.shadow_offset_x = parse_float(fs, "shadow_offset_x",

@@ -262,15 +262,27 @@ static float smoothstep_f(float edge0, float edge1, float x) {
 }
 
 /* Apply wall heuristic darkening to a vertex color.
- * Darkens at floor seam (y near 0) and at top lip. */
-static void apply_wall_heuristic(float color[4], float vertex_y, float wall_height) {
-    /* Floor seam darkening: darkest at y=0, fades by y=wall_height*0.3 */
-    float seam_factor = smoothstep_f(0.0f, wall_height * 0.3f, vertex_y);
-    float seam_darken = 0.75f + 0.25f * seam_factor;  /* 0.75 at floor, 1.0 above */
+ * Darkens at floor seam (y near 0) and at top lip.
+ *
+ * softness (0..1) is the universal shadow softness control:
+ *   - Controls gradient width: hard shadows have a narrow transition band
+ *   - Controls darkening amount: hard shadows are darker at the seam
+ * All derived from the single shadow_softness value in FloorShadowConfig. */
+static void apply_wall_heuristic(float color[4], float vertex_y,
+                                  float wall_height, float softness) {
+    /* Floor seam gradient width: 12% of wall at softness=0, 40% at softness=1 */
+    float seam_range = wall_height * (0.12f + 0.28f * softness);
+    float seam_factor = smoothstep_f(0.0f, seam_range, vertex_y);
+    /* Seam darkness: 60% brightness at softness=0, 82% at softness=1 */
+    float seam_floor = 0.60f + 0.22f * softness;
+    float seam_darken = seam_floor + (1.0f - seam_floor) * seam_factor;
 
-    /* Top lip: slight darkening near the top edge */
-    float top_factor = smoothstep_f(wall_height, wall_height * 0.85f, vertex_y);
-    float top_darken = 0.92f + 0.08f * top_factor;  /* 0.92 at top, 1.0 below */
+    /* Top lip gradient width: 90% to top at softness=0, 80% at softness=1 */
+    float top_start = wall_height * (0.90f - 0.10f * softness);
+    float top_factor = smoothstep_f(wall_height, top_start, vertex_y);
+    /* Top darkness: 88% brightness at softness=0, 94% at softness=1 */
+    float top_floor = 0.88f + 0.06f * softness;
+    float top_darken = top_floor + (1.0f - top_floor) * top_factor;
 
     float combined = seam_darken * top_darken;
     color[0] *= combined;
@@ -503,7 +515,7 @@ void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
                     dst[9] = box->a;
 
                     /* Apply heuristic darkening to vertex color */
-                    apply_wall_heuristic(&dst[6], dst[1], wall_h);
+                    apply_wall_heuristic(&dst[6], dst[1], wall_h, mesh->shadow_softness);
 
                     dst[10] = 0.0f;
                     dst[11] = 0.0f;

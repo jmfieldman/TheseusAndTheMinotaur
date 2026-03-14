@@ -46,9 +46,9 @@ typedef struct {
 
 /* Wall block composition style */
 typedef struct {
-    int   blocks_per_segment;  /* blocks laid end-to-end per wall tile (3-5) */
+    float block_length_min;    /* minimum block length in world units, default 0.15 */
+    float block_length_max;    /* maximum block length in world units, default 0.45 */
     int   rows_of_blocks;      /* vertical layers (2-3) */
-    float block_regularity;    /* 0=very irregular, 1=perfect grid */
     float roughness;           /* position jitter magnitude */
     float height_variation;    /* top-row random height offset */
     float color_jitter;        /* per-block color variation */
@@ -98,13 +98,22 @@ typedef struct {
     float size_jitter;        /* random size variation per sub-voxel (0..1) */
 } FloorStyle;
 
-/* Floor shadow lightmap configuration (per-biome tuning) */
+/* Floor shadow lightmap configuration (per-biome tuning)
+ *
+ * shadow_softness is the UNIVERSAL shadow softness control (0.0 = hard,
+ * 1.0 = very soft). All shadow edge gradients derive from this single
+ * value, so changing it tunes the overall shadow feel in one place:
+ *   - Floor lightmap blur: actual_blur = shadow_softness * shadow_blur_radius
+ *   - Wall seam gradient width: narrow at 0, wide at 1
+ *   - Wall seam/top darkening amount: darker at 0, lighter at 1
+ */
 typedef struct {
+    float shadow_softness;    /* universal softness 0..1 (0=hard, 1=soft), default 0.4 */
     float shadow_scale;       /* footprint multiplier (>1 = shadows larger than walls), default 1.3 */
     float shadow_offset_x;    /* world offset X (simulates light angle), default 0.05 */
     float shadow_offset_z;    /* world offset Z, default -0.05 */
-    float shadow_blur_radius; /* blur kernel radius in texels, default 3.0 */
-    float shadow_intensity;   /* max darkness 0..1, default 0.4 */
+    float shadow_blur_radius; /* max blur radius in texels (scaled by shadow_softness), default 6.0 */
+    float shadow_intensity;   /* max darkness 0..1, default 0.55 */
     int   shadow_resolution;  /* texels per tile, default 32 */
 } FloorShadowConfig;
 

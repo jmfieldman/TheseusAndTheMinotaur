@@ -931,6 +931,9 @@ static void build_diorama(PuzzleScene* ps) {
                                  ps->diorama_mesh.boxes, ps->diorama_mesh.box_count,
                                  gen_result.grid_cols, gen_result.grid_rows,
                                  &biome.floor_shadow);
+        /* Pass universal shadow softness to mesh for wall heuristic */
+        ps->diorama_mesh.shadow_softness = biome.floor_shadow.shadow_softness;
+
         if (floor_lm.texture) {
             voxel_mesh_set_floor_lightmap(&ps->diorama_mesh, floor_lm.texture,
                                            floor_lm.origin_x, floor_lm.origin_z,

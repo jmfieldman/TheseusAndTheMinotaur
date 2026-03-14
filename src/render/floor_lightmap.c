@@ -65,61 +65,6 @@ static void gaussian_blur(float* data, int width, int height, float radius) {
     free(kernel);
 }
 
-/* ---------- Surface effects ---------- */
-
-/* Simple hash for deterministic noise */
-static uint32_t hash32(uint32_t x) {
-    x ^= x >> 16;
-    x *= 0x45d9f3bu;
-    x ^= x >> 16;
-    x *= 0x45d9f3bu;
-    x ^= x >> 16;
-    return x;
-}
-
-/*
- * Apply per-tile surface effects: edge darkening + grain noise.
- * These add subtle visual interest to the floor lightmap.
- */
-static void apply_surface_effects(float* data, int width, int height,
-                                   int cols, int rows, int resolution) {
-    float edge_darkness = 0.12f;   /* 12% darker at tile edges */
-    float grain_amount  = 0.06f;   /* 6% subtle grain variation */
-
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            /* Determine which tile this texel belongs to */
-            int tile_col = x / resolution;
-            int tile_row = y / resolution;
-            if (tile_col >= cols) tile_col = cols - 1;
-            if (tile_row >= rows) tile_row = rows - 1;
-
-            /* Local position within the tile [0,1] */
-            float local_u = (float)(x % resolution) / (float)resolution;
-            float local_v = (float)(y % resolution) / (float)resolution;
-
-            /* Edge darkening: smoothstep fade at tile boundaries */
-            float edge_u = fminf(local_u, 1.0f - local_u) * 2.0f;  /* 0 at edge, 1 at center */
-            float edge_v = fminf(local_v, 1.0f - local_v) * 2.0f;
-            float edge = fminf(edge_u, edge_v);
-            /* smoothstep */
-            float t = edge < 0.15f ? edge / 0.15f : 1.0f;
-            t = t * t * (3.0f - 2.0f * t);
-            float edge_factor = 1.0f - edge_darkness * (1.0f - t);
-
-            /* Grain noise */
-            uint32_t seed = hash32((uint32_t)(tile_col * 1000 + tile_row) ^ hash32((uint32_t)(y * width + x)));
-            float noise = ((float)(seed & 0xFFFF) / 65535.0f - 0.5f) * 2.0f * grain_amount;
-
-            float val = data[y * width + x];
-            val = val * edge_factor + noise;
-            if (val < 0.0f) val = 0.0f;
-            if (val > 1.0f) val = 1.0f;
-            data[y * width + x] = val;
-        }
-    }
-}
-
 /* ---------- Public API ---------- */
 
 void floor_lightmap_generate(FloorLightmap* out,
@@ -195,16 +140,18 @@ void floor_lightmap_generate(FloorLightmap* out,
         }
     }
 
-    /* Gaussian blur for soft shadow edges */
-    gaussian_blur(shadow, tex_w, tex_h, cfg->shadow_blur_radius);
+    /* Gaussian blur for soft shadow edges.
+     * Actual blur = shadow_softness * shadow_blur_radius (the universal
+     * softness knob scales the max blur radius). */
+    float actual_blur = cfg->shadow_softness * cfg->shadow_blur_radius;
+    gaussian_blur(shadow, tex_w, tex_h, actual_blur);
 
-    /* Apply per-tile surface effects (edge darkening + grain) */
-    /* First convert shadow to "lit" space for surface effects:
-     * lit = 1.0 - shadow (1 = fully lit, 0 = fully occluded) */
+    /* Convert shadow to "lit" space: 1.0 = fully lit, 0.0 = fully occluded.
+     * The lightmap is pure shadow data — surface texture detail is handled
+     * procedurally in the fragment shader. */
     for (int i = 0; i < tex_w * tex_h; i++) {
         shadow[i] = 1.0f - shadow[i];
     }
-    apply_surface_effects(shadow, tex_w, tex_h, cols, rows, resolution);
 
     /* Convert to uint8 */
     uint8_t* texels = (uint8_t*)malloc((size_t)tex_w * (size_t)tex_h);

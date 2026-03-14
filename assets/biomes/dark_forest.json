@@ -14,9 +14,9 @@
     },
 
     "wall_style": {
-        "blocks_per_segment": 3,
+        "block_length_min":   0.12,
+        "block_length_max":   0.55,
         "rows_of_blocks":     3,
-        "block_regularity":   0.4,
         "roughness":          0.3,
         "height_variation":   0.08,
         "color_jitter":       0.08,
@@ -70,11 +70,12 @@
     },
 
     "floor_shadow": {
+        "shadow_softness":    0.2,
         "shadow_scale":       1.4,
         "shadow_offset_x":    0.06,
         "shadow_offset_z":   -0.04,
-        "shadow_blur_radius": 4.0,
-        "shadow_intensity":   0.45,
+        "shadow_blur_radius": 7.0,
+        "shadow_intensity":   0.55,
         "shadow_resolution":  32
     },
 

@@ -136,8 +136,8 @@ static void emit_wall_segment(VoxelMesh* mesh, const BiomeConfig* biome,
                                RNG* rng,
                                float base_x, float base_z,
                                float seg_len_x, float seg_len_z) {
-    int bps = biome->wall_style.blocks_per_segment;
-    float regularity = biome->wall_style.block_regularity;
+    float len_min = biome->wall_style.block_length_min;
+    float len_max = biome->wall_style.block_length_max;
 
     /* Determine if this is an X-aligned or Z-aligned wall */
     bool x_aligned = (seg_len_x > seg_len_z);
@@ -145,29 +145,34 @@ static void emit_wall_segment(VoxelMesh* mesh, const BiomeConfig* biome,
     float total_len = x_aligned ? seg_len_x : seg_len_z;
     float thickness = x_aligned ? seg_len_z : seg_len_x;
 
-    /* All blocks share the same uniform height and thickness.
-     * Only the length along the edge varies. */
     float block_height = WALL_HEIGHT;
 
-    /* Compute block lengths with variation */
-    float block_lengths[16];
-    if (bps > 16) bps = 16;
-    float base_len = total_len / (float)bps;
+    /* Generate random block lengths until the edge is filled.
+     * Each block gets a random length in [len_min, len_max].
+     * The last block is sized to fill the remaining space exactly. */
+    float block_lengths[32];
+    int block_count = 0;
+    float remaining = total_len;
 
-    for (int bi = 0; bi < bps; bi++) {
-        float variation = (1.0f - regularity) * rng_jitter(rng, base_len * 0.35f);
-        block_lengths[bi] = base_len + variation;
+    while (remaining > 0.001f && block_count < 32) {
+        float bl;
+        if (remaining <= len_max) {
+            /* Last block: fill whatever remains */
+            bl = remaining;
+        } else {
+            bl = len_min + rng_float(rng) * (len_max - len_min);
+            /* Don't leave a remainder smaller than len_min */
+            if (remaining - bl < len_min) {
+                bl = remaining;
+            }
+        }
+        block_lengths[block_count++] = bl;
+        remaining -= bl;
     }
 
-    /* Normalize so they sum to total_len exactly */
-    float sum = 0.0f;
-    for (int bi = 0; bi < bps; bi++) sum += block_lengths[bi];
-    float scale = total_len / sum;
-    for (int bi = 0; bi < bps; bi++) block_lengths[bi] *= scale;
-
-    /* Emit blocks — same height, same thickness, varying length */
+    /* Emit blocks — same height, same thickness, random lengths */
     float offset = 0.0f;
-    for (int bi = 0; bi < bps; bi++) {
+    for (int bi = 0; bi < block_count; bi++) {
         float bl = block_lengths[bi];
 
         /* Per-block color jitter */

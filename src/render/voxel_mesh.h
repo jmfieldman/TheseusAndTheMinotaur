@@ -76,6 +76,11 @@ typedef struct {
     bool     built;
     bool     has_ao;         /* true if AO texture was generated */
 
+    /* Universal shadow softness (0=hard, 1=soft). Set before build().
+     * Controls wall heuristic gradient widths and darkening amounts.
+     * See FloorShadowConfig in biome_config.h for documentation. */
+    float    shadow_softness;
+
     /* Floor lightmap (set before build, used by lightmap-mode faces) */
     GLuint   floor_lm_texture;  /* R8 texture handle (0 if none) */
     float    floor_lm_origin_x; /* world-space lightmap origin X */
