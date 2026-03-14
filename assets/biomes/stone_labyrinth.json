@@ -23,7 +23,8 @@
         "bevel_darkness":     0.12,
         "color_variation":    0.20,
         "grain_intensity":    0.10,
-        "grain_scale":        10.0
+        "grain_scale":        10.0,
+        "wear":               0.4
     },
 
     "floor_style": {

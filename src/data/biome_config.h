@@ -58,6 +58,7 @@ typedef struct {
     float color_variation;     /* per-stone color variation magnitude (0=uniform, 0.20=strong) */
     float grain_intensity;     /* surface FBM noise magnitude (0=smooth, 0.10=strong) */
     float grain_scale;         /* surface FBM frequency multiplier (10=fine stone, 4=coarse wood) */
+    float wear;                /* edge wear amount (0=pristine straight edges, 1=heavily worn/chipped) */
 } WallStyle;
 
 /* Decoration layer configuration */
