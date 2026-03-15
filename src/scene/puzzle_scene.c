@@ -12,6 +12,7 @@
 #include "render/lighting.h"
 #include "render/diorama_gen.h"
 #include "render/floor_lightmap.h"
+#include "render/actor_render.h"
 #include "data/biome_config.h"
 #include "input/input_manager.h"
 #include "platform/platform.h"
@@ -135,8 +136,8 @@ typedef struct {
     bool            render_3d;       /* 'C' toggles between 2D and 3D view */
     bool            diorama_built;
     VoxelMesh       diorama_mesh;    /* static geometry (floor, walls, exit) */
-    VoxelMesh       theseus_mesh;    /* dynamic actor: Theseus (blue cube) */
-    VoxelMesh       minotaur_mesh;   /* dynamic actor: Minotaur (red cube) */
+    ActorParts      theseus_parts;   /* dynamic actor: Theseus */
+    ActorParts      minotaur_parts;  /* dynamic actor: Minotaur */
     VoxelMesh       groove_box_mesh; /* dynamic: groove box (wooden crate) */
     GLuint          shadow_vao;
     GLuint          shadow_vbo;      /* simple quad for actor shadow */
@@ -1135,8 +1136,8 @@ static void draw_shadow(const PuzzleScene* ps, GLuint shader,
 static void build_diorama(PuzzleScene* ps) {
     if (ps->diorama_built) {
         voxel_mesh_destroy(&ps->diorama_mesh);
-        voxel_mesh_destroy(&ps->theseus_mesh);
-        voxel_mesh_destroy(&ps->minotaur_mesh);
+        actor_render_destroy(&ps->theseus_parts);
+        actor_render_destroy(&ps->minotaur_parts);
         voxel_mesh_destroy(&ps->groove_box_mesh);
         destroy_shadow_resources(ps);
         free(ps->groove_tile_map);
@@ -1223,41 +1224,11 @@ static void build_diorama(PuzzleScene* ps) {
                            gen_result.lights[i].radius);
     }
 
-    /* Build actor meshes (unit-sized, centered at origin).
-     * Each actor includes an invisible ground plane occluder so the AO baker
-     * sees a floor surface, producing darkened bottom edges on the cube. */
-
-    /* Theseus — blue cube */
-    {
-        float size = 0.45f;
-        float half = size * 0.5f;
-        voxel_mesh_begin(&ps->theseus_mesh);
-        voxel_mesh_add_box(&ps->theseus_mesh,
-                            -half, 0.0f, -half,
-                            size, size, size,
-                            80.0f/255.0f, 168.0f/255.0f, 251.0f/255.0f, 1.0f,
-                            true);
-        voxel_mesh_add_occluder(&ps->theseus_mesh,
-                                 -2.0f, -0.05f, -2.0f,
-                                 4.0f, 0.05f, 4.0f);
-        voxel_mesh_build(&ps->theseus_mesh, size * 0.25f);
-    }
-
-    /* Minotaur — red cube */
-    {
-        float size = 0.65f;
-        float half = size * 0.5f;
-        voxel_mesh_begin(&ps->minotaur_mesh);
-        voxel_mesh_add_box(&ps->minotaur_mesh,
-                            -half, 0.0f, -half,
-                            size, size * 0.8f, size,
-                            239.0f/255.0f, 34.0f/255.0f, 34.0f/255.0f, 1.0f,
-                            true);
-        voxel_mesh_add_occluder(&ps->minotaur_mesh,
-                                 -2.0f, -0.05f, -2.0f,
-                                 4.0f, 0.05f, 4.0f);
-        voxel_mesh_build(&ps->minotaur_mesh, size * 0.25f);
-    }
+    /* Build actor meshes via actor_render module.
+     * Meshes are centered at origin XZ, bottom at Y=0.
+     * Each includes a ground-plane occluder for AO baking. */
+    actor_render_build_theseus(&ps->theseus_parts);
+    actor_render_build_minotaur(&ps->minotaur_parts);
 
     /* Groove box — wooden crate */
     {
@@ -1308,10 +1279,12 @@ static void build_diorama(PuzzleScene* ps) {
 
     ps->diorama_built = true;
 
-    LOG_INFO("Diorama built: %d static verts, theseus %d verts, minotaur %d verts",
+    LOG_INFO("Diorama built: %d static verts, theseus %d verts, minotaur %d+%d+%d verts",
              voxel_mesh_get_vertex_count(&ps->diorama_mesh),
-             voxel_mesh_get_vertex_count(&ps->theseus_mesh),
-             voxel_mesh_get_vertex_count(&ps->minotaur_mesh));
+             voxel_mesh_get_vertex_count(&ps->theseus_parts.body),
+             voxel_mesh_get_vertex_count(&ps->minotaur_parts.body),
+             voxel_mesh_get_vertex_count(&ps->minotaur_parts.horns),
+             voxel_mesh_get_vertex_count(&ps->minotaur_parts.face));
 }
 
 static void render_diorama(PuzzleScene* ps, int vw, int vh) {
@@ -1522,10 +1495,7 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                              mrow + 0.5f, 1.0f,
                              ps->shadow_tex_minotaur, ps->shadow_extent_m);
 
-            /* Actor with full AO */
-            shader_set_int(shader, "u_has_ao",
-                           voxel_mesh_has_ao(&ps->minotaur_mesh) ? 1 : 0);
-            shader_set_float(shader, "u_ao_intensity", 1.0f);
+            /* Actor model matrix */
             float model[16];
             memset(model, 0, sizeof(model));
             model[0]  = 1.0f;
@@ -1536,7 +1506,27 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             model[13] = mino_gy;
             model[14] = mrow + 0.5f;
             shader_set_mat4(shader, "u_model", model);
-            voxel_mesh_draw(&ps->minotaur_mesh);
+
+            /* Body (deformable) */
+            shader_set_float(shader, "u_deform_height",
+                             ps->minotaur_parts.body_height);
+            shader_set_int(shader, "u_has_ao",
+                           voxel_mesh_has_ao(&ps->minotaur_parts.body) ? 1 : 0);
+            shader_set_float(shader, "u_ao_intensity", 1.0f);
+            voxel_mesh_draw(&ps->minotaur_parts.body);
+
+            /* Horns and face (rigid — disable deformation) */
+            shader_set_float(shader, "u_deform_height", 0.0f);
+            if (ps->minotaur_parts.has_horns) {
+                shader_set_int(shader, "u_has_ao",
+                               voxel_mesh_has_ao(&ps->minotaur_parts.horns) ? 1 : 0);
+                voxel_mesh_draw(&ps->minotaur_parts.horns);
+            }
+            if (ps->minotaur_parts.has_face) {
+                shader_set_int(shader, "u_has_ao",
+                               voxel_mesh_has_ao(&ps->minotaur_parts.face) ? 1 : 0);
+                voxel_mesh_draw(&ps->minotaur_parts.face);
+            }
         }
 
         /* Theseus — hops during move animation */
@@ -1643,8 +1633,10 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
 
             /* Actor with AO fading based on hop */
             float ao_intensity = 1.0f - thop;
+            shader_set_float(shader, "u_deform_height",
+                             ps->theseus_parts.body_height);
             shader_set_int(shader, "u_has_ao",
-                           voxel_mesh_has_ao(&ps->theseus_mesh) ? 1 : 0);
+                           voxel_mesh_has_ao(&ps->theseus_parts.body) ? 1 : 0);
             shader_set_float(shader, "u_ao_intensity", ao_intensity);
             float model[16];
             memset(model, 0, sizeof(model));
@@ -1656,12 +1648,13 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             model[13] = thes_gy + hop_y;
             model[14] = trow + 0.5f;
             shader_set_mat4(shader, "u_model", model);
-            voxel_mesh_draw(&ps->theseus_mesh);
+            voxel_mesh_draw(&ps->theseus_parts.body);
         }
 
         /* Blend stays enabled (engine default) */
 
         /* Reset uniforms for any subsequent draws */
+        shader_set_float(shader, "u_deform_height", 0.0f);
         shader_set_float(shader, "u_ao_intensity", 1.0f);
         shader_set_int(shader, "u_has_ao", 0);
         float identity2[16];
@@ -1722,8 +1715,8 @@ static void puzzle_on_exit(State* self) {
     undo_clear(&ps->undo);
     if (ps->diorama_built) {
         voxel_mesh_destroy(&ps->diorama_mesh);
-        voxel_mesh_destroy(&ps->theseus_mesh);
-        voxel_mesh_destroy(&ps->minotaur_mesh);
+        actor_render_destroy(&ps->theseus_parts);
+        actor_render_destroy(&ps->minotaur_parts);
         voxel_mesh_destroy(&ps->groove_box_mesh);
         destroy_shadow_resources(ps);
         free(ps->groove_tile_map);
@@ -1953,8 +1946,8 @@ static void puzzle_destroy(State* self) {
     undo_clear(&ps->undo);
     if (ps->diorama_built) {
         voxel_mesh_destroy(&ps->diorama_mesh);
-        voxel_mesh_destroy(&ps->theseus_mesh);
-        voxel_mesh_destroy(&ps->minotaur_mesh);
+        actor_render_destroy(&ps->theseus_parts);
+        actor_render_destroy(&ps->minotaur_parts);
         voxel_mesh_destroy(&ps->groove_box_mesh);
         destroy_shadow_resources(ps);
         free(ps->groove_tile_map);
