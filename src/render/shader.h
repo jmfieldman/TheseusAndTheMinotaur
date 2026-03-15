@@ -13,6 +13,7 @@ void shader_use(GLuint program);
 /* Uniform setters */
 void shader_set_mat4(GLuint program, const char* name, const float* mat);
 void shader_set_vec4(GLuint program, const char* name, float x, float y, float z, float w);
+void shader_set_vec3(GLuint program, const char* name, float x, float y, float z);
 void shader_set_vec2(GLuint program, const char* name, float x, float y);
 void shader_set_float(GLuint program, const char* name, float val);
 void shader_set_int(GLuint program, const char* name, int val);

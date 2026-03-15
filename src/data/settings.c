@@ -17,6 +17,7 @@ void settings_default(void) {
     g_settings.camera_perspective = false;
     g_settings.camera_fov    = 20.0f;
     g_settings.cel_shading   = false;
+    g_settings.shake_intensity = 1.0f;
 }
 
 void settings_load(const char* path) {
@@ -71,6 +72,8 @@ void settings_load(const char* path) {
                     g_settings.camera_fov = CLAMP((float)atof(val), 5.0f, 90.0f);
                 else if (strcmp(current_key, "cel_shading") == 0)
                     g_settings.cel_shading = (strcmp(val, "true") == 0);
+                else if (strcmp(current_key, "shake_intensity") == 0)
+                    g_settings.shake_intensity = CLAMP((float)atof(val), 0.0f, 2.0f);
 
                 current_key[0] = '\0';
             }
@@ -105,6 +108,7 @@ void settings_save(const char* path) {
     fprintf(f, "camera_perspective: %s\n", g_settings.camera_perspective ? "true" : "false");
     fprintf(f, "camera_fov: %.1f\n",   g_settings.camera_fov);
     fprintf(f, "cel_shading: %s\n",  g_settings.cel_shading ? "true" : "false");
+    fprintf(f, "shake_intensity: %.2f\n", g_settings.shake_intensity);
 
     fclose(f);
     LOG_INFO("Settings saved to %s", path);

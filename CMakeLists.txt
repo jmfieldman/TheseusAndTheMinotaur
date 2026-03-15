@@ -61,12 +61,16 @@ file(GLOB_RECURSE SOURCES
 # --- glad (committed in third_party) ---
 set(GLAD_SOURCES third_party/glad/src/gl.c)
 
+# --- stb_image (committed in third_party) ---
+set(STB_SOURCES third_party/stb_image_impl.c)
+
 # --- Executable ---
-add_executable(theseus ${SOURCES} ${GLAD_SOURCES})
+add_executable(theseus ${SOURCES} ${GLAD_SOURCES} ${STB_SOURCES})
 
 target_include_directories(theseus PRIVATE
     src
     third_party/glad/include
+    third_party
     ${cjson_SOURCE_DIR}
     ${libyaml_SOURCE_DIR}/include
 )

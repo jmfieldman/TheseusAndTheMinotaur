@@ -18,10 +18,11 @@ OpenGL rendering subsystem. Handles shader management, 2D UI drawing, text rende
 | `diorama_gen.h / diorama_gen.c` | Procedural diorama generator. Transforms a Grid + BiomeConfig into a rich 3D voxel scene: floor tiles (checkerboard), stacked-block walls with corner blocks, door frames, impassable cells, feature markers, floor/wall decorations, lantern pillars with point lights, exit light, and edge border. Uses seeded xorshift32 RNG for deterministic decoration placement. Returns point lights via DioramaGenResult for lighting integration. |
 | `lighting.h / lighting.c` | Simple lighting system. One directional light plus up to 8 point lights. Uploads lighting parameters as uniforms to the voxel shader. Half-Lambert diffuse for soft look, quadratic point light falloff. |
 | `actor_render.h / actor_render.c` | Actor mesh generation and deformation helpers. Builds multi-component `ActorParts` for Theseus (beveled blue cube, subdivided body) and Minotaur (red true cube + white horns). Body meshes use subdivision=4 for deformation support with analytical AO (smooth gradients, no raytracing). Horns are a separate rigid mesh with raytraced AO. All meshes centered at origin XZ with Y=0 at base. Provides `DeformState` struct and `deform_state_apply()` for driving vertex-shader deformation uniforms (squash, flare, lean, squish). |
+| `dust_puff.h / dust_puff.c` | Cel-shaded dust puff particle system. Spawns billboard circles on minotaur landing impacts. Each particle is a camera-facing quad rendered with a procedural SDF circle shader (filled circle with thick dark outline). Particles drift outward/upward from the impact point, scale up, rotate, and fade. Uses instanced rendering with per-particle attributes (center, size, opacity, rotation). |
 
 ## Shaders
 
-Three shader programs are compiled at init, embedded as string constants:
+Shader programs are compiled at init, embedded as string constants:
 
 1. **UI shader** — Flat-colored quads. Uniforms: `u_projection` (mat4), `u_rect` (vec4: x,y,w,h), `u_color` (vec4).
 2. **UI texture shader** — Textured quads for text glyphs. Same uniforms plus `u_texture` (sampler2D). Samples the red channel as alpha.
@@ -49,6 +50,8 @@ AO uses three techniques matched to geometry predictability:
 4. **Raycasting** — 24 hemisphere rays per texel, 12 max steps through occupancy grid (or **analytical gradients** when `mesh->analytical_ao` is set — smooth ground-proximity darkening without grid artifacts, used for actor body meshes)
 5. **Surface effects** — Edge darkening + grain noise post-bake
 6. **Texture upload** — AO atlas (R8) on texture unit 0
+
+4. **Dust puff shader** — Instanced billboard particles. Vertex shader expands a 6-vertex quad per instance using camera right/up vectors for billboarding, with per-particle rotation. Fragment shader draws a procedural SDF filled circle with a thick dark outline. Used for minotaur landing impact effects.
 
 The fragment shader branches on a per-vertex `ao_mode` float to select the correct AO source.
 

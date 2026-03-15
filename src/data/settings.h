@@ -13,6 +13,7 @@ typedef struct {
     bool  camera_perspective;  /* false=orthographic, true=perspective */
     float camera_fov;          /* 5.0 - 90.0: vertical FOV in degrees (perspective mode) */
     bool  cel_shading;         /* false=standard lighting, true=cel-shaded */
+    float shake_intensity;     /* 0.0=off, 1.0=default, 2.0=max — camera shake on minotaur stomp */
 } Settings;
 
 /* Global settings instance. */

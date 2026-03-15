@@ -13,6 +13,7 @@
 #include "render/diorama_gen.h"
 #include "render/floor_lightmap.h"
 #include "render/actor_render.h"
+#include "render/dust_puff.h"
 #include "data/biome_config.h"
 #include "input/input_manager.h"
 #include "platform/platform.h"
@@ -177,6 +178,14 @@ typedef struct {
     bool            mino_wobble_active;
     float           mino_wobble_timer;
     bool            was_mino_rolling;  /* true if previous frame was in Minotaur step phase */
+
+    /* Camera shake (triggered on minotaur stomp) */
+    float           shake_timer;       /* seconds remaining (0 = inactive) */
+    float           shake_offset_x;    /* current random X offset (world units) */
+    float           shake_offset_z;    /* current random Z offset (world units) */
+
+    /* Step1→Step2 transition tracking for mid-roll stomp effects */
+    bool            was_mino_in_step1; /* true if previous frame was STEP1 */
 
     /* Debug animation speed (P key cycles through multipliers) */
     float           debug_anim_speed;  /* 0.125, 0.25, 0.5, or 1.0 */
@@ -1359,6 +1368,9 @@ static void build_diorama(PuzzleScene* ps) {
 
     ps->diorama_built = true;
 
+    /* Initialize dust puff particle system */
+    dust_puff_init();
+
     LOG_INFO("Diorama built: %d static verts, theseus %d verts, minotaur %d+%d verts",
              voxel_mesh_get_vertex_count(&ps->diorama_mesh),
              voxel_mesh_get_vertex_count(&ps->theseus_parts.body),
@@ -1371,6 +1383,16 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
 
     GLuint shader = renderer_get_voxel_shader();
     if (!shader) return;
+
+    /* Apply camera shake offset (temporarily shifts the camera target) */
+    float saved_target[3];
+    saved_target[0] = ps->diorama_cam.target[0];
+    saved_target[1] = ps->diorama_cam.target[1];
+    saved_target[2] = ps->diorama_cam.target[2];
+    if (ps->shake_timer > 0.0f) {
+        ps->diorama_cam.target[0] += ps->shake_offset_x;
+        ps->diorama_cam.target[2] += ps->shake_offset_z;
+    }
 
     /* Update camera for current viewport */
     diorama_camera_update(&ps->diorama_cam, vw, vh);
@@ -2011,6 +2033,15 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
         shader_set_mat4(shader, "u_model", identity2);
     }
 
+    /* Render dust puff particles (after all opaque geometry, with depth read) */
+    dust_puff_render(diorama_camera_get_vp(&ps->diorama_cam),
+                     diorama_camera_get_view(&ps->diorama_cam));
+
+    /* Restore camera target after shake offset */
+    ps->diorama_cam.target[0] = saved_target[0];
+    ps->diorama_cam.target[1] = saved_target[1];
+    ps->diorama_cam.target[2] = saved_target[2];
+
     /* Restore state for 2D UI rendering */
     glDisable(GL_DEPTH_TEST);
 }
@@ -2311,10 +2342,48 @@ static void puzzle_update(State* self, float dt) {
                           (anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP1 ||
                            anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP2) &&
                           ps->anim.record.minotaur_steps > 0;
+        bool is_reversing = anim_queue_is_reversing(&ps->anim);
+
         if (ps->was_mino_rolling && !is_rolling) {
             ps->mino_wobble_active = true;
             ps->mino_wobble_timer = 0.0f;
+
+            /* Trigger stomp effects (dust puffs + camera shake).
+             * Skip during undo — effects are too hard to get right in reverse. */
+            if (!is_reversing) {
+                float mcol = (float)ps->grid->minotaur_col;
+                float mrow = (float)ps->grid->minotaur_row;
+                dust_puff_spawn(mcol + 0.5f, 0.0f, mrow + 0.5f);
+
+                /* Start camera shake */
+                #define SHAKE_DURATION 0.15f
+                #define SHAKE_AMPLITUDE 0.03f
+                ps->shake_timer = SHAKE_DURATION;
+            }
         }
+
+        /* Detect step1→step2 transition for mid-roll stomp on two-step moves.
+         * When the minotaur takes two steps, we also spawn dust at the
+         * intermediate landing between step1 and step2 (forward only). */
+        if (is_rolling && !is_reversing) {
+            bool in_step1 = anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP1;
+            bool in_step2 = anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP2;
+            if (ps->was_mino_in_step1 && in_step2 &&
+                ps->anim.record.minotaur_steps >= 2) {
+                /* Minotaur just landed from first step — spawn dust at
+                 * the end position of step1 (= start of step2). */
+                float mid_col = ps->anim.mino_x.start;
+                float mid_row = ps->anim.mino_y.start;
+                dust_puff_spawn(mid_col + 0.5f, 0.0f, mid_row + 0.5f);
+
+                #define SHAKE_MID_DURATION 0.10f
+                ps->shake_timer = SHAKE_MID_DURATION;
+            }
+            ps->was_mino_in_step1 = in_step1;
+        } else {
+            ps->was_mino_in_step1 = false;
+        }
+
         ps->was_mino_rolling = is_rolling;
     }
 
@@ -2326,6 +2395,30 @@ static void puzzle_update(State* self, float dt) {
             ps->mino_wobble_active = false;
         }
     }
+
+    /* Update camera shake — smooth damped sine oscillation.
+     * Uses two slightly different frequencies on X and Z for organic feel. */
+    #define SHAKE_FREQ_X   18.0f  /* radians/sec */
+    #define SHAKE_FREQ_Z   22.0f  /* radians/sec (slightly different for Lissajous wobble) */
+    #define SHAKE_DAMPING   8.0f  /* exponential decay rate */
+    if (ps->shake_timer > 0.0f) {
+        ps->shake_timer -= dt;
+        if (ps->shake_timer <= 0.0f) {
+            ps->shake_timer = 0.0f;
+            ps->shake_offset_x = 0.0f;
+            ps->shake_offset_z = 0.0f;
+        } else {
+            float intensity = g_settings.shake_intensity;
+            float elapsed = SHAKE_DURATION - ps->shake_timer;
+            float envelope = expf(-elapsed * SHAKE_DAMPING);
+            float amp = SHAKE_AMPLITUDE * intensity * envelope;
+            ps->shake_offset_x = amp * sinf(elapsed * SHAKE_FREQ_X);
+            ps->shake_offset_z = amp * sinf(elapsed * SHAKE_FREQ_Z);
+        }
+    }
+
+    /* Update dust puff particles */
+    dust_puff_update(dt);
 }
 
 static void puzzle_render(State* self) {
@@ -2390,6 +2483,7 @@ static void puzzle_destroy(State* self) {
     PuzzleScene* ps = (PuzzleScene*)self;
     undo_clear(&ps->undo);
     if (ps->diorama_built) {
+        dust_puff_shutdown();
         voxel_mesh_destroy(&ps->diorama_mesh);
         actor_render_destroy(&ps->theseus_parts);
         actor_render_destroy(&ps->minotaur_parts);

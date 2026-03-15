@@ -65,6 +65,11 @@ void shader_set_vec4(GLuint program, const char* name, float x, float y, float z
     if (loc >= 0) glUniform4f(loc, x, y, z, w);
 }
 
+void shader_set_vec3(GLuint program, const char* name, float x, float y, float z) {
+    GLint loc = glGetUniformLocation(program, name);
+    if (loc >= 0) glUniform3f(loc, x, y, z);
+}
+
 void shader_set_vec2(GLuint program, const char* name, float x, float y) {
     GLint loc = glGetUniformLocation(program, name);
     if (loc >= 0) glUniform2f(loc, x, y);
