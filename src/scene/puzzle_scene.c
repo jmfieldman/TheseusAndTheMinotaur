@@ -2349,10 +2349,13 @@ static void puzzle_update(State* self, float dt) {
             ps->mino_wobble_timer = 0.0f;
 
             /* Trigger stomp effects (dust puffs + camera shake).
-             * Skip during undo — effects are too hard to get right in reverse. */
+             * Skip during undo — effects are too hard to get right in reverse.
+             * Use the animation tween's end position rather than grid state,
+             * because grid state is already updated for the NEXT move when
+             * input is buffered, but the minotaur is still finishing this one. */
             if (!is_reversing) {
-                float mcol = (float)ps->grid->minotaur_col;
-                float mrow = (float)ps->grid->minotaur_row;
+                float mcol = ps->anim.mino_x.end;
+                float mrow = ps->anim.mino_y.end;
                 dust_puff_spawn(mcol + 0.5f, 0.0f, mrow + 0.5f);
 
                 /* Start camera shake */
