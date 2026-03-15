@@ -1,4 +1,5 @@
 #include "render/actor_render.h"
+#include "render/shader.h"
 #include "engine/utils.h"
 
 #include <string.h>
@@ -49,7 +50,7 @@
 
 /* ---------- Occluder ---------- */
 
-/* Invisible ground plane for AO baking.
+/* Invisible ground plane for AO baking (used by horn/face meshes).
  * Large enough to simulate an infinite floor under the actor. */
 static void add_ground_occluder(VoxelMesh* mesh) {
     voxel_mesh_add_occluder(mesh, -2.0f, -0.05f, -2.0f, 4.0f, 0.05f, 4.0f);
@@ -66,26 +67,16 @@ void actor_render_build_theseus(ActorParts* parts) {
 
     /* Body mesh (subdivided for deformation) */
     voxel_mesh_begin(&parts->body);
+    parts->body.analytical_ao = true;  /* smooth gradients, no raytracing */
     voxel_mesh_set_subdivisions(&parts->body, ACTOR_SUBDIVISIONS);
 
-    /* Main body cube */
+    /* Main body cube — analytical AO produces smooth ground-proximity
+     * gradients without the banding artifacts from coarse occupancy grids. */
     voxel_mesh_add_box_ex(&parts->body,
                            -half, 0.0f, -half,
                            size, size, size,
                            80.0f / 255.0f, 168.0f / 255.0f, 251.0f / 255.0f, 1.0f,
                            true, AO_MODE_ATLAS);
-
-    /* Subtle top trim — slightly darker lip for visual definition */
-    voxel_mesh_set_subdivisions(&parts->body, 1);
-    {
-        float trim_h = 0.018f;
-        float trim_inset = 0.003f;
-        voxel_mesh_add_box_ex(&parts->body,
-                               -half + trim_inset, size - trim_h, -half + trim_inset,
-                               size - 2.0f * trim_inset, trim_h, size - 2.0f * trim_inset,
-                               68.0f / 255.0f, 143.0f / 255.0f, 213.0f / 255.0f, 1.0f,
-                               true, AO_MODE_ATLAS);
-    }
 
     add_ground_occluder(&parts->body);
     voxel_mesh_build(&parts->body, size * 0.25f);
@@ -104,26 +95,15 @@ void actor_render_build_minotaur(ActorParts* parts) {
 
     /* ── Body mesh (subdivided for deformation) ────────── */
     voxel_mesh_begin(&parts->body);
+    parts->body.analytical_ao = true;  /* smooth gradients, no raytracing */
     voxel_mesh_set_subdivisions(&parts->body, ACTOR_SUBDIVISIONS);
 
-    /* Main body cube */
+    /* Main body cube — analytical AO for smooth ground-proximity gradients */
     voxel_mesh_add_box_ex(&parts->body,
                            -half, 0.0f, -half,
                            size, body_h, size,
                            MINO_R, MINO_G, MINO_B, 1.0f,
                            true, AO_MODE_ATLAS);
-
-    /* Subtle top trim */
-    voxel_mesh_set_subdivisions(&parts->body, 1);
-    {
-        float trim_h = 0.020f;
-        float trim_inset = 0.003f;
-        voxel_mesh_add_box_ex(&parts->body,
-                               -half + trim_inset, body_h - trim_h, -half + trim_inset,
-                               size - 2.0f * trim_inset, trim_h, size - 2.0f * trim_inset,
-                               MINO_R * 0.80f, MINO_G * 0.80f, MINO_B * 0.80f, 1.0f,
-                               true, AO_MODE_ATLAS);
-    }
 
     add_ground_occluder(&parts->body);
     voxel_mesh_build(&parts->body, size * 0.25f);
@@ -212,4 +192,14 @@ void actor_render_destroy(ActorParts* parts) {
     if (parts->has_horns) voxel_mesh_destroy(&parts->horns);
     if (parts->has_face)  voxel_mesh_destroy(&parts->face);
     memset(parts, 0, sizeof(ActorParts));
+}
+
+/* ---------- Deformation state ---------- */
+
+void deform_state_apply(const DeformState* ds, GLuint shader) {
+    shader_set_float(shader, "u_deform_squash", ds->squash);
+    shader_set_float(shader, "u_deform_flare",  ds->flare);
+    shader_set_vec2(shader,  "u_deform_lean",   ds->lean_x, ds->lean_z);
+    shader_set_vec2(shader,  "u_deform_squish_dir", ds->squish_dir_x, ds->squish_dir_z);
+    shader_set_float(shader, "u_deform_squish", ds->squish_amount);
 }

@@ -491,12 +491,22 @@ void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
                 float face_normal[3] = { face->nx, face->ny, face->nz };
                 compute_face_axes(box, face, face_origin, face_u_axis, face_v_axis);
 
-                ao_baker_bake_face(tile_texels, face_origin, face_u_axis, face_v_axis,
-                                   face_normal, tile_px, occ);
+                if (mesh->analytical_ao) {
+                    /* Smooth analytical gradients for simple geometry (actors).
+                     * No surface effects — the gradient is already clean and
+                     * edge darkening would create visible seams between faces. */
+                    ao_baker_bake_face_analytical(tile_texels, face_normal,
+                                                  face_v_axis, tile_px,
+                                                  0.35f, 0.40f);
+                } else {
+                    /* Full raytraced AO for complex geometry */
+                    ao_baker_bake_face(tile_texels, face_origin, face_u_axis, face_v_axis,
+                                       face_normal, tile_px, occ);
 
-                uint32_t fx_seed = (uint32_t)(i * 6 + f) * 2654435761u;
-                ao_baker_apply_surface_effects(tile_texels, tile_px, fx_seed,
-                                               0.15f, 0.12f, 0.06f);
+                    uint32_t fx_seed = (uint32_t)(i * 6 + f) * 2654435761u;
+                    ao_baker_apply_surface_effects(tile_texels, tile_px, fx_seed,
+                                                   0.15f, 0.12f, 0.06f);
+                }
 
                 /* Copy tile texels into atlas */
                 int atlas_x = tile_col * tile_px;

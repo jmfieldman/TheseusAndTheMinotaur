@@ -165,6 +165,13 @@ typedef struct {
     float           bump_timer;      /* 0→1 progress */
     float           bump_dir_x;      /* direction of bump (+1/-1/0) */
     float           bump_dir_z;      /* direction of bump (+1/-1/0) */
+
+    /* Theseus hop deformation (Step 6.3) */
+    bool            wobble_active;   /* true while post-hop wobble is playing */
+    float           wobble_timer;    /* seconds elapsed since wobble started */
+    bool            was_theseus_hopping; /* true if previous frame was in Theseus hop phase */
+    float           hop_dir_col;     /* movement direction col (+1/-1/0) for lean */
+    float           hop_dir_row;     /* movement direction row (+1/-1/0) for lean */
 } PuzzleScene;
 
 /* ---------- Layout calculation ---------- */
@@ -1507,9 +1514,9 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             model[14] = mrow + 0.5f;
             shader_set_mat4(shader, "u_model", model);
 
-            /* Body (deformable) */
+            /* Body (deformable — negative height skips normal correction) */
             shader_set_float(shader, "u_deform_height",
-                             ps->minotaur_parts.body_height);
+                             -ps->minotaur_parts.body_height);
             shader_set_int(shader, "u_has_ao",
                            voxel_mesh_has_ao(&ps->minotaur_parts.body) ? 1 : 0);
             shader_set_float(shader, "u_ao_intensity", 1.0f);
@@ -1631,10 +1638,93 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                              trow + 0.5f, shadow_scale,
                              ps->shadow_tex_theseus, ps->shadow_extent_t);
 
-            /* Actor with AO fading based on hop */
+            /* ── Compute Theseus hop deformation ── */
+            DeformState deform;
+            deform_state_identity(&deform);
+
+            /* Check if we're in a hop animation (not push, not ice-slide) */
+            bool in_hop = animating &&
+                          anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
+                          anim_queue_theseus_event_type(&ps->anim) != ANIM_EVT_BOX_SLIDE &&
+                          !anim_queue_is_ice_sliding(&ps->anim);
+
+            if (in_hop) {
+                float t = tween_progress(&ps->anim.move_x);
+                /* Movement direction for lean */
+                float dc = ps->hop_dir_col;
+                float dr = ps->hop_dir_row;
+
+                /* Anticipation squat (t = 0.0 – 0.1) */
+                if (t < 0.10f) {
+                    float u = t / 0.10f;
+                    float s = u * u * (3.0f - 2.0f * u); /* smoothstep */
+                    deform.squash = 1.0f - 0.08f * s;    /* → 0.92 */
+                    deform.flare  = 0.06f * s;
+                }
+                /* Jump elongation (t = 0.1 – 0.5) */
+                else if (t < 0.50f) {
+                    float u = (t - 0.10f) / 0.40f;
+                    float s = u * u * (3.0f - 2.0f * u);
+                    /* Transition from squat (0.92) to stretch (1.06) */
+                    deform.squash = 0.92f + 0.14f * s;
+                    deform.flare  = 0.06f * (1.0f - s);
+                }
+                /* Airborne narrowing (t = 0.5 – 0.85) */
+                else if (t < 0.85f) {
+                    float u = (t - 0.50f) / 0.35f;
+                    /* Taper from 1.06 back toward 1.0 */
+                    deform.squash = 1.06f - 0.06f * u;
+                }
+                /* Landing flare (t = 0.85 – 1.0) */
+                else {
+                    float u = (t - 0.85f) / 0.15f;
+                    float s = u * u * (3.0f - 2.0f * u);
+                    deform.squash = 1.0f - 0.10f * s;    /* → 0.90 */
+                    deform.flare  = 0.12f * s;
+                }
+
+                /* Lean: shear in movement direction */
+                if (t < 0.10f) {
+                    /* No lean during squat */
+                } else if (t < 0.50f) {
+                    /* Lean forward: ramp up from 0 to 0.06 */
+                    float u = (t - 0.10f) / 0.40f;
+                    float lean_mag = 0.06f * sinf(u * (float)M_PI * 0.5f);
+                    deform.lean_x = dc * lean_mag;
+                    deform.lean_z = dr * lean_mag;
+                } else if (t < 0.90f) {
+                    /* Transition from forward lean to backward lean */
+                    float u = (t - 0.50f) / 0.40f;
+                    float lean_mag = 0.06f * (1.0f - u) - 0.03f * u;
+                    deform.lean_x = dc * lean_mag;
+                    deform.lean_z = dr * lean_mag;
+                } else {
+                    /* Approaching landing: slight backward lean fading out */
+                    float u = (t - 0.90f) / 0.10f;
+                    float lean_mag = -0.03f * (1.0f - u);
+                    deform.lean_x = dc * lean_mag;
+                    deform.lean_z = dr * lean_mag;
+                }
+            }
+            /* Post-hop damped wobble — subtle settle, not jelly */
+            else if (ps->wobble_active) {
+                float wt = ps->wobble_timer;
+                float amplitude = 0.04f;
+                float freq = 22.0f;
+                float damping = 18.0f;
+                float wobble = amplitude * sinf(wt * freq) * expf(-wt * damping);
+                deform.squash = 1.0f + wobble;
+                deform.flare  = (1.0f - deform.squash) * 0.3f;
+                if (deform.flare < 0.0f) deform.flare = 0.0f;
+            }
+
+            /* Actor with AO fading based on hop.
+             * Negative height = deform positions only, skip normal correction
+             * (avoids Mach banding at subdivision boundaries). */
             float ao_intensity = 1.0f - thop;
             shader_set_float(shader, "u_deform_height",
-                             ps->theseus_parts.body_height);
+                             -ps->theseus_parts.body_height);
+            deform_state_apply(&deform, shader);
             shader_set_int(shader, "u_has_ao",
                            voxel_mesh_has_ao(&ps->theseus_parts.body) ? 1 : 0);
             shader_set_float(shader, "u_ao_intensity", ao_intensity);
@@ -1655,6 +1745,11 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
 
         /* Reset uniforms for any subsequent draws */
         shader_set_float(shader, "u_deform_height", 0.0f);
+        {
+            DeformState identity_deform;
+            deform_state_identity(&identity_deform);
+            deform_state_apply(&identity_deform, shader);
+        }
         shader_set_float(shader, "u_ao_intensity", 1.0f);
         shader_set_int(shader, "u_has_ao", 0);
         float identity2[16];
@@ -1697,6 +1792,11 @@ static void puzzle_on_enter(State* self) {
     input_buffer_init(&ps->input_buf);
     ps->bump_active = false;
     ps->bump_timer = 0.0f;
+    ps->wobble_active = false;
+    ps->wobble_timer = 0.0f;
+    ps->was_theseus_hopping = false;
+    ps->hop_dir_col = 0.0f;
+    ps->hop_dir_row = 0.0f;
 
     /* Build 3D diorama for verification */
     ps->render_3d = false;
@@ -1830,6 +1930,41 @@ static void puzzle_update(State* self, float dt) {
             ps->bump_timer = 1.0f;
             ps->bump_active = false;
         }
+    }
+
+    /* Update post-hop wobble timer */
+    if (ps->wobble_active) {
+        #define WOBBLE_MAX_DURATION 0.18f
+        ps->wobble_timer += dt;
+        if (ps->wobble_timer >= WOBBLE_MAX_DURATION) {
+            ps->wobble_active = false;
+        }
+    }
+
+    /* Detect hop-end transition: was hopping last frame, not anymore → start wobble */
+    {
+        bool is_hopping = anim_queue_is_playing(&ps->anim) &&
+                          anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
+                          anim_queue_theseus_event_type(&ps->anim) != ANIM_EVT_BOX_SLIDE &&
+                          !anim_queue_is_ice_sliding(&ps->anim);
+        if (ps->was_theseus_hopping && !is_hopping) {
+            ps->wobble_active = true;
+            ps->wobble_timer = 0.0f;
+        }
+        /* Track direction while hopping */
+        if (is_hopping) {
+            float from_col = ps->anim.move_x.start;
+            float from_row = ps->anim.move_y.start;
+            float to_col   = ps->anim.move_x.end;
+            float to_row   = ps->anim.move_y.end;
+            float dc = to_col - from_col;
+            float dr = to_row - from_row;
+            if (dc != 0.0f || dr != 0.0f) {
+                ps->hop_dir_col = dc;
+                ps->hop_dir_row = dr;
+            }
+        }
+        ps->was_theseus_hopping = is_hopping;
     }
 
     /* Update animation */

@@ -17,7 +17,7 @@ OpenGL rendering subsystem. Handles shader management, 2D UI drawing, text rende
 | `floor_lightmap.h / floor_lightmap.c` | Floor shadow lightmap generator. Projects wall/obstacle footprints top-down onto a 2D R8 texture, applies Gaussian blur for soft edges, and adds per-tile surface effects (edge darkening + grain). Configurable per biome via FloorShadowConfig (shadow scale, offset, blur radius, intensity, resolution). |
 | `diorama_gen.h / diorama_gen.c` | Procedural diorama generator. Transforms a Grid + BiomeConfig into a rich 3D voxel scene: floor tiles (checkerboard), stacked-block walls with corner blocks, door frames, impassable cells, feature markers, floor/wall decorations, lantern pillars with point lights, exit light, and edge border. Uses seeded xorshift32 RNG for deterministic decoration placement. Returns point lights via DioramaGenResult for lighting integration. |
 | `lighting.h / lighting.c` | Simple lighting system. One directional light plus up to 8 point lights. Uploads lighting parameters as uniforms to the voxel shader. Half-Lambert diffuse for soft look, quadratic point light falloff. |
-| `actor_render.h / actor_render.c` | Actor mesh generation. Builds multi-component `ActorParts` for Theseus (beveled blue cube, subdivided body) and Minotaur (red body + white horns + face details). Body meshes use subdivision=4 for deformation support. Horns and face are separate rigid meshes for independent transformation during animations. All meshes centered at origin XZ with Y=0 at base; includes ground-plane occluders for AO baking. |
+| `actor_render.h / actor_render.c` | Actor mesh generation and deformation helpers. Builds multi-component `ActorParts` for Theseus (beveled blue cube, subdivided body) and Minotaur (red body + white horns + face details). Body meshes use subdivision=4 for deformation support with analytical AO (smooth gradients, no raytracing). Horns and face are separate rigid meshes with raytraced AO. All meshes centered at origin XZ with Y=0 at base. Provides `DeformState` struct and `deform_state_apply()` for driving vertex-shader deformation uniforms (squash, flare, lean, squish). |
 
 ## Shaders
 
@@ -46,11 +46,13 @@ AO uses three techniques matched to geometry predictability:
 1. **Occupancy grid** — All boxes rasterized into a coarse boolean grid
 2. **Face visibility** — Hidden face culling via occupancy queries
 3. **Atlas packing** — Visible AO_MODE_ATLAS faces packed into texture atlas (32×32 texels/face)
-4. **Raycasting** — 24 hemisphere rays per texel, 12 max steps through occupancy grid
+4. **Raycasting** — 24 hemisphere rays per texel, 12 max steps through occupancy grid (or **analytical gradients** when `mesh->analytical_ao` is set — smooth ground-proximity darkening without grid artifacts, used for actor body meshes)
 5. **Surface effects** — Edge darkening + grain noise post-bake
 6. **Texture upload** — AO atlas (R8) on texture unit 0
 
 The fragment shader branches on a per-vertex `ao_mode` float to select the correct AO source.
+
+Actor AO is faded out during hops via `u_ao_intensity = 1.0 - thop` so the precomputed ground-contact darkening disappears while airborne.
 
 ## Deformable Mesh System
 

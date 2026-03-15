@@ -184,6 +184,36 @@ void ao_baker_bake_face(uint8_t* out_texels,
     }
 }
 
+/* ---------- Analytical AO for cube-on-ground ---------- */
+
+void ao_baker_bake_face_analytical(uint8_t* out_texels,
+                                    const float face_normal[3],
+                                    const float face_v_axis[3],
+                                    int tile_size,
+                                    float ground_dark,
+                                    float ground_range) {
+    /*
+     * Analytical AO for actor cubes: flat white (fully lit).
+     *
+     * Ground-proximity darkening is now computed per-pixel in the fragment
+     * shader using v_height_frac (the original undeformed vertex Y normalized
+     * to [0,1]).  This produces perfectly smooth gradients with zero
+     * subdivision artifacts or Mach banding, unlike texture-based gradients
+     * which create perceptual banding at curvature inflection points.
+     *
+     * The AO atlas tile still exists (for the UV/atlas allocation path to
+     * work) but contains all-white texels.
+     */
+    (void)face_normal;
+    (void)face_v_axis;
+    (void)ground_dark;
+    (void)ground_range;
+
+    memset(out_texels, 255, (size_t)tile_size * (size_t)tile_size);
+}
+
+/* ---------- Surface effects ---------- */
+
 void ao_baker_apply_surface_effects(uint8_t* texels, int tile_size,
                                      uint32_t seed,
                                      float edge_width,

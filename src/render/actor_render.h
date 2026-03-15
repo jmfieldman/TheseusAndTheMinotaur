@@ -2,6 +2,7 @@
 #define ACTOR_RENDER_H
 
 #include "render/voxel_mesh.h"
+#include <glad/gl.h>
 
 /*
  * Actor mesh generation and rendering.
@@ -41,5 +42,37 @@ void actor_render_build_minotaur(ActorParts* parts);
 
 /* Release all GPU resources for an actor. Safe on zero-initialized struct. */
 void actor_render_destroy(ActorParts* parts);
+
+/* ---------- Deformation state ---------- */
+
+/*
+ * DeformState — captures all deformation uniform values for one draw call.
+ *
+ * Used to compute per-frame deformation from animation progress (hop, wobble,
+ * lean, etc.) and then apply all uniforms in one shot.
+ */
+typedef struct {
+    float squash;        /* Y-axis scale (1.0 = identity) */
+    float flare;         /* bottom XZ expansion (0.0 = none) */
+    float lean_x;        /* XZ shear in X direction */
+    float lean_z;        /* XZ shear in Z direction */
+    float squish_dir_x;  /* directional squish axis X */
+    float squish_dir_z;  /* directional squish axis Z */
+    float squish_amount; /* squish strength (0.0 = none) */
+} DeformState;
+
+/* Set all fields to rest pose (no deformation). */
+static inline void deform_state_identity(DeformState* ds) {
+    ds->squash        = 1.0f;
+    ds->flare         = 0.0f;
+    ds->lean_x        = 0.0f;
+    ds->lean_z        = 0.0f;
+    ds->squish_dir_x  = 0.0f;
+    ds->squish_dir_z  = 0.0f;
+    ds->squish_amount = 0.0f;
+}
+
+/* Upload all deformation uniforms to the given shader program. */
+void deform_state_apply(const DeformState* ds, GLuint shader);
 
 #endif /* ACTOR_RENDER_H */

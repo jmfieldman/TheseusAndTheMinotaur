@@ -62,4 +62,25 @@ void ao_baker_apply_surface_effects(uint8_t* texels, int tile_size,
                                      float edge_darkness,
                                      float grain_amount);
 
+/*
+ * Analytical AO for a cube face sitting on a ground plane.
+ *
+ * Produces smooth gradients without occupancy grid artifacts:
+ *   - Side faces: darker at bottom (ground proximity), smooth falloff upward
+ *   - Top face:   slight edge darkening
+ *   - Bottom face: mostly dark (pressed against ground)
+ *
+ * face_normal:  outward-facing normal of the face (unit length)
+ * face_v_axis:  V axis of the face (used to determine which axis is "up")
+ * tile_size:    number of texels per side
+ * ground_dark:  maximum darkness at ground edge (0..1, e.g. 0.35)
+ * ground_range: fraction of face height affected by ground gradient (0..1)
+ */
+void ao_baker_bake_face_analytical(uint8_t* out_texels,
+                                    const float face_normal[3],
+                                    const float face_v_axis[3],
+                                    int tile_size,
+                                    float ground_dark,
+                                    float ground_range);
+
 #endif /* AO_BAKER_H */

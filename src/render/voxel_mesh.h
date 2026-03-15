@@ -96,6 +96,12 @@ typedef struct {
     /* Current subdivision level for newly added boxes (1=default). */
     int      cur_subdivisions;
 
+    /* If true, AO_MODE_ATLAS faces use smooth analytical gradients instead
+     * of raytracing.  Produces clean results for simple cube-on-ground
+     * geometry (actors) without the banding artifacts from coarse occupancy
+     * grid ray marching. */
+    bool     analytical_ao;
+
     /* Floor lightmap (set before build, used by lightmap-mode faces) */
     GLuint   floor_lm_texture;  /* R8 texture handle (0 if none) */
     float    floor_lm_origin_x; /* world-space lightmap origin X */
