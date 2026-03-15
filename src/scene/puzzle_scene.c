@@ -1697,6 +1697,11 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             shader_set_mat4(shader, "u_model", model);
             shader_set_float(shader, "u_deform_height",
                              -ps->minotaur_parts.body_height);
+            /* World-space actor AO: ground Y + mesh height so the shadow
+             * band tracks the floor contact even during roll rotation. */
+            shader_set_float(shader, "u_actor_ground_y", mino_gy);
+            shader_set_float(shader, "u_actor_height",
+                             ps->minotaur_parts.body_height);
             deform_state_apply(&mino_deform, shader);
             shader_set_int(shader, "u_has_ao",
                            voxel_mesh_has_ao(&ps->minotaur_parts.body) ? 1 : 0);
@@ -1705,6 +1710,7 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
 
             /* ── Draw horns (with retraction during roll) ── */
             shader_set_float(shader, "u_deform_height", 0.0f);
+            shader_set_float(shader, "u_actor_height", 0.0f);  /* disable world-space AO for horns */
             {
                 DeformState rigid_deform;
                 deform_state_identity(&rigid_deform);
@@ -1966,6 +1972,10 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             float ao_intensity = 1.0f - thop;
             shader_set_float(shader, "u_deform_height",
                              -ps->theseus_parts.body_height);
+            /* World-space actor AO for Theseus */
+            shader_set_float(shader, "u_actor_ground_y", thes_gy);
+            shader_set_float(shader, "u_actor_height",
+                             ps->theseus_parts.body_height);
             deform_state_apply(&deform, shader);
             shader_set_int(shader, "u_has_ao",
                            voxel_mesh_has_ao(&ps->theseus_parts.body) ? 1 : 0);
@@ -1987,6 +1997,7 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
 
         /* Reset uniforms for any subsequent draws */
         shader_set_float(shader, "u_deform_height", 0.0f);
+        shader_set_float(shader, "u_actor_height", 0.0f);
         {
             DeformState identity_deform;
             deform_state_identity(&identity_deform);

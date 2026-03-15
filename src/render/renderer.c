@@ -346,6 +346,13 @@ static const char* s_voxel_frag_src =
     "/* Cel-shading toggle */\n"
     "uniform int u_cel_shading;\n"  /* 0 = standard, 1 = cel-shaded */
     "\n"
+    "/* Actor ground-proximity AO (world-space approach).\n"
+    " * u_actor_ground_y: world Y of the floor under the actor.\n"
+    " * u_actor_height:   actor mesh height (for normalizing to 0..1).\n"
+    " * When u_actor_height <= 0, these are unused (not an actor draw). */\n"
+    "uniform float u_actor_ground_y;\n"
+    "uniform float u_actor_height;\n"
+    "\n"
     "void main() {\n"
     "    vec3 N = normalize(v_normal);\n"
     "    vec3 base_color = v_color.rgb;\n"
@@ -377,8 +384,14 @@ static const char* s_voxel_frag_src =
     "        base_color *= mix(0.93, 1.03, stone);\n"
     "    } else if (v_ao_mode > 0.5) {\n"
     "        if (v_height_frac >= 0.0) {\n"
-    "            /* Actor per-pixel ground-proximity AO. */\n"
-    "            float hf = clamp(v_height_frac, 0.0, 1.0);\n"
+    "            /* Actor per-pixel ground-proximity AO.\n"
+    "             * Use world-space Y relative to the actor's ground plane\n"
+    "             * so the shadow band tracks the actual floor contact,\n"
+    "             * not the mesh's local orientation (avoids band rotating\n"
+    "             * with the actor during roll animations). */\n"
+    "            float hf = (u_actor_height > 0.0)\n"
+    "                ? clamp((v_world_pos.y - u_actor_ground_y) / u_actor_height, 0.0, 1.0)\n"
+    "                : clamp(v_height_frac, 0.0, 1.0);\n"
     "            float abs_ny = abs(N.y);\n"
     "            float face_ao;\n"
     "            if (u_cel_shading != 0) {\n"
@@ -823,6 +836,9 @@ void renderer_init(void) {
         shader_set_float(s_renderer.voxel_shader, "u_deform_height", 0.0f);
         /* Cel-shading off by default */
         shader_set_int(s_renderer.voxel_shader, "u_cel_shading", 0);
+        /* Actor ground-proximity AO (world-space) — disabled by default */
+        shader_set_float(s_renderer.voxel_shader, "u_actor_ground_y", 0.0f);
+        shader_set_float(s_renderer.voxel_shader, "u_actor_height", 0.0f);
         /* Default wall stone uniforms (weathered stone) */
         shader_set_vec4(s_renderer.voxel_shader, "u_wall_stone_a", 0.09f, 0.15f, 0.30f, 0.06f);
         shader_set_vec4(s_renderer.voxel_shader, "u_wall_stone_b", 0.50f, 0.22f, 0.12f, 0.20f);
