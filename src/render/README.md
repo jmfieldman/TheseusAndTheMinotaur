@@ -11,7 +11,7 @@ OpenGL rendering subsystem. Handles shader management, 2D UI drawing, text rende
 | `ui_draw.h / ui_draw.c` | Immediate-mode 2D drawing. `ui_draw_rect()` for filled rectangles, `ui_draw_rect_rounded()` for rounded corners (triangle fan per corner, 8 segments). All coordinates in screen-space pixels. |
 | `text_render.h / text_render.c` | Text rendering via SDL_ttf. Loads a single TTF at 5 sizes (16, 24, 32, 48, 64). Renders text to GL textures with an LRU cache (128 entries). Supports LEFT/CENTER/RIGHT alignment. Uses a single-channel (GL_RED) texture with the alpha from SDL_ttf's blended output. |
 | `camera.h / camera.c` | Isometric-style diorama camera. Orthographic projection with configurable yaw/pitch angles, target point, and view size. Produces a combined view-projection matrix for the voxel shader. |
-| `voxel_mesh.h / voxel_mesh.c` | Freeform box mesh builder. Accumulates axis-aligned boxes at arbitrary positions and dimensions, then builds a single VBO with hidden face culling and three-tier AO. Vertex layout: position (vec3) + normal (vec3) + color (vec4) + uv (vec2) + ao_mode (float) = 13 floats. Each box is tagged with an AoMode (NONE/ATLAS/LIGHTMAP) controlling per-face AO routing. Boxes can be flagged `no_cull` to skip face culling. |
+| `voxel_mesh.h / voxel_mesh.c` | Freeform box mesh builder. Accumulates axis-aligned boxes at arbitrary positions and dimensions, then builds a single VBO with hidden face culling and three-tier AO. Vertex layout: position (vec3) + normal (vec3) + color (vec4) + uv (vec2) + ao_mode (float) = 13 floats. Each box is tagged with an AoMode (NONE/ATLAS/LIGHTMAP/SHADOW) controlling per-face AO routing. Boxes can be flagged `no_cull` to skip face culling. Supports per-box face subdivision (`voxel_mesh_set_subdivisions()`) for smooth vertex-shader deformations — each face is tessellated into N×N quads via bilinear interpolation of corner positions. |
 | `occupancy_grid.h / occupancy_grid.c` | Coarse boolean grid for hidden face culling and ambient occlusion during voxel mesh build. Rasterizes boxes into cells, supports occupancy queries and per-vertex AO computation. |
 | `ao_baker.h / ao_baker.c` | Raytraced ambient occlusion baker. For each texel on a face, casts 24 hemisphere rays against the occupancy grid. Produces 32×32 uint8 AO tiles (255 = fully lit, 0 = fully occluded). Uses Fibonacci hemisphere sampling and fixed-step ray marching. Used only for complex geometry (AO_MODE_ATLAS). |
 | `floor_lightmap.h / floor_lightmap.c` | Floor shadow lightmap generator. Projects wall/obstacle footprints top-down onto a 2D R8 texture, applies Gaussian blur for soft edges, and adds per-tile surface effects (edge darkening + grain). Configurable per biome via FloorShadowConfig (shadow scale, offset, blur radius, intensity, resolution). |
@@ -24,7 +24,7 @@ Three shader programs are compiled at init, embedded as string constants:
 
 1. **UI shader** — Flat-colored quads. Uniforms: `u_projection` (mat4), `u_rect` (vec4: x,y,w,h), `u_color` (vec4).
 2. **UI texture shader** — Textured quads for text glyphs. Same uniforms plus `u_texture` (sampler2D). Samples the red channel as alpha.
-3. **Voxel shader** — Lit 3D geometry. Vertex inputs: position (vec3, loc 0), normal (vec3, loc 1), color (vec4, loc 2), uv (vec2, loc 3). Uniforms: `u_vp` (view-projection mat4), `u_model` (model mat4), lighting uniforms, `u_ao_texture` (sampler2D), `u_has_ao` (int). Fragment samples AO texture when `u_has_ao != 0`, multiplies into base color, then applies half-Lambert diffuse + ambient + point light contributions.
+3. **Voxel shader** — Lit 3D geometry. Vertex inputs: position (vec3, loc 0), normal (vec3, loc 1), color (vec4, loc 2), uv (vec2, loc 3), ao_mode (float, loc 4). Uniforms: `u_vp` (view-projection mat4), `u_model` (model mat4), lighting uniforms, `u_ao_texture` (sampler2D), `u_has_ao` (int), deformation uniforms (`u_deform_squash`, `u_deform_flare`, `u_deform_lean`, `u_deform_squish_dir`, `u_deform_squish`, `u_deform_height`). When `u_deform_height > 0`, the vertex shader applies jelly-like deformation (squash/stretch, bottom flare, lean/shear, directional squish) with volume-preserving XZ compensation and finite-difference cofactor normal correction. Fragment samples AO texture when `u_has_ao != 0`, multiplies into base color, then applies half-Lambert diffuse + ambient + point light contributions.
 
 ## AO Pipeline (Three-Tier Hybrid)
 
@@ -50,6 +50,19 @@ AO uses three techniques matched to geometry predictability:
 6. **Texture upload** — AO atlas (R8) on texture unit 0
 
 The fragment shader branches on a per-vertex `ao_mode` float to select the correct AO source.
+
+## Deformable Mesh System
+
+Actor meshes (Theseus, Minotaur) use subdivided box faces for smooth vertex-shader deformations:
+
+- **Subdivision**: `voxel_mesh_set_subdivisions(mesh, N)` sets the tessellation level for subsequent boxes. Each face becomes an N×N grid of quads (6×N² vertices per face). Corner positions are extracted from the face template and bilinearly interpolated.
+- **Deformation uniforms**: 7 floats controlling jelly-like deformation, applied in the vertex shader when `u_deform_height > 0`:
+  - `u_deform_squash` — Y-axis scale with volume-preserving XZ compensation (1.0 = identity)
+  - `u_deform_flare` — bottom flare: XZ expansion at base, tapering to zero at top
+  - `u_deform_lean` — XZ shear proportional to height (movement-direction lean)
+  - `u_deform_squish_dir` + `u_deform_squish` — directional compression along arbitrary horizontal axis
+  - `u_deform_height` — mesh height for t=y/h normalization (0 = deformation disabled)
+- **Normal correction**: Finite-difference cofactor method — samples `apply_deform()` at 6 epsilon-offset points to build the Jacobian, then uses the cofactor matrix to transform normals correctly.
 
 ## Future
 

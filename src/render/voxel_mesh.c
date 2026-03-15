@@ -191,10 +191,52 @@ static void compute_face_axes(const VoxelBox* box,
     face_v_axis[2] = v_end[2] - face_origin[2];
 }
 
+/* ---------- Subdivision helpers ---------- */
+
+/*
+ * Extract the 4 unique corners of a face template, indexed by UV quadrant:
+ *   corners[0] = UV(0,0)  corners[1] = UV(1,0)
+ *   corners[2] = UV(0,1)  corners[3] = UV(1,1)
+ * Each corner is (x,y,z) in unit-cube [0,1]^3 space.
+ */
+static void extract_face_corners(const FaceTemplate* face, float corners[4][3]) {
+    bool found[4] = {false, false, false, false};
+    for (int v = 0; v < 6 && !(found[0] && found[1] && found[2] && found[3]); v++) {
+        int idx;
+        if (face->uvs[v][0] < 0.5f && face->uvs[v][1] < 0.5f) idx = 0;
+        else if (face->uvs[v][0] > 0.5f && face->uvs[v][1] < 0.5f) idx = 1;
+        else if (face->uvs[v][0] < 0.5f && face->uvs[v][1] > 0.5f) idx = 2;
+        else idx = 3;
+        if (!found[idx]) {
+            found[idx] = true;
+            corners[idx][0] = face->verts[v][0];
+            corners[idx][1] = face->verts[v][1];
+            corners[idx][2] = face->verts[v][2];
+        }
+    }
+}
+
+/* Bilinear interpolation of 4 corner values at (u,v) in [0,1].
+ * c[0]=UV(0,0), c[1]=UV(1,0), c[2]=UV(0,1), c[3]=UV(1,1). */
+static void bilerp3(float out[3], const float c[4][3], float u, float v) {
+    float a0 = (1.0f - u) * (1.0f - v);
+    float a1 = u * (1.0f - v);
+    float a2 = (1.0f - u) * v;
+    float a3 = u * v;
+    out[0] = c[0][0]*a0 + c[1][0]*a1 + c[2][0]*a2 + c[3][0]*a3;
+    out[1] = c[0][1]*a0 + c[1][1]*a1 + c[2][1]*a2 + c[3][1]*a3;
+    out[2] = c[0][2]*a0 + c[1][2]*a1 + c[2][2]*a2 + c[3][2]*a3;
+}
+
 /* ---------- Public API ---------- */
 
 void voxel_mesh_begin(VoxelMesh* mesh) {
     memset(mesh, 0, sizeof(VoxelMesh));
+    mesh->cur_subdivisions = 1;
+}
+
+void voxel_mesh_set_subdivisions(VoxelMesh* mesh, int subdivs) {
+    mesh->cur_subdivisions = (subdivs < 1) ? 1 : subdivs;
 }
 
 void voxel_mesh_add_box(VoxelMesh* mesh,
@@ -222,6 +264,7 @@ void voxel_mesh_add_box_ex(VoxelMesh* mesh,
     box->occluder_only = false;
     box->ao_mode = (uint8_t)ao_mode;
     box->wall_orient = WALL_ORIENT_H;  /* default, only meaningful for AO_MODE_NONE */
+    box->subdivisions = (uint8_t)mesh->cur_subdivisions;
 }
 
 void voxel_mesh_add_wall(VoxelMesh* mesh,
@@ -339,17 +382,21 @@ void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
         occupancy_grid_fill_box(occ, b->x, b->y, b->z, b->sx, b->sy, b->sz);
     }
 
-    /* ---------- 3. First pass: count visible faces and atlas faces ---------- */
+    /* ---------- 3. First pass: count visible faces, atlas faces, and total verts ---------- */
     int total_faces = 0;
+    int total_verts = 0;
     int atlas_faces = 0;  /* only faces that need raytraced AO */
     for (int i = 0; i < mesh->box_count; i++) {
         const VoxelBox* box = &mesh->boxes[i];
         if (box->occluder_only) continue;
+        int subdivs = (box->subdivisions > 1) ? box->subdivisions : 1;
         for (int f = 0; f < 6; f++) {
             if (!box->no_cull && face_is_hidden(occ, box, &s_faces[f])) {
                 continue;
             }
             total_faces++;
+            /* subdivs×subdivs quads per face, 6 verts per quad */
+            total_verts += subdivs * subdivs * 6;
             if (box->ao_mode == AO_MODE_ATLAS) {
                 atlas_faces++;
             }
@@ -388,8 +435,7 @@ void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
     }
 
     /* ---------- 5. Emit vertices with AO routing ---------- */
-    int max_vertices = total_faces * 6;
-    float* verts = (float*)malloc((size_t)max_vertices * FLOATS_PER_VERTEX * sizeof(float));
+    float* verts = (float*)malloc((size_t)total_verts * FLOATS_PER_VERTEX * sizeof(float));
     if (!verts) {
         LOG_ERROR("VoxelMesh: failed to allocate vertex buffer");
         free(ao_data);
@@ -410,6 +456,8 @@ void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
         const VoxelBox* box = &mesh->boxes[i];
         if (box->occluder_only) continue;
 
+        int subdivs = (box->subdivisions > 1) ? box->subdivisions : 1;
+
         for (int f = 0; f < 6; f++) {
             const FaceTemplate* face = &s_faces[f];
 
@@ -419,6 +467,12 @@ void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
             }
 
             uint8_t ao_mode = box->ao_mode;
+
+            /* Extract face corners for subdivision interpolation */
+            float corners[4][3];  /* [0]=(0,0) [1]=(1,0) [2]=(0,1) [3]=(1,1) in UV space */
+            if (subdivs > 1) {
+                extract_face_corners(face, corners);
+            }
 
             if (ao_mode == AO_MODE_ATLAS && ao_data) {
                 /* --- Raytraced AO atlas path (complex geometry) --- */
@@ -454,25 +508,67 @@ void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
                     }
                 }
 
-                /* Emit 6 vertices */
-                for (int v = 0; v < 6; v++) {
-                    float* dst = &verts[vert_count * FLOATS_PER_VERTEX];
-                    dst[0] = box->x + face->verts[v][0] * box->sx;
-                    dst[1] = box->y + face->verts[v][1] * box->sy;
-                    dst[2] = box->z + face->verts[v][2] * box->sz;
-                    dst[3] = face->nx;
-                    dst[4] = face->ny;
-                    dst[5] = face->nz;
-                    dst[6] = box->r;
-                    dst[7] = box->g;
-                    dst[8] = box->b;
-                    dst[9] = box->a;
-                    float u = face->uvs[v][0];
-                    float vv = face->uvs[v][1];
-                    dst[10] = tile_u0 + half_texel_u + u * (tile_du - 2.0f * half_texel_u);
-                    dst[11] = tile_v0 + half_texel_v + vv * (tile_dv - 2.0f * half_texel_v);
-                    dst[12] = 1.0f;  /* AO_MODE_ATLAS */
-                    vert_count++;
+                /* Emit subdivided quads */
+                float inv_n = 1.0f / (float)subdivs;
+                for (int sy = 0; sy < subdivs; sy++) {
+                    for (int sx = 0; sx < subdivs; sx++) {
+                        /* Sub-quad UV corners within [0,1] face space */
+                        float u0 = (float)sx * inv_n;
+                        float v0 = (float)sy * inv_n;
+                        float u1 = (float)(sx + 1) * inv_n;
+                        float v1 = (float)(sy + 1) * inv_n;
+
+                        /* 4 corner positions (unit cube space) */
+                        float p00[3], p10[3], p01[3], p11[3];
+                        if (subdivs > 1) {
+                            bilerp3(p00, corners, u0, v0);
+                            bilerp3(p10, corners, u1, v0);
+                            bilerp3(p01, corners, u0, v1);
+                            bilerp3(p11, corners, u1, v1);
+                        } else {
+                            /* No subdivision: use template vertices directly */
+                            for (int k = 0; k < 3; k++) {
+                                p00[k] = face->verts[0][k]; p10[k] = face->verts[1][k];
+                                p01[k] = face->verts[5][k]; p11[k] = face->verts[2][k];
+                            }
+                            u0 = face->uvs[0][0]; v0 = face->uvs[0][1];
+                            u1 = face->uvs[2][0]; v1 = face->uvs[2][1];
+                        }
+
+                        /* 6 vertices per quad: (00,10,11, 00,11,01) */
+                        float qp[6][3] = {
+                            {p00[0], p00[1], p00[2]},
+                            {p10[0], p10[1], p10[2]},
+                            {p11[0], p11[1], p11[2]},
+                            {p00[0], p00[1], p00[2]},
+                            {p11[0], p11[1], p11[2]},
+                            {p01[0], p01[1], p01[2]},
+                        };
+                        float quv[6][2] = {
+                            {u0, v0}, {u1, v0}, {u1, v1},
+                            {u0, v0}, {u1, v1}, {u0, v1},
+                        };
+
+                        for (int v = 0; v < 6; v++) {
+                            float* dst = &verts[vert_count * FLOATS_PER_VERTEX];
+                            dst[0] = box->x + qp[v][0] * box->sx;
+                            dst[1] = box->y + qp[v][1] * box->sy;
+                            dst[2] = box->z + qp[v][2] * box->sz;
+                            dst[3] = face->nx;
+                            dst[4] = face->ny;
+                            dst[5] = face->nz;
+                            dst[6] = box->r;
+                            dst[7] = box->g;
+                            dst[8] = box->b;
+                            dst[9] = box->a;
+                            float fu = quv[v][0];
+                            float fv = quv[v][1];
+                            dst[10] = tile_u0 + half_texel_u + fu * (tile_du - 2.0f * half_texel_u);
+                            dst[11] = tile_v0 + half_texel_v + fv * (tile_dv - 2.0f * half_texel_v);
+                            dst[12] = 1.0f;  /* AO_MODE_ATLAS */
+                            vert_count++;
+                        }
+                    }
                 }
 
                 face_index++;
@@ -483,68 +579,133 @@ void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
                  * Other faces of floor boxes get ao_mode=0 (no AO). */
                 bool is_top_face = (f == 2);  /* +Y face */
 
-                for (int v = 0; v < 6; v++) {
-                    float* dst = &verts[vert_count * FLOATS_PER_VERTEX];
-                    dst[0] = box->x + face->verts[v][0] * box->sx;
-                    dst[1] = box->y + face->verts[v][1] * box->sy;
-                    dst[2] = box->z + face->verts[v][2] * box->sz;
-                    dst[3] = face->nx;
-                    dst[4] = face->ny;
-                    dst[5] = face->nz;
-                    dst[6] = box->r;
-                    dst[7] = box->g;
-                    dst[8] = box->b;
-                    dst[9] = box->a;
+                float inv_n = 1.0f / (float)subdivs;
+                for (int sy = 0; sy < subdivs; sy++) {
+                    for (int sx = 0; sx < subdivs; sx++) {
+                        float u0 = (float)sx * inv_n;
+                        float v0 = (float)sy * inv_n;
+                        float u1 = (float)(sx + 1) * inv_n;
+                        float v1 = (float)(sy + 1) * inv_n;
 
-                    if (is_top_face && mesh->floor_lm_cols > 0) {
-                        /* Lightmap UV: map world XZ to [0,1] across grid */
-                        float world_x = dst[0];
-                        float world_z = dst[2];
-                        dst[10] = (world_x - mesh->floor_lm_origin_x) / mesh->floor_lm_extent_x;
-                        dst[11] = (world_z - mesh->floor_lm_origin_z) / mesh->floor_lm_extent_z;
-                        dst[12] = 2.0f;  /* AO_MODE_LIGHTMAP */
-                    } else {
-                        dst[10] = 0.0f;
-                        dst[11] = 0.0f;
-                        dst[12] = 0.0f;  /* AO_MODE_NONE */
+                        float p00[3], p10[3], p01[3], p11[3];
+                        if (subdivs > 1) {
+                            bilerp3(p00, corners, u0, v0);
+                            bilerp3(p10, corners, u1, v0);
+                            bilerp3(p01, corners, u0, v1);
+                            bilerp3(p11, corners, u1, v1);
+                        } else {
+                            for (int k = 0; k < 3; k++) {
+                                p00[k] = face->verts[0][k]; p10[k] = face->verts[1][k];
+                                p01[k] = face->verts[5][k]; p11[k] = face->verts[2][k];
+                            }
+                        }
+
+                        float qp[6][3] = {
+                            {p00[0], p00[1], p00[2]},
+                            {p10[0], p10[1], p10[2]},
+                            {p11[0], p11[1], p11[2]},
+                            {p00[0], p00[1], p00[2]},
+                            {p11[0], p11[1], p11[2]},
+                            {p01[0], p01[1], p01[2]},
+                        };
+
+                        for (int v = 0; v < 6; v++) {
+                            float* dst = &verts[vert_count * FLOATS_PER_VERTEX];
+                            dst[0] = box->x + qp[v][0] * box->sx;
+                            dst[1] = box->y + qp[v][1] * box->sy;
+                            dst[2] = box->z + qp[v][2] * box->sz;
+                            dst[3] = face->nx;
+                            dst[4] = face->ny;
+                            dst[5] = face->nz;
+                            dst[6] = box->r;
+                            dst[7] = box->g;
+                            dst[8] = box->b;
+                            dst[9] = box->a;
+
+                            if (is_top_face && mesh->floor_lm_cols > 0) {
+                                float world_x = dst[0];
+                                float world_z = dst[2];
+                                dst[10] = (world_x - mesh->floor_lm_origin_x) / mesh->floor_lm_extent_x;
+                                dst[11] = (world_z - mesh->floor_lm_origin_z) / mesh->floor_lm_extent_z;
+                                dst[12] = 2.0f;  /* AO_MODE_LIGHTMAP */
+                            } else {
+                                dst[10] = 0.0f;
+                                dst[11] = 0.0f;
+                                dst[12] = 0.0f;  /* AO_MODE_NONE */
+                            }
+                            vert_count++;
+                        }
                     }
-                    vert_count++;
                 }
 
             } else {
                 /* --- AO_MODE_NONE: wall heuristic darkening --- */
-                for (int v = 0; v < 6; v++) {
-                    float* dst = &verts[vert_count * FLOATS_PER_VERTEX];
-                    dst[0] = box->x + face->verts[v][0] * box->sx;
-                    dst[1] = box->y + face->verts[v][1] * box->sy;
-                    dst[2] = box->z + face->verts[v][2] * box->sz;
-                    dst[3] = face->nx;
-                    dst[4] = face->ny;
-                    dst[5] = face->nz;
-                    dst[6] = box->r;
-                    dst[7] = box->g;
-                    dst[8] = box->b;
-                    dst[9] = box->a;
+                float inv_n = 1.0f / (float)subdivs;
+                for (int sy = 0; sy < subdivs; sy++) {
+                    for (int sx = 0; sx < subdivs; sx++) {
+                        float u0 = (float)sx * inv_n;
+                        float v0 = (float)sy * inv_n;
+                        float u1 = (float)(sx + 1) * inv_n;
+                        float v1 = (float)(sy + 1) * inv_n;
 
-                    /* Apply heuristic darkening to vertex color */
-                    apply_wall_heuristic(&dst[6], dst[1], wall_h, mesh->shadow_softness);
+                        float p00[3], p10[3], p01[3], p11[3];
+                        if (subdivs > 1) {
+                            bilerp3(p00, corners, u0, v0);
+                            bilerp3(p10, corners, u1, v0);
+                            bilerp3(p01, corners, u0, v1);
+                            bilerp3(p11, corners, u1, v1);
+                        } else {
+                            for (int k = 0; k < 3; k++) {
+                                p00[k] = face->verts[0][k]; p10[k] = face->verts[1][k];
+                                p01[k] = face->verts[5][k]; p11[k] = face->verts[2][k];
+                            }
+                        }
 
-                    /* UV encoding for wall stone shader:
-                     *   uv.x = local position along slab axis (interpolated)
-                     *   uv.y = orient * 100 + segment_length */
-                    float local_slab = 0.0f;
-                    float seg_len = 0.0f;
-                    if (box->wall_orient == WALL_ORIENT_H) {
-                        local_slab = face->verts[v][0] * box->sx;
-                        seg_len = box->sx;
-                    } else if (box->wall_orient == WALL_ORIENT_V) {
-                        local_slab = face->verts[v][2] * box->sz;
-                        seg_len = box->sz;
+                        float qp[6][3] = {
+                            {p00[0], p00[1], p00[2]},
+                            {p10[0], p10[1], p10[2]},
+                            {p11[0], p11[1], p11[2]},
+                            {p00[0], p00[1], p00[2]},
+                            {p11[0], p11[1], p11[2]},
+                            {p01[0], p01[1], p01[2]},
+                        };
+                        float quv[6][2] = {
+                            {u0, v0}, {u1, v0}, {u1, v1},
+                            {u0, v0}, {u1, v1}, {u0, v1},
+                        };
+
+                        for (int v = 0; v < 6; v++) {
+                            float* dst = &verts[vert_count * FLOATS_PER_VERTEX];
+                            dst[0] = box->x + qp[v][0] * box->sx;
+                            dst[1] = box->y + qp[v][1] * box->sy;
+                            dst[2] = box->z + qp[v][2] * box->sz;
+                            dst[3] = face->nx;
+                            dst[4] = face->ny;
+                            dst[5] = face->nz;
+                            dst[6] = box->r;
+                            dst[7] = box->g;
+                            dst[8] = box->b;
+                            dst[9] = box->a;
+
+                            /* Apply heuristic darkening to vertex color */
+                            apply_wall_heuristic(&dst[6], dst[1], wall_h, mesh->shadow_softness);
+
+                            /* UV encoding for wall stone shader */
+                            float local_slab = 0.0f;
+                            float seg_len = 0.0f;
+                            if (box->wall_orient == WALL_ORIENT_H) {
+                                local_slab = qp[v][0] * box->sx;
+                                seg_len = box->sx;
+                            } else if (box->wall_orient == WALL_ORIENT_V) {
+                                local_slab = qp[v][2] * box->sz;
+                                seg_len = box->sz;
+                            }
+                            dst[10] = local_slab;
+                            dst[11] = (float)box->wall_orient * 100.0f + seg_len;
+                            dst[12] = 0.0f;  /* AO_MODE_NONE */
+                            vert_count++;
+                        }
                     }
-                    dst[10] = local_slab;
-                    dst[11] = (float)box->wall_orient * 100.0f + seg_len;
-                    dst[12] = 0.0f;  /* AO_MODE_NONE */
-                    vert_count++;
                 }
             }
         }

@@ -70,6 +70,7 @@ typedef struct {
     bool  occluder_only; /* if true, contributes to occupancy grid for AO but emits no faces */
     uint8_t ao_mode;     /* AoMode — controls per-face AO routing (default AO_MODE_ATLAS) */
     uint8_t wall_orient; /* WallOrient — slab axis for AO_MODE_NONE walls (default WALL_ORIENT_H) */
+    uint8_t subdivisions; /* face subdivision level: 1=default, N=N×N quads per face */
 } VoxelBox;
 
 typedef struct {
@@ -91,6 +92,9 @@ typedef struct {
      * Controls wall heuristic gradient widths and darkening amounts.
      * See FloorShadowConfig in biome_config.h for documentation. */
     float    shadow_softness;
+
+    /* Current subdivision level for newly added boxes (1=default). */
+    int      cur_subdivisions;
 
     /* Floor lightmap (set before build, used by lightmap-mode faces) */
     GLuint   floor_lm_texture;  /* R8 texture handle (0 if none) */
@@ -162,6 +166,12 @@ void voxel_mesh_add_wall(VoxelMesh* mesh,
 void voxel_mesh_add_occluder(VoxelMesh* mesh,
                               float x, float y, float z,
                               float sx, float sy, float sz);
+
+/* Set the subdivision level for subsequently added boxes.
+ * N=1 (default) emits the standard 2-triangle face. N>1 subdivides each
+ * face into an N×N grid of quads (6*N*N vertices per face) for smooth
+ * vertex-shader deformations. Only useful for actor meshes. */
+void voxel_mesh_set_subdivisions(VoxelMesh* mesh, int subdivs);
 
 /* Set the floor lightmap texture for lightmap-mode faces.
  * Must be called before voxel_mesh_build(). The mesh takes ownership

@@ -62,6 +62,34 @@ static const char* s_voxel_vert_src =
     "uniform mat4 u_vp;\n"           /* view-projection */
     "uniform mat4 u_model;\n"        /* model transform */
     "\n"
+    "/* Deformation uniforms (actor mesh jelly deformation).\n"
+    " * When u_deform_height > 0, apply_deform() transforms the local\n"
+    " * position before the model matrix, and normals are corrected via\n"
+    " * finite-difference cofactor method. */\n"
+    "uniform float u_deform_squash;\n"    /* Y-axis scale (1.0 = identity) */
+    "uniform float u_deform_flare;\n"     /* bottom flare amount (0 = none) */
+    "uniform vec2  u_deform_lean;\n"      /* XZ lean at top (0,0 = none) */
+    "uniform vec2  u_deform_squish_dir;\n" /* normalized direction for directional squish */
+    "uniform float u_deform_squish;\n"    /* squish amount along squish_dir (0 = none) */
+    "uniform float u_deform_height;\n"    /* mesh height for t=y/h normalization (0 = disabled) */
+    "\n"
+    "vec3 apply_deform(vec3 p) {\n"
+    "    float h = u_deform_height;\n"
+    "    float t = clamp(p.y / h, 0.0, 1.0);\n"
+    "    /* Squash/stretch along Y with volume-preserving XZ compensation */\n"
+    "    p.y *= u_deform_squash;\n"
+    "    float inv_sq = 1.0 / sqrt(max(u_deform_squash, 0.01));\n"
+    "    p.xz *= inv_sq;\n"
+    "    /* Bottom flare: expand XZ at base, tapering to zero at top */\n"
+    "    p.xz *= 1.0 + u_deform_flare * max(1.0 - t, 0.0);\n"
+    "    /* Lean/shear: shift XZ proportional to height */\n"
+    "    p.xz += u_deform_lean * t;\n"
+    "    /* Directional squish: compress along an arbitrary horizontal axis */\n"
+    "    float proj = dot(p.xz, u_deform_squish_dir);\n"
+    "    p.xz -= u_deform_squish_dir * proj * u_deform_squish;\n"
+    "    return p;\n"
+    "}\n"
+    "\n"
     "out vec3 v_world_pos;\n"
     "out vec3 v_normal;\n"
     "out vec4 v_color;\n"
@@ -69,9 +97,37 @@ static const char* s_voxel_vert_src =
     "out float v_ao_mode;\n"
     "\n"
     "void main() {\n"
-    "    vec4 world = u_model * vec4(a_position, 1.0);\n"
+    "    vec3 local_pos = a_position;\n"
+    "    vec3 local_nrm = a_normal;\n"
+    "\n"
+    "    if (u_deform_height > 0.0) {\n"
+    "        /* Apply deformation to position */\n"
+    "        local_pos = apply_deform(a_position);\n"
+    "\n"
+    "        /* Normal correction via finite-difference cofactor method.\n"
+    "         * Compute Jacobian columns by sampling apply_deform at\n"
+    "         * 6 epsilon-offset points, then use cofactor matrix to\n"
+    "         * transform the original normal. */\n"
+    "        float eps = 0.001;\n"
+    "        vec3 dx = apply_deform(a_position + vec3(eps,0,0))\n"
+    "                - apply_deform(a_position - vec3(eps,0,0));\n"
+    "        vec3 dy = apply_deform(a_position + vec3(0,eps,0))\n"
+    "                - apply_deform(a_position - vec3(0,eps,0));\n"
+    "        vec3 dz = apply_deform(a_position + vec3(0,0,eps))\n"
+    "                - apply_deform(a_position - vec3(0,0,eps));\n"
+    "        /* Jacobian J = [dx, dy, dz] / (2*eps), cofactor = adj(J)^T.\n"
+    "         * For normal transform: n' = cofactor * n = cross products. */\n"
+    "        vec3 j0 = dx; vec3 j1 = dy; vec3 j2 = dz;\n"
+    "        vec3 cof0 = cross(j1, j2);\n"
+    "        vec3 cof1 = cross(j2, j0);\n"
+    "        vec3 cof2 = cross(j0, j1);\n"
+    "        local_nrm = cof0 * a_normal.x + cof1 * a_normal.y + cof2 * a_normal.z;\n"
+    "        local_nrm = normalize(local_nrm);\n"
+    "    }\n"
+    "\n"
+    "    vec4 world = u_model * vec4(local_pos, 1.0);\n"
     "    v_world_pos = world.xyz;\n"
-    "    v_normal = mat3(u_model) * a_normal;\n"
+    "    v_normal = mat3(u_model) * local_nrm;\n"
     "    v_color = a_color;\n"
     "    v_uv = a_uv;\n"
     "    v_ao_mode = a_ao_mode;\n"
@@ -508,6 +564,13 @@ void renderer_init(void) {
         shader_set_int(s_renderer.voxel_shader, "u_ao_texture", 0);
         shader_set_int(s_renderer.voxel_shader, "u_floor_lightmap", 1);
         shader_set_vec4(s_renderer.voxel_shader, "u_lightmap_bounds", 0.0f, 0.0f, 1.0f, 1.0f);
+        /* Default deformation uniforms (identity — no deformation) */
+        shader_set_float(s_renderer.voxel_shader, "u_deform_squash", 1.0f);
+        shader_set_float(s_renderer.voxel_shader, "u_deform_flare", 0.0f);
+        shader_set_vec2(s_renderer.voxel_shader, "u_deform_lean", 0.0f, 0.0f);
+        shader_set_vec2(s_renderer.voxel_shader, "u_deform_squish_dir", 0.0f, 0.0f);
+        shader_set_float(s_renderer.voxel_shader, "u_deform_squish", 0.0f);
+        shader_set_float(s_renderer.voxel_shader, "u_deform_height", 0.0f);
         /* Default wall stone uniforms (weathered stone) */
         shader_set_vec4(s_renderer.voxel_shader, "u_wall_stone_a", 0.09f, 0.15f, 0.30f, 0.06f);
         shader_set_vec4(s_renderer.voxel_shader, "u_wall_stone_b", 0.50f, 0.22f, 0.12f, 0.20f);
