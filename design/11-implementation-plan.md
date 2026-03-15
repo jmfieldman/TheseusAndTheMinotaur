@@ -175,7 +175,7 @@ Procedural actor models with deformable mesh system, proper animations with jell
 
 ---
 
-### Step 6.1 — Deformable Mesh System
+### Step 6.1 — Deformable Mesh System ✅
 
 Add vertex-shader-driven mesh deformation to the voxel rendering pipeline. Actor meshes are subdivided at build time to provide enough vertex density for smooth positional deformations. Deformation is controlled entirely by per-draw-call uniforms — zero additional memory, no CPU vertex rewriting.
 
@@ -216,7 +216,7 @@ Add vertex-shader-driven mesh deformation to the voxel rendering pipeline. Actor
 
 ---
 
-### Step 6.2 — Actor Geometry Module
+### Step 6.2 — Actor Geometry Module ✅
 
 Extract actor mesh generation from inline `puzzle_scene.c` code into a dedicated module. Replace the current single-box actors with multi-box compositions using subdivided meshes for deformation support.
 
@@ -238,7 +238,7 @@ Extract actor mesh generation from inline `puzzle_scene.c` code into a dedicated
 
 ---
 
-### Step 6.3 — Theseus Hop Deformation
+### Step 6.3 — Theseus Hop Deformation ✅
 
 Full deformation chain for Theseus's hop animation: anticipation squat → jump elongation → lean → landing flare → damped wobble settle. All deformation is expressed by driving the shader uniforms from Step 6.1 — no mesh changes.
 
@@ -261,7 +261,7 @@ Full deformation chain for Theseus's hop animation: anticipation squat → jump 
 
 ---
 
-### Step 6.4 — Minotaur Roll Animation
+### Step 6.4 — Minotaur Roll Animation ✅
 
 Replace the Minotaur's current hop-slide with a 90° rolling motion. The Minotaur rotates around its leading bottom edge, with a slight upward arc for power feel. Landing uses the deformable mesh for impact squash.
 
@@ -362,7 +362,7 @@ Core infrastructure for voxel-decomposition death animations. Does not implement
   - `DeathVoxel` struct: position (vec3), velocity (vec3), rotation (vec3), angular_velocity (vec3), scale (vec3), color (vec4), original_position (vec3), original_color (vec4). Each represents one box from the decomposed actor mesh.
   - `DeathAnim` struct: array of `DeathVoxel` (max ~64), count, timer, duration, type enum (`DEATH_SQUISH`, `DEATH_WALK_INTO`, `DEATH_SPIKE`, `DEATH_PETRIFY`, `DEATH_PIT_FALL`), `finished` flag, `reversing` flag.
   - `death_anim_init(DeathAnim*, DeathType, const ActorParts*, float actor_x, float actor_z)` — Decomposes the actor's body mesh into individual `DeathVoxel` particles at their current world positions. Sets initial velocities/rotations based on death type.
-  - `death_anim_update(DeathAnim*, float dt)` — Advances all voxel particles (physics: position += velocity * dt, velocity += gravity, rotation += angular_vel * dt). Clamps to ground plane. Applies type-specific behaviors (color shifts, scaling, etc.).
+  - `death_anim_update(DeathAnim*, float dt)` — Advances all voxel particles (physics: position += velocity _ dt, velocity += gravity, rotation += angular_vel _ dt). Clamps to ground plane. Applies type-specific behaviors (color shifts, scaling, etc.).
   - `death_anim_render(const DeathAnim*, GLuint shader)` — Renders each `DeathVoxel` as an individually transformed box with `u_deform_height = 0.0` (deformation disabled). Uses a shared unit-cube VBO (generated once) with per-particle model matrix containing position, rotation, and scale.
   - `death_anim_start_reverse(DeathAnim*)` — Switches to reverse playback. Stores current state as "end keyframe," interpolates all voxels back toward `original_position` and `original_color` over `duration * 0.5` seconds.
   - `death_anim_is_finished(const DeathAnim*)` — True when forward or reverse playback is done.
