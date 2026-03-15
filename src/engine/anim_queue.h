@@ -112,6 +112,8 @@ typedef struct {
     /* ── Minotaur phase ────────────────────────── */
     Tween            mino_x;
     Tween            mino_y;
+    int              mino_dir_col;    /* movement direction for current step (-1/0/+1) */
+    int              mino_dir_row;    /* movement direction for current step (-1/0/+1) */
 
     /* ── Fast-forward ─────────────────────────── */
     bool             fast_forward;    /* true when buffered input is pending */
@@ -200,6 +202,16 @@ bool anim_queue_is_ice_sliding(const AnimQueue* aq);
 
 /* Is the queue currently playing in reverse (undo)? */
 bool anim_queue_is_reversing(const AnimQueue* aq);
+
+/* Get the Minotaur's movement direction for the current step.
+ * Returns direction as -1/0/+1 for col (X) and row (Z).
+ * Only meaningful during MINOTAUR_STEP1/STEP2 phases. */
+void anim_queue_minotaur_dir(const AnimQueue* aq,
+                              int* out_dir_col, int* out_dir_row);
+
+/* Get the raw tween progress (0→1) for the current minotaur step.
+ * Returns 0 if not in a minotaur phase. */
+float anim_queue_minotaur_progress(const AnimQueue* aq);
 
 /*
  * Enable/disable fast-forward mode.

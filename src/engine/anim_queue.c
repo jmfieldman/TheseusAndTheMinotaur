@@ -257,11 +257,16 @@ static void start_minotaur_step1(AnimQueue* aq) {
         tween_init(&aq->mino_y, start_row,
                    (float)r->minotaur_after1_row,
                    ANIM_MINOTAUR_DURATION, ease_in_out_quad);
+        /* Track movement direction for roll animation */
+        aq->mino_dir_col = r->minotaur_after1_col - (int)(start_col + 0.5f);
+        aq->mino_dir_row = r->minotaur_after1_row - (int)(start_row + 0.5f);
     } else {
         tween_init(&aq->mino_x, start_col,
                    start_col, 0.001f, ease_linear);
         tween_init(&aq->mino_y, start_row,
                    start_row, 0.001f, ease_linear);
+        aq->mino_dir_col = 0;
+        aq->mino_dir_row = 0;
     }
 }
 
@@ -276,11 +281,16 @@ static void start_minotaur_step2(AnimQueue* aq) {
         tween_init(&aq->mino_y, (float)r->minotaur_after1_row,
                    (float)r->minotaur_after2_row,
                    ANIM_MINOTAUR_DURATION, ease_in_out_quad);
+        /* Track movement direction for roll animation */
+        aq->mino_dir_col = r->minotaur_after2_col - r->minotaur_after1_col;
+        aq->mino_dir_row = r->minotaur_after2_row - r->minotaur_after1_row;
     } else {
         tween_init(&aq->mino_x, (float)r->minotaur_after1_col,
                    (float)r->minotaur_after1_col, 0.001f, ease_linear);
         tween_init(&aq->mino_y, (float)r->minotaur_after1_row,
                    (float)r->minotaur_after1_row, 0.001f, ease_linear);
+        aq->mino_dir_col = 0;
+        aq->mino_dir_row = 0;
     }
 }
 
@@ -415,11 +425,15 @@ static void start_reverse_minotaur_step2(AnimQueue* aq) {
                    (float)r->minotaur_after1_col, dur, ease_in_out_quad);
         tween_init(&aq->mino_y, (float)r->minotaur_after2_row,
                    (float)r->minotaur_after1_row, dur, ease_in_out_quad);
+        aq->mino_dir_col = r->minotaur_after1_col - r->minotaur_after2_col;
+        aq->mino_dir_row = r->minotaur_after1_row - r->minotaur_after2_row;
     } else {
         tween_init(&aq->mino_x, (float)r->minotaur_after2_col,
                    (float)r->minotaur_after2_col, 0.001f, ease_linear);
         tween_init(&aq->mino_y, (float)r->minotaur_after2_row,
                    (float)r->minotaur_after2_row, 0.001f, ease_linear);
+        aq->mino_dir_col = 0;
+        aq->mino_dir_row = 0;
     }
 }
 
@@ -434,11 +448,15 @@ static void start_reverse_minotaur_step1(AnimQueue* aq) {
                    aq->env_minotaur_col, dur, ease_in_out_quad);
         tween_init(&aq->mino_y, (float)r->minotaur_after1_row,
                    aq->env_minotaur_row, dur, ease_in_out_quad);
+        aq->mino_dir_col = (int)(aq->env_minotaur_col + 0.5f) - r->minotaur_after1_col;
+        aq->mino_dir_row = (int)(aq->env_minotaur_row + 0.5f) - r->minotaur_after1_row;
     } else {
         tween_init(&aq->mino_x, (float)r->minotaur_after1_col,
                    (float)r->minotaur_after1_col, 0.001f, ease_linear);
         tween_init(&aq->mino_y, (float)r->minotaur_after1_row,
                    (float)r->minotaur_after1_row, 0.001f, ease_linear);
+        aq->mino_dir_col = 0;
+        aq->mino_dir_row = 0;
     }
 }
 
@@ -1356,4 +1374,18 @@ bool anim_queue_is_reversing(const AnimQueue* aq) {
 
 void anim_queue_set_fast_forward(AnimQueue* aq, bool fast) {
     aq->fast_forward = fast;
+}
+
+void anim_queue_minotaur_dir(const AnimQueue* aq,
+                              int* out_dir_col, int* out_dir_row) {
+    *out_dir_col = aq->mino_dir_col;
+    *out_dir_row = aq->mino_dir_row;
+}
+
+float anim_queue_minotaur_progress(const AnimQueue* aq) {
+    if (aq->phase == ANIM_PHASE_MINOTAUR_STEP1 ||
+        aq->phase == ANIM_PHASE_MINOTAUR_STEP2) {
+        return tween_progress(&aq->mino_x);
+    }
+    return 0.0f;
 }

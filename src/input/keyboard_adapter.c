@@ -52,6 +52,7 @@ SemanticAction keyboard_adapter_map(SDL_Scancode scancode, InputContext context)
         case SDL_SCANCODE_K:     return ACTION_DEBUG_PITCH_DOWN;
         case SDL_SCANCODE_O:     return ACTION_DEBUG_FOV_UP;
         case SDL_SCANCODE_L:     return ACTION_DEBUG_FOV_DOWN;
+        case SDL_SCANCODE_P:     return ACTION_DEBUG_ANIM_SPEED;
         default: break;
         }
         break;

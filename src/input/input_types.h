@@ -42,6 +42,7 @@ typedef enum {
     ACTION_DEBUG_PITCH_DOWN,         /* 'K' — decrease camera pitch */
     ACTION_DEBUG_FOV_UP,             /* 'O' — increase FOV */
     ACTION_DEBUG_FOV_DOWN,           /* 'L' — decrease FOV */
+    ACTION_DEBUG_ANIM_SPEED,         /* 'P' — cycle animation speed multiplier */
 
     ACTION_COUNT
 } SemanticAction;

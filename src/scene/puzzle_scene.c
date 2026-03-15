@@ -172,6 +172,14 @@ typedef struct {
     bool            was_theseus_hopping; /* true if previous frame was in Theseus hop phase */
     float           hop_dir_col;     /* movement direction col (+1/-1/0) for lean */
     float           hop_dir_row;     /* movement direction row (+1/-1/0) for lean */
+
+    /* Minotaur roll deformation (Step 6.4) */
+    bool            mino_wobble_active;
+    float           mino_wobble_timer;
+    bool            was_mino_rolling;  /* true if previous frame was in Minotaur step phase */
+
+    /* Debug animation speed (P key cycles through multipliers) */
+    float           debug_anim_speed;  /* 0.125, 0.25, 0.5, or 1.0 */
 } PuzzleScene;
 
 /* ---------- Layout calculation ---------- */
@@ -765,6 +773,16 @@ static void render_debug_labels(const PuzzleScene* ps, int vw, int vh) {
     snprintf(fov_buf, sizeof(fov_buf), "[O/L] FOV: %.0f\xC2\xB0",
              g_settings.camera_fov);
     text_render_draw(fov_buf, x, y, TEXT_SIZE_SMALL, label_color, TEXT_ALIGN_RIGHT);
+    y += line_h;
+
+    /* Animation speed (only show when not 1.0) */
+    if (ps->debug_anim_speed < 0.99f) {
+        char speed_buf[64];
+        snprintf(speed_buf, sizeof(speed_buf), "[P] Speed: %.3fx",
+                 ps->debug_anim_speed);
+        Color speed_color = color_rgba(1.0f, 0.8f, 0.2f, 0.9f);
+        text_render_draw(speed_buf, x, y, TEXT_SIZE_SMALL, speed_color, TEXT_ALIGN_RIGHT);
+    }
 }
 
 static void render_result_overlay(const PuzzleScene* ps, int vw, int vh) {
@@ -965,8 +983,8 @@ static void build_shadow_resources(PuzzleScene* ps, const ActorShadowConfig* cfg
     /* Theseus: cube (size × size × size), so height = size */
     generate_actor_shadow_texture(THESEUS_SIZE_FRAC, THESEUS_SIZE_FRAC, cfg,
                                    &ps->shadow_tex_theseus, &ps->shadow_extent_t);
-    /* Minotaur: slightly shorter (size × size*0.8 × size) */
-    generate_actor_shadow_texture(MINOTAUR_SIZE_FRAC, MINOTAUR_SIZE_FRAC * 0.8f, cfg,
+    /* Minotaur: true cube (size × size × size) */
+    generate_actor_shadow_texture(MINOTAUR_SIZE_FRAC, MINOTAUR_SIZE_FRAC, cfg,
                                    &ps->shadow_tex_minotaur, &ps->shadow_extent_m);
     /* Groove box: footprint = tile minus inset, height matches box_h */
     float gb_footprint = 1.0f - 2.0f * 0.12f;  /* matches groove box inset */
@@ -1036,6 +1054,56 @@ static void destroy_shadow_resources(PuzzleScene* ps) {
     if (ps->shadow_tex_minotaur) { glDeleteTextures(1, &ps->shadow_tex_minotaur); ps->shadow_tex_minotaur = 0; }
     if (ps->shadow_tex_groovebox) { glDeleteTextures(1, &ps->shadow_tex_groovebox); ps->shadow_tex_groovebox = 0; }
     ps->shadow_vertex_count = 0;
+}
+
+/* ---------- Matrix helpers for roll animation ---------- */
+
+/* Build a 4×4 column-major identity matrix. */
+static void mat4_identity(float m[16]) {
+    memset(m, 0, 16 * sizeof(float));
+    m[0] = m[5] = m[10] = m[15] = 1.0f;
+}
+
+/* Build a 4×4 column-major translation matrix. */
+static void mat4_translate(float m[16], float tx, float ty, float tz) {
+    mat4_identity(m);
+    m[12] = tx; m[13] = ty; m[14] = tz;
+}
+
+/* Multiply two 4×4 column-major matrices: out = a * b.
+ * out may NOT alias a or b. */
+static void mat4_mul(float out[16], const float a[16], const float b[16]) {
+    for (int c = 0; c < 4; c++) {
+        for (int r = 0; r < 4; r++) {
+            out[c * 4 + r] =
+                a[0 * 4 + r] * b[c * 4 + 0] +
+                a[1 * 4 + r] * b[c * 4 + 1] +
+                a[2 * 4 + r] * b[c * 4 + 2] +
+                a[3 * 4 + r] * b[c * 4 + 3];
+        }
+    }
+}
+
+/* Build a rotation matrix around the X axis (column-major). */
+static void mat4_rot_x(float m[16], float angle_rad) {
+    mat4_identity(m);
+    float c = cosf(angle_rad), s = sinf(angle_rad);
+    m[5] = c;  m[6] = s;
+    m[9] = -s; m[10] = c;
+}
+
+/* Build a rotation matrix around the Z axis (column-major). */
+static void mat4_rot_z(float m[16], float angle_rad) {
+    mat4_identity(m);
+    float c = cosf(angle_rad), s = sinf(angle_rad);
+    m[0] = c;  m[1] = s;
+    m[4] = -s; m[5] = c;
+}
+
+/* Build a Y-axis scale matrix (for horn/face retraction). */
+static void mat4_scale_y(float m[16], float sy) {
+    mat4_identity(m);
+    m[5] = sy;
 }
 
 static void draw_shadow_at_y(const PuzzleScene* ps, GLuint shader,
@@ -1481,7 +1549,7 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
     {
         bool animating = anim_queue_is_playing(&ps->anim);
 
-        /* Minotaur — always on ground (no hop) */
+        /* Minotaur — rolls (tumbles) during movement */
         {
             float mcol, mrow;
             if (animating) {
@@ -1494,45 +1562,193 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             /* Compute groove Y offset for minotaur */
             float mino_gy = actor_groove_y(ps, mcol, mrow);
 
-            /* Soft ground shadow — always at Y=0.01 (floor level).
-             * GL_LESS passes on rim (Y=0), trench floor (Y=-depth),
-             * and normal floor, but correctly fails against groove box
-             * top (Y=0.45) so shadow doesn't render on it. */
+            /* Soft ground shadow — always at Y=0.01 (floor level). */
             draw_shadow_at_y(ps, shader, mcol + 0.5f, 0.01f,
                              mrow + 0.5f, 1.0f,
                              ps->shadow_tex_minotaur, ps->shadow_extent_m);
 
-            /* Actor model matrix */
-            float model[16];
-            memset(model, 0, sizeof(model));
-            model[0]  = 1.0f;
-            model[5]  = 1.0f;
-            model[10] = 1.0f;
-            model[15] = 1.0f;
-            model[12] = mcol + 0.5f;
-            model[13] = mino_gy;
-            model[14] = mrow + 0.5f;
-            shader_set_mat4(shader, "u_model", model);
+            /* ── Roll animation state ── */
+            float mino_half = MINOTAUR_SIZE_FRAC * 0.5f;
+            bool in_roll = animating &&
+                           (anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP1 ||
+                            anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP2);
+            int dir_c = 0, dir_r = 0;
+            float roll_t = 0.0f;
+            if (in_roll) {
+                anim_queue_minotaur_dir(&ps->anim, &dir_c, &dir_r);
+                roll_t = anim_queue_minotaur_progress(&ps->anim);
+            }
+            bool actually_moving = in_roll && (dir_c != 0 || dir_r != 0);
 
-            /* Body (deformable — negative height skips normal correction) */
+            /* ── Deformation state ── */
+            DeformState mino_deform;
+            deform_state_identity(&mino_deform);
+
+            /* ── Build model matrix ── */
+            float model[16];
+
+            if (actually_moving) {
+                /* Roll phases (true cube — no unwind needed):
+                 * 0.00–0.08: anticipation squat (loading up)
+                 * 0.08–1.00: 90° roll around leading bottom edge
+                 * At 90° the cube lands on an identical face — done. */
+                float start_col = ps->anim.mino_x.start;
+                float start_row = ps->anim.mino_y.start;
+
+                if (roll_t < 0.08f) {
+                    /* ── Anticipation squat ── */
+                    float u = roll_t / 0.08f;
+                    float s = u * u * (3.0f - 2.0f * u); /* smoothstep */
+                    mino_deform.squash = 1.0f - 0.08f * s;  /* → 0.92 */
+                    mino_deform.flare  = 0.04f * s;
+
+                    /* Stay at start position during squat */
+                    mat4_translate(model,
+                                   start_col + 0.5f,
+                                   mino_gy,
+                                   start_row + 0.5f);
+
+                } else {
+                    /* ── Roll phase: 90° rotation around leading bottom edge ── */
+                    float rt = (roll_t - 0.08f) / (1.0f - 0.08f); /* 0→1 */
+                    /* Ease-out for a satisfying deceleration into landing */
+                    float et = 1.0f - (1.0f - rt) * (1.0f - rt);
+                    float angle = et * (float)M_PI * 0.5f; /* 0→90° */
+
+                    /* Arc lift: slight upward offset to prevent floor clipping */
+                    float arc_y = 0.10f * 4.0f * rt * (1.0f - rt);
+
+                    /* Pivot is at the leading bottom edge of the start position.
+                     * In local space the body center is at (0, 0, 0) (mesh base),
+                     * and the pivot is at (dir_c * half, 0, dir_r * half). */
+                    float px = (float)dir_c * mino_half;
+                    float pz = (float)dir_r * mino_half;
+
+                    /* World position of the pivot (fixed throughout the roll) */
+                    float wx = start_col + 0.5f + px;
+                    float wy = mino_gy;
+                    float wz = start_row + 0.5f + pz;
+
+                    /* Residual: compensate for tile/body size mismatch.
+                     * After 90° roll, the new bottom-face center (originally
+                     * the +X face at local (half, half, 0)) ends up at
+                     * pivot_x + 0.325 via rotation. Total displacement from
+                     * start center = half (pivot offset) + half (rotation) = size.
+                     * Tile is 1.0 wide, so residual covers the remaining
+                     * (1.0 - size) = 0.35 gap. */
+                    float residual = et * (1.0f - MINOTAUR_SIZE_FRAC);
+
+                    /* Build model: T(world_pivot + residual + arc) * R(angle) * T(-local_pivot) */
+                    float t1[16], rot[16], t2[16], tmp[16];
+
+                    mat4_translate(t1,
+                                   wx + (float)dir_c * residual,
+                                   wy + arc_y,
+                                   wz + (float)dir_r * residual);
+
+                    /* Rotation axis depends on movement direction:
+                     * Moving ±X → rotate around Z axis
+                     * Moving ±Z → rotate around X axis
+                     * Sign: rolling "forward" = clockwise from the direction of travel */
+                    if (dir_c != 0) {
+                        mat4_rot_z(rot, -(float)dir_c * angle);
+                    } else {
+                        mat4_rot_x(rot, (float)dir_r * angle);
+                    }
+
+                    mat4_translate(t2, -px, 0.0f, -pz);
+
+                    /* model = t1 * rot * t2 */
+                    mat4_mul(tmp, t1, rot);
+                    mat4_mul(model, tmp, t2);
+                }
+            } else {
+                /* ── Idle or non-moving step: simple translation ── */
+                mat4_translate(model,
+                               mcol + 0.5f,
+                               mino_gy,
+                               mrow + 0.5f);
+
+                /* Post-roll wobble (heavier than Theseus) */
+                if (ps->mino_wobble_active) {
+                    float wt = ps->mino_wobble_timer;
+                    float amplitude = 0.06f;
+                    float freq = 20.0f;
+                    float damping = 14.0f;
+                    float wobble = amplitude * sinf(wt * freq) * expf(-wt * damping);
+                    mino_deform.squash = 1.0f + wobble;
+                    mino_deform.flare  = (1.0f - mino_deform.squash) * 0.4f;
+                    if (mino_deform.flare < 0.0f) mino_deform.flare = 0.0f;
+                }
+            }
+
+            /* ── Draw body ── */
+            shader_set_mat4(shader, "u_model", model);
             shader_set_float(shader, "u_deform_height",
                              -ps->minotaur_parts.body_height);
+            deform_state_apply(&mino_deform, shader);
             shader_set_int(shader, "u_has_ao",
                            voxel_mesh_has_ao(&ps->minotaur_parts.body) ? 1 : 0);
             shader_set_float(shader, "u_ao_intensity", 1.0f);
             voxel_mesh_draw(&ps->minotaur_parts.body);
 
-            /* Horns and face (rigid — disable deformation) */
+            /* ── Draw horns (with retraction during roll) ── */
             shader_set_float(shader, "u_deform_height", 0.0f);
-            if (ps->minotaur_parts.has_horns) {
-                shader_set_int(shader, "u_has_ao",
-                               voxel_mesh_has_ao(&ps->minotaur_parts.horns) ? 1 : 0);
-                voxel_mesh_draw(&ps->minotaur_parts.horns);
+            {
+                DeformState rigid_deform;
+                deform_state_identity(&rigid_deform);
+                deform_state_apply(&rigid_deform, shader);
             }
+            if (ps->minotaur_parts.has_horns) {
+                float horn_scale = 1.0f;
+                if (actually_moving) {
+                    if (roll_t < 0.10f) {
+                        /* Retract: scale Y from 1→0 during anticipation */
+                        horn_scale = 1.0f - roll_t / 0.10f;
+                    } else {
+                        /* Stay fully retracted during entire roll —
+                         * the cube is rotating so horns would point sideways */
+                        horn_scale = 0.0f;
+                    }
+                }
+
+                if (horn_scale > 0.01f) {
+                    /* Apply Y-scale for retraction on top of the body model matrix */
+                    float horn_model[16], sy_mat[16], tmp[16];
+                    mat4_scale_y(sy_mat, horn_scale);
+                    mat4_mul(horn_model, model, sy_mat);
+                    shader_set_mat4(shader, "u_model", horn_model);
+                    shader_set_int(shader, "u_has_ao",
+                                   voxel_mesh_has_ao(&ps->minotaur_parts.horns) ? 1 : 0);
+                    voxel_mesh_draw(&ps->minotaur_parts.horns);
+                }
+            }
+
+            /* ── Draw face (with retraction during roll) ── */
             if (ps->minotaur_parts.has_face) {
-                shader_set_int(shader, "u_has_ao",
-                               voxel_mesh_has_ao(&ps->minotaur_parts.face) ? 1 : 0);
-                voxel_mesh_draw(&ps->minotaur_parts.face);
+                float face_scale = 1.0f;
+                if (actually_moving) {
+                    if (roll_t < 0.10f) {
+                        /* Retract face during anticipation */
+                        face_scale = 1.0f - roll_t / 0.10f;
+                    } else {
+                        /* Stay retracted during roll */
+                        face_scale = 0.0f;
+                    }
+                }
+
+                if (face_scale > 0.01f) {
+                    /* For face, we don't scale Y — we scale the protrusion depth.
+                     * Since face is on -Z, scale Z from center of body. The face
+                     * mesh has small Z extent, so uniform scale works visually. */
+                    float face_model[16];
+                    /* Use the body model matrix for face (same world transform) */
+                    memcpy(face_model, model, sizeof(face_model));
+                    shader_set_mat4(shader, "u_model", face_model);
+                    shader_set_int(shader, "u_has_ao",
+                                   voxel_mesh_has_ao(&ps->minotaur_parts.face) ? 1 : 0);
+                    voxel_mesh_draw(&ps->minotaur_parts.face);
+                }
             }
         }
 
@@ -1797,6 +2013,10 @@ static void puzzle_on_enter(State* self) {
     ps->was_theseus_hopping = false;
     ps->hop_dir_col = 0.0f;
     ps->hop_dir_row = 0.0f;
+    ps->mino_wobble_active = false;
+    ps->mino_wobble_timer = 0.0f;
+    ps->was_mino_rolling = false;
+    ps->debug_anim_speed = 1.0f;
 
     /* Build 3D diorama for verification */
     ps->render_3d = false;
@@ -1880,6 +2100,15 @@ static void puzzle_handle_action(State* self, SemanticAction action) {
     if (action == ACTION_DEBUG_FOV_DOWN) {
         g_settings.camera_fov = CLAMP(g_settings.camera_fov - 1.0f, 5.0f, 90.0f);
         LOG_INFO("FOV: %.0f°", g_settings.camera_fov);
+        return;
+    }
+    if (action == ACTION_DEBUG_ANIM_SPEED) {
+        /* Cycle: 1.0 → 0.5 → 0.25 → 0.125 → 1.0 */
+        if (ps->debug_anim_speed > 0.9f)       ps->debug_anim_speed = 0.5f;
+        else if (ps->debug_anim_speed > 0.4f)  ps->debug_anim_speed = 0.25f;
+        else if (ps->debug_anim_speed > 0.2f)  ps->debug_anim_speed = 0.125f;
+        else                                     ps->debug_anim_speed = 1.0f;
+        LOG_INFO("Animation speed: %.3fx", ps->debug_anim_speed);
         return;
     }
 
@@ -1967,6 +2196,27 @@ static void puzzle_update(State* self, float dt) {
         ps->was_theseus_hopping = is_hopping;
     }
 
+    /* Minotaur roll-end detection → start landing wobble */
+    {
+        bool is_rolling = anim_queue_is_playing(&ps->anim) &&
+                          (anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP1 ||
+                           anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP2);
+        if (ps->was_mino_rolling && !is_rolling) {
+            ps->mino_wobble_active = true;
+            ps->mino_wobble_timer = 0.0f;
+        }
+        ps->was_mino_rolling = is_rolling;
+    }
+
+    /* Update minotaur post-roll wobble timer */
+    if (ps->mino_wobble_active) {
+        #define MINO_WOBBLE_MAX 0.20f
+        ps->mino_wobble_timer += dt;
+        if (ps->mino_wobble_timer >= MINO_WOBBLE_MAX) {
+            ps->mino_wobble_active = false;
+        }
+    }
+
     /* Update animation */
     if (anim_queue_is_playing(&ps->anim)) {
         /* Open/close buffer window */
@@ -1983,7 +2233,7 @@ static void puzzle_update(State* self, float dt) {
                                  (input_buffer_check_held_keys() != ACTION_NONE);
         anim_queue_set_fast_forward(&ps->anim, has_pending_input);
 
-        anim_queue_update(&ps->anim, dt);
+        anim_queue_update(&ps->anim, dt * ps->debug_anim_speed);
 
         /* Check if animation just completed */
         if (!anim_queue_is_playing(&ps->anim)) {

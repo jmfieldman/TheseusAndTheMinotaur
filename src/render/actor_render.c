@@ -15,7 +15,7 @@
 
 /* Minotaur body: ~65% of one tile, 80% height ratio */
 #define MINOTAUR_SIZE   0.65f
-#define MINOTAUR_HEIGHT_RATIO 0.8f
+#define MINOTAUR_HEIGHT_RATIO 1.0f  /* true cube — rolls land on an identical face */
 
 /* Minotaur colors */
 #define MINO_R (239.0f / 255.0f)
