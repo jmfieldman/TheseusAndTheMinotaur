@@ -2188,58 +2188,9 @@ static void puzzle_update(State* self, float dt) {
         }
     }
 
-    /* Detect hop-end transition: was hopping last frame, not anymore → start wobble */
-    {
-        bool is_hopping = anim_queue_is_playing(&ps->anim) &&
-                          anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
-                          anim_queue_theseus_event_type(&ps->anim) != ANIM_EVT_BOX_SLIDE &&
-                          !anim_queue_is_ice_sliding(&ps->anim);
-        if (ps->was_theseus_hopping && !is_hopping) {
-            ps->wobble_active = true;
-            ps->wobble_timer = 0.0f;
-        }
-        /* Track direction while hopping */
-        if (is_hopping) {
-            float from_col = ps->anim.move_x.start;
-            float from_row = ps->anim.move_y.start;
-            float to_col   = ps->anim.move_x.end;
-            float to_row   = ps->anim.move_y.end;
-            float dc = to_col - from_col;
-            float dr = to_row - from_row;
-            if (dc != 0.0f || dr != 0.0f) {
-                ps->hop_dir_col = dc;
-                ps->hop_dir_row = dr;
-            }
-        }
-        ps->was_theseus_hopping = is_hopping;
-    }
-
-    /* Minotaur roll-end detection → start landing wobble.
-     * Only triggers when the minotaur actually moved (minotaur_steps > 0).
-     * Zero-step turns run placeholder tweens through the minotaur phases
-     * but shouldn't trigger wobble or horn extension animations. */
-    {
-        bool is_rolling = anim_queue_is_playing(&ps->anim) &&
-                          (anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP1 ||
-                           anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP2) &&
-                          ps->anim.record.minotaur_steps > 0;
-        if (ps->was_mino_rolling && !is_rolling) {
-            ps->mino_wobble_active = true;
-            ps->mino_wobble_timer = 0.0f;
-        }
-        ps->was_mino_rolling = is_rolling;
-    }
-
-    /* Update minotaur post-roll wobble timer */
-    if (ps->mino_wobble_active) {
-        #define MINO_WOBBLE_MAX 0.20f
-        ps->mino_wobble_timer += dt;
-        if (ps->mino_wobble_timer >= MINO_WOBBLE_MAX) {
-            ps->mino_wobble_active = false;
-        }
-    }
-
-    /* Update animation */
+    /* Update animation — must run BEFORE wobble detection so that
+     * phase transitions are visible in the same frame, avoiding a
+     * one-frame gap where horns flash to full scale. */
     if (anim_queue_is_playing(&ps->anim)) {
         /* Open/close buffer window */
         if (anim_queue_in_buffer_window(&ps->anim) &&
@@ -2293,6 +2244,60 @@ static void puzzle_update(State* self, float dt) {
             if (buffered != ACTION_NONE) {
                 resolve_action(ps, buffered);
             }
+        }
+    }
+
+    /* Detect hop-end transition: was hopping last frame, not anymore → start wobble.
+     * Runs AFTER anim_queue_update so phase transitions are seen immediately. */
+    {
+        bool is_hopping = anim_queue_is_playing(&ps->anim) &&
+                          anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
+                          anim_queue_theseus_event_type(&ps->anim) != ANIM_EVT_BOX_SLIDE &&
+                          !anim_queue_is_ice_sliding(&ps->anim);
+        if (ps->was_theseus_hopping && !is_hopping) {
+            ps->wobble_active = true;
+            ps->wobble_timer = 0.0f;
+        }
+        /* Track direction while hopping */
+        if (is_hopping) {
+            float from_col = ps->anim.move_x.start;
+            float from_row = ps->anim.move_y.start;
+            float to_col   = ps->anim.move_x.end;
+            float to_row   = ps->anim.move_y.end;
+            float dc = to_col - from_col;
+            float dr = to_row - from_row;
+            if (dc != 0.0f || dr != 0.0f) {
+                ps->hop_dir_col = dc;
+                ps->hop_dir_row = dr;
+            }
+        }
+        ps->was_theseus_hopping = is_hopping;
+    }
+
+    /* Minotaur roll-end detection → start landing wobble.
+     * Only triggers when the minotaur actually moved (minotaur_steps > 0).
+     * Zero-step turns run placeholder tweens through the minotaur phases
+     * but shouldn't trigger wobble or horn extension animations.
+     * Runs AFTER anim_queue_update so the transition is detected on the
+     * same frame the phase changes, avoiding a one-frame horn flash. */
+    {
+        bool is_rolling = anim_queue_is_playing(&ps->anim) &&
+                          (anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP1 ||
+                           anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP2) &&
+                          ps->anim.record.minotaur_steps > 0;
+        if (ps->was_mino_rolling && !is_rolling) {
+            ps->mino_wobble_active = true;
+            ps->mino_wobble_timer = 0.0f;
+        }
+        ps->was_mino_rolling = is_rolling;
+    }
+
+    /* Update minotaur post-roll wobble timer */
+    if (ps->mino_wobble_active) {
+        #define MINO_WOBBLE_MAX 0.20f
+        ps->mino_wobble_timer += dt;
+        if (ps->mino_wobble_timer >= MINO_WOBBLE_MAX) {
+            ps->mino_wobble_active = false;
         }
     }
 }
