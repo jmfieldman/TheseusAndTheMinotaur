@@ -1568,16 +1568,20 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
 
             /* ── Roll animation state ── */
             float mino_half = MINOTAUR_SIZE_FRAC * 0.5f;
-            bool in_roll = animating &&
+            bool in_mino_phase = animating &&
                            (anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP1 ||
                             anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP2);
             int dir_c = 0, dir_r = 0;
             float roll_t = 0.0f;
-            if (in_roll) {
+            if (in_mino_phase) {
                 anim_queue_minotaur_dir(&ps->anim, &dir_c, &dir_r);
                 roll_t = anim_queue_minotaur_progress(&ps->anim);
             }
-            bool actually_moving = in_roll && (dir_c != 0 || dir_r != 0);
+            bool actually_moving = in_mino_phase && (dir_c != 0 || dir_r != 0);
+            /* in_roll: true only when the minotaur has real steps in this turn.
+             * Zero-step turns still run placeholder 0.001s tweens through the
+             * minotaur phases, but those shouldn't hide horns or trigger roll. */
+            bool in_roll = in_mino_phase && ps->anim.record.minotaur_steps > 0;
 
             /* ── Deformation state ── */
             DeformState mino_deform;
@@ -1700,15 +1704,57 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             }
             if (ps->minotaur_parts.has_horns) {
                 float horn_scale = 1.0f;
-                if (actually_moving) {
-                    if (roll_t < 0.10f) {
-                        /* Retract: scale Y from 1→0 during anticipation */
-                        horn_scale = 1.0f - roll_t / 0.10f;
+                #define HORN_RETRACT_DURATION 0.06f
+                #define HORN_EXTEND_DURATION  0.08f
+                if (in_roll) {
+                    /* Horn retraction: animate at the start of the first real
+                     * movement step, then stay hidden for subsequent steps.
+                     *
+                     * Forward:  STEP1 → STEP2.  First real step is always STEP1.
+                     * Reverse:  STEP2 → STEP1.  First real step is STEP2 (2-step)
+                     *           or STEP1 (1-step, since STEP2 is a placeholder).
+                     *
+                     * Placeholder steps (actually_moving=false) that precede the
+                     * first real movement must keep horns visible to avoid flicker.
+                     */
+                    bool reversing = anim_queue_is_reversing(&ps->anim);
+                    AnimPhase cur_phase = anim_queue_phase(&ps->anim);
+
+                    if (actually_moving) {
+                        /* Determine if this is the first real movement step */
+                        bool is_first_movement;
+                        if (!reversing) {
+                            is_first_movement = (cur_phase == ANIM_PHASE_MINOTAUR_STEP1);
+                        } else {
+                            /* In reverse, first real step is STEP2 if 2-step,
+                             * or STEP1 if 1-step (STEP2 was placeholder). */
+                            if (ps->anim.record.minotaur_steps >= 2) {
+                                is_first_movement = (cur_phase == ANIM_PHASE_MINOTAUR_STEP2);
+                            } else {
+                                is_first_movement = (cur_phase == ANIM_PHASE_MINOTAUR_STEP1);
+                            }
+                        }
+
+                        if (is_first_movement && roll_t < HORN_RETRACT_DURATION) {
+                            /* Scale Y from 1→0 with ease-in */
+                            float t = roll_t / HORN_RETRACT_DURATION;
+                            horn_scale = 1.0f - t * t;
+                        } else {
+                            horn_scale = 0.0f;
+                        }
                     } else {
-                        /* Stay fully retracted during entire roll —
-                         * the cube is rotating so horns would point sideways */
-                        horn_scale = 0.0f;
+                        /* Placeholder step with no actual movement.
+                         * Forward: placeholder is step2 (after retraction) → hidden.
+                         * Reverse: placeholder is step2 (before real step1) → visible. */
+                        horn_scale = reversing ? 1.0f : 0.0f;
                     }
+                } else if (ps->mino_wobble_active &&
+                           ps->mino_wobble_timer < HORN_EXTEND_DURATION) {
+                    /* Animated horn extension: scale Y from 0→1 with ease-out
+                     * over the first 0.08s of the post-roll wobble. */
+                    float t = ps->mino_wobble_timer / HORN_EXTEND_DURATION;
+                    float s = 1.0f - (1.0f - t) * (1.0f - t);
+                    horn_scale = s;
                 }
 
                 if (horn_scale > 0.01f) {
@@ -1717,8 +1763,7 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                     mat4_scale_y(sy_mat, horn_scale);
                     mat4_mul(horn_model, model, sy_mat);
                     shader_set_mat4(shader, "u_model", horn_model);
-                    shader_set_int(shader, "u_has_ao",
-                                   voxel_mesh_has_ao(&ps->minotaur_parts.horns) ? 1 : 0);
+                    shader_set_int(shader, "u_has_ao", 0);  /* no AO — clean bright horns */
                     voxel_mesh_draw(&ps->minotaur_parts.horns);
                 }
             }
@@ -2169,11 +2214,15 @@ static void puzzle_update(State* self, float dt) {
         ps->was_theseus_hopping = is_hopping;
     }
 
-    /* Minotaur roll-end detection → start landing wobble */
+    /* Minotaur roll-end detection → start landing wobble.
+     * Only triggers when the minotaur actually moved (minotaur_steps > 0).
+     * Zero-step turns run placeholder tweens through the minotaur phases
+     * but shouldn't trigger wobble or horn extension animations. */
     {
         bool is_rolling = anim_queue_is_playing(&ps->anim) &&
                           (anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP1 ||
-                           anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP2);
+                           anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP2) &&
+                          ps->anim.record.minotaur_steps > 0;
         if (ps->was_mino_rolling && !is_rolling) {
             ps->mino_wobble_active = true;
             ps->mino_wobble_timer = 0.0f;
