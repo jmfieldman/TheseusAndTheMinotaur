@@ -791,10 +791,13 @@ static void gen_features(VoxelMesh* mesh, const Grid* grid,
                      * skip static geometry so they can animate when pushed. */
                     continue;
                 } else if (strcmp(name, "ice_tile") == 0) {
-                    /* Tinted floor overlay (lighter blue tint) */
-                    add_box(mesh, fx + 0.02f, 0.001f, fz + 0.02f,
-                            0.96f, 0.005f, 0.96f,
-                            0.55f, 0.75f, 0.85f, 0.6f, false);
+                    /* Tinted floor overlay (lighter blue tint).
+                     * Use AO_MODE_LIGHTMAP so the thin overlay doesn't get
+                     * raytraced AO artifacts from adjacent walls. */
+                    add_box_ao(mesh, fx + 0.02f, 0.001f, fz + 0.02f,
+                               0.96f, 0.005f, 0.96f,
+                               0.55f, 0.75f, 0.85f, 0.6f, false,
+                               AO_MODE_LIGHTMAP);
                 } else if (strcmp(name, "crumbling_floor") == 0) {
                     /* Cracked floor tile with visible gap lines */
                     add_box(mesh, fx + 0.05f, 0.001f, fz + 0.05f,

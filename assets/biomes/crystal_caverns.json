@@ -1,0 +1,119 @@
+{
+    "id": "crystal_caverns",
+    "name": "Crystal Caverns",
+
+    "palette": {
+        "floor_a":        [0.22, 0.28, 0.35],
+        "floor_b":        [0.28, 0.35, 0.42],
+        "wall":           [0.35, 0.40, 0.50],
+        "wall_jitter":    0.03,
+        "accent":         [0.50, 0.75, 0.90],
+        "impassable":     [0.18, 0.22, 0.28],
+        "platform_side":  [0.15, 0.18, 0.22],
+        "back_wall":      [0.30, 0.35, 0.42]
+    },
+
+    "wall_style": {
+        "stone_height":       0.10,
+        "stone_width_min":    0.18,
+        "stone_width_max":    0.35,
+        "mortar_width":       0.04,
+        "mortar_darkness":    0.45,
+        "bevel_width":        0.18,
+        "bevel_darkness":     0.10,
+        "color_variation":    0.15,
+        "grain_intensity":    0.06,
+        "grain_scale":        12.0,
+        "wear":               0.25,
+        "gap_color":          [0.12, 0.15, 0.20]
+    },
+
+    "floor_style": {
+        "subdivisions":     2,
+        "regularity":       0.90,
+        "edge_inset":       0.0,
+        "inner_gap":        0.0,
+        "height_variation": 0.002,
+        "color_jitter":     0.008,
+        "size_jitter":      0.04
+    },
+
+    "floor_decorations": {
+        "density":       0.08,
+        "max_per_tile":  1,
+        "prefabs":       ["crystal_shard", "ice_crack"]
+    },
+
+    "wall_decorations": {
+        "density":       0.10,
+        "max_per_tile":  1,
+        "prefabs":       ["wall_frost"]
+    },
+
+    "lantern_pillars": {
+        "glow_color":           [0.40, 0.70, 0.95],
+        "density":              0.4,
+        "place_at_corners":     true,
+        "place_at_wall_endpoints": true
+    },
+
+    "platform": {
+        "depth_blocks": 3
+    },
+
+    "back_wall": {
+        "height_multiplier":   4.0,
+        "decoration_density":  0.2
+    },
+
+    "edge_border": {
+        "depth": 1
+    },
+
+    "doors": {
+        "frame_height_blocks": 4
+    },
+
+    "floor_shadow": {
+        "shadow_softness":    0.15,
+        "shadow_scale":       1.2,
+        "shadow_offset_x":    0.02,
+        "shadow_offset_z":   -0.02,
+        "shadow_blur_radius": 7.0,
+        "shadow_intensity":   0.40,
+        "shadow_resolution":  32
+    },
+
+    "actor_shadow": {
+        "shadow_softness":    0.2,
+        "shadow_scale":       1.1,
+        "shadow_offset_x":    0.00,
+        "shadow_offset_z":    0.00,
+        "shadow_blur_radius": 7.0,
+        "shadow_intensity":   0.30,
+        "shadow_resolution":  32
+    },
+
+    "prefabs": [
+        {
+            "name": "crystal_shard",
+            "boxes": [
+                { "dx": 0.0, "dy": 0.0, "dz": 0.0, "sx": 0.04, "sy": 0.06, "sz": 0.04, "color": [0.50, 0.70, 0.85] }
+            ]
+        },
+        {
+            "name": "ice_crack",
+            "boxes": [
+                { "dx": 0.0,  "dy": 0.001, "dz": 0.0,   "sx": 0.12, "sy": 0.002, "sz": 0.015, "color": [0.40, 0.55, 0.65] },
+                { "dx": 0.04, "dy": 0.001, "dz": 0.04,   "sx": 0.08, "sy": 0.002, "sz": 0.015, "color": [0.40, 0.55, 0.65] }
+            ]
+        },
+        {
+            "name": "wall_frost",
+            "boxes": [
+                { "dx": 0.0, "dy": 0.0,  "dz": 0.0, "sx": 0.10, "sy": 0.05, "sz": 0.02, "color": [0.60, 0.75, 0.85], "no_cull": true },
+                { "dx": 0.04, "dy": 0.03, "dz": 0.0, "sx": 0.06, "sy": 0.03, "sz": 0.015, "color": [0.65, 0.80, 0.90], "no_cull": true }
+            ]
+        }
+    ]
+}

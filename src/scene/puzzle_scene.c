@@ -187,6 +187,20 @@ typedef struct {
     /* Step1→Step2 transition tracking for mid-roll stomp effects */
     bool            was_mino_in_step1; /* true if previous frame was STEP1 */
 
+    /* Contextual deformations: push, turnstile, ice collision (Step 6.6) */
+    bool            was_pushing;         /* true if previous frame was in BOX_SLIDE phase */
+    bool            was_turnstile_pushing; /* true if previous frame was in TURNSTILE_ROTATE */
+    bool            was_ice_sliding_flag;  /* true if previous frame was ice sliding */
+    float           push_dir_x;          /* direction of last push for recovery */
+    float           push_dir_z;
+    float           ice_slide_dir_x;     /* direction of last ice slide for impact squish */
+    float           ice_slide_dir_z;
+    bool            squish_recovery_active;  /* true while post-push/turnstile/ice elastic recovery plays */
+    float           squish_recovery_timer;
+    float           squish_recovery_amplitude; /* initial squish amount (sign = overshoot direction) */
+    float           squish_recovery_dir_x;
+    float           squish_recovery_dir_z;
+
     /* Debug animation speed (P key cycles through multipliers) */
     float           debug_anim_speed;  /* 0.125, 0.25, 0.5, or 1.0 */
 } PuzzleScene;
@@ -1908,17 +1922,101 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                              trow + 0.5f, shadow_scale,
                              ps->shadow_tex_theseus, ps->shadow_extent_t);
 
-            /* ── Compute Theseus hop deformation ── */
+            /* ── Compute Theseus deformation ── */
             DeformState deform;
             deform_state_identity(&deform);
 
-            /* Check if we're in a hop animation (not push, not ice-slide) */
+            /* Check animation sub-types for deformation routing */
+            bool in_push = animating &&
+                           anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
+                           anim_queue_theseus_event_type(&ps->anim) == ANIM_EVT_BOX_SLIDE;
+            bool in_turnstile = animating &&
+                                anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
+                                anim_queue_theseus_event_type(&ps->anim) == ANIM_EVT_TURNSTILE_ROTATE;
             bool in_hop = animating &&
                           anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
-                          anim_queue_theseus_event_type(&ps->anim) != ANIM_EVT_BOX_SLIDE &&
+                          !in_push && !in_turnstile &&
                           !anim_queue_is_ice_sliding(&ps->anim);
 
-            if (in_hop) {
+            if (in_push) {
+                /* ── Groove box push deformation (Step 6.6) ──
+                 * Directional squish along push axis during push phase.
+                 * Phase 1 (0.00–0.20): approach — squish ramps up
+                 * Phase 2 (0.20–0.75): push — sustained squish + slight lean
+                 * Phase 3 (0.75–1.00): settle — squish releases */
+                float t = tween_progress(&ps->anim.move_x);
+                float dir_col = ps->anim.move_x.end - ps->anim.move_x.start;
+                float dir_row = ps->anim.move_y.end - ps->anim.move_y.start;
+
+                deform.squish_dir_x = dir_col;
+                deform.squish_dir_z = dir_row;
+
+                if (t < 0.20f) {
+                    /* Approach: ramp squish from 0 to 0.12 */
+                    float u = t / 0.20f;
+                    float s = u * u * (3.0f - 2.0f * u);
+                    deform.squish_amount = 0.12f * s;
+                    deform.lean_x = dir_col * 0.03f * s;
+                    deform.lean_z = dir_row * 0.03f * s;
+                } else if (t < 0.75f) {
+                    /* Push: sustained squish, slight lean forward */
+                    deform.squish_amount = 0.12f;
+                    deform.lean_x = dir_col * 0.03f;
+                    deform.lean_z = dir_row * 0.03f;
+                    /* Subtle squash during strain */
+                    deform.squash = 0.97f;
+                    deform.flare = 0.02f;
+                } else {
+                    /* Settle: squish releases with slight overshoot */
+                    float u = (t - 0.75f) / 0.25f;
+                    float s = u * u * (3.0f - 2.0f * u);
+                    deform.squish_amount = 0.12f * (1.0f - s);
+                    deform.lean_x = dir_col * 0.03f * (1.0f - s);
+                    deform.lean_z = dir_row * 0.03f * (1.0f - s);
+                    deform.squash = 0.97f + 0.03f * s;
+                }
+            } else if (in_turnstile) {
+                /* ── Turnstile push deformation (Step 6.6) ──
+                 * Lighter squish than groove box (0.10).
+                 * Direction: Theseus pushes toward the junction. */
+                float t = tween_progress(&ps->anim.move_x);
+                const TurnRecord* rec = &ps->anim.record;
+                float tdir_x = 0.0f, tdir_z = 0.0f;
+                for (int ei = 0; ei < rec->event_count; ei++) {
+                    if (rec->events[ei].type == ANIM_EVT_TURNSTILE_ROTATE) {
+                        /* Push direction: toward junction from Theseus start */
+                        tdir_x = (float)(rec->events[ei].turnstile.junction_col -
+                                         rec->events[ei].from_col);
+                        tdir_z = (float)(rec->events[ei].turnstile.junction_row -
+                                         rec->events[ei].from_row);
+                        /* Normalize (should already be ±1 or ±1,±1) */
+                        float len = sqrtf(tdir_x * tdir_x + tdir_z * tdir_z);
+                        if (len > 0.01f) { tdir_x /= len; tdir_z /= len; }
+                        break;
+                    }
+                }
+                deform.squish_dir_x = tdir_x;
+                deform.squish_dir_z = tdir_z;
+
+                /* Ease squish in and out over the turnstile duration */
+                if (t < 0.30f) {
+                    float u = t / 0.30f;
+                    float s = u * u * (3.0f - 2.0f * u);
+                    deform.squish_amount = 0.10f * s;
+                    deform.lean_x = tdir_x * 0.02f * s;
+                    deform.lean_z = tdir_z * 0.02f * s;
+                } else if (t < 0.70f) {
+                    deform.squish_amount = 0.10f;
+                    deform.lean_x = tdir_x * 0.02f;
+                    deform.lean_z = tdir_z * 0.02f;
+                } else {
+                    float u = (t - 0.70f) / 0.30f;
+                    float s = u * u * (3.0f - 2.0f * u);
+                    deform.squish_amount = 0.10f * (1.0f - s);
+                    deform.lean_x = tdir_x * 0.02f * (1.0f - s);
+                    deform.lean_z = tdir_z * 0.02f * (1.0f - s);
+                }
+            } else if (in_hop) {
                 float t = tween_progress(&ps->anim.move_x);
                 /* Movement direction for lean */
                 float dc = ps->hop_dir_col;
@@ -1986,6 +2084,67 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 deform.squash = 1.0f + wobble;
                 deform.flare  = (1.0f - deform.squash) * 0.3f;
                 if (deform.flare < 0.0f) deform.flare = 0.0f;
+            }
+
+            /* ── Failed push (bump) deformation (Step 6.6) ──
+             * Layered on top of the positional bump offset above.
+             * Theseus compresses against the immovable box, then bounces back. */
+            if (ps->bump_active) {
+                float t = ps->bump_timer;
+                deform.squish_dir_x = ps->bump_dir_x;
+                deform.squish_dir_z = ps->bump_dir_z;
+
+                if (t < 0.30f) {
+                    /* Approach: ramp squish to 0.18 (harder than successful push) */
+                    float u = t / 0.30f;
+                    float s = u * u * (3.0f - 2.0f * u);
+                    deform.squish_amount = 0.18f * s;
+                    deform.lean_x = ps->bump_dir_x * 0.04f * s;
+                    deform.lean_z = ps->bump_dir_z * 0.04f * s;
+                    deform.squash = 1.0f - 0.04f * s;
+                    deform.flare  = 0.03f * s;
+                } else if (t < 0.60f) {
+                    /* Linger: subtle squish oscillation at contact */
+                    float u = (t - 0.30f) / 0.30f;
+                    float osc = sinf(u * (float)M_PI * 2.0f);
+                    deform.squish_amount = 0.18f + 0.03f * osc;
+                    deform.lean_x = ps->bump_dir_x * 0.04f;
+                    deform.lean_z = ps->bump_dir_z * 0.04f;
+                    deform.squash = 0.96f;
+                    deform.flare  = 0.03f;
+                } else {
+                    /* Return: elastic bounce-back with overshoot */
+                    float u = (t - 0.60f) / 0.40f;
+                    float s = u * u * (3.0f - 2.0f * u);
+                    /* Overshoot: squish goes negative briefly (expansion) */
+                    float release = 0.18f * (1.0f - s) - 0.05f * sinf(s * (float)M_PI);
+                    deform.squish_amount = release;
+                    deform.lean_x = ps->bump_dir_x * 0.04f * (1.0f - s);
+                    deform.lean_z = ps->bump_dir_z * 0.04f * (1.0f - s);
+                    deform.squash = 0.96f + 0.04f * s;
+                    deform.flare  = 0.03f * (1.0f - s);
+                }
+            }
+
+            /* ── Post-push/turnstile/ice squish recovery (Step 6.6) ──
+             * Damped elastic oscillation in squish direction.
+             * Uses cosine so the effect starts at peak on impact, then rings down. */
+            if (ps->squish_recovery_active && !ps->bump_active) {
+                #define SQUISH_RECOVERY_DURATION 0.25f
+                #define SQUISH_RECOVERY_FREQ    22.0f
+                #define SQUISH_RECOVERY_DAMPING 10.0f
+                float wt = ps->squish_recovery_timer;
+                float amp = ps->squish_recovery_amplitude;
+                float osc = amp * cosf(wt * SQUISH_RECOVERY_FREQ)
+                          * expf(-wt * SQUISH_RECOVERY_DAMPING);
+                deform.squish_dir_x = ps->squish_recovery_dir_x;
+                deform.squish_dir_z = ps->squish_recovery_dir_z;
+                deform.squish_amount = osc;
+                /* Add slight squash for extra juiciness on strong impacts */
+                if (fabsf(amp) > 0.10f) {
+                    deform.squash = 1.0f - fabsf(osc) * 0.3f;
+                    deform.flare  = fabsf(osc) * 0.2f;
+                }
             }
 
             /* Actor with AO fading based on hop.
@@ -2084,6 +2243,15 @@ static void puzzle_on_enter(State* self) {
     ps->mino_wobble_active = false;
     ps->mino_wobble_timer = 0.0f;
     ps->was_mino_rolling = false;
+    ps->was_pushing = false;
+    ps->was_turnstile_pushing = false;
+    ps->was_ice_sliding_flag = false;
+    ps->push_dir_x = 0.0f;
+    ps->push_dir_z = 0.0f;
+    ps->ice_slide_dir_x = 0.0f;
+    ps->ice_slide_dir_z = 0.0f;
+    ps->squish_recovery_active = false;
+    ps->squish_recovery_timer = 0.0f;
     ps->debug_anim_speed = 1.0f;
 
     /* Build 3D diorama for verification */
@@ -2310,6 +2478,7 @@ static void puzzle_update(State* self, float dt) {
         bool is_hopping = anim_queue_is_playing(&ps->anim) &&
                           anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
                           anim_queue_theseus_event_type(&ps->anim) != ANIM_EVT_BOX_SLIDE &&
+                          anim_queue_theseus_event_type(&ps->anim) != ANIM_EVT_TURNSTILE_ROTATE &&
                           !anim_queue_is_ice_sliding(&ps->anim);
         if (ps->was_theseus_hopping && !is_hopping) {
             ps->wobble_active = true;
@@ -2329,6 +2498,110 @@ static void puzzle_update(State* self, float dt) {
             }
         }
         ps->was_theseus_hopping = is_hopping;
+    }
+
+    /* Detect push-end transition → start elastic squish recovery (Step 6.6).
+     * Triggers when Theseus was in a BOX_SLIDE phase and just left it. */
+    {
+        bool is_pushing = anim_queue_is_playing(&ps->anim) &&
+                          anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
+                          anim_queue_theseus_event_type(&ps->anim) == ANIM_EVT_BOX_SLIDE;
+        if (is_pushing) {
+            /* Track push direction for recovery */
+            ps->push_dir_x = ps->anim.move_x.end - ps->anim.move_x.start;
+            ps->push_dir_z = ps->anim.move_y.end - ps->anim.move_y.start;
+        }
+        if (ps->was_pushing && !is_pushing) {
+            ps->squish_recovery_active = true;
+            ps->squish_recovery_timer = 0.0f;
+            ps->squish_recovery_amplitude = -0.04f; /* negative = expand (overshoot) */
+            ps->squish_recovery_dir_x = ps->push_dir_x;
+            ps->squish_recovery_dir_z = ps->push_dir_z;
+        }
+        ps->was_pushing = is_pushing;
+    }
+
+    /* Detect turnstile push end → start elastic squish recovery (Step 6.6). */
+    {
+        bool is_turnstile = anim_queue_is_playing(&ps->anim) &&
+                            anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
+                            anim_queue_theseus_event_type(&ps->anim) == ANIM_EVT_TURNSTILE_ROTATE;
+        if (is_turnstile) {
+            /* Extract push direction from event for recovery */
+            const TurnRecord* rec = &ps->anim.record;
+            for (int ei = 0; ei < rec->event_count; ei++) {
+                if (rec->events[ei].type == ANIM_EVT_TURNSTILE_ROTATE) {
+                    float dx = (float)(rec->events[ei].turnstile.junction_col -
+                                       rec->events[ei].from_col);
+                    float dz = (float)(rec->events[ei].turnstile.junction_row -
+                                       rec->events[ei].from_row);
+                    float len = sqrtf(dx * dx + dz * dz);
+                    if (len > 0.01f) { dx /= len; dz /= len; }
+                    ps->push_dir_x = dx;
+                    ps->push_dir_z = dz;
+                    break;
+                }
+            }
+        }
+        if (ps->was_turnstile_pushing && !is_turnstile) {
+            ps->squish_recovery_active = true;
+            ps->squish_recovery_timer = 0.0f;
+            ps->squish_recovery_amplitude = -0.03f; /* lighter than groove box */
+            ps->squish_recovery_dir_x = ps->push_dir_x;
+            ps->squish_recovery_dir_z = ps->push_dir_z;
+        }
+        ps->was_turnstile_pushing = is_turnstile;
+    }
+
+    /* Detect ice slide end → start impact squish if Theseus hit a wall (Step 6.6).
+     * Only triggers the wall collision squish when there's actually a wall in
+     * the slide direction at the final waypoint tile. */
+    {
+        bool is_ice = anim_queue_is_ice_sliding(&ps->anim);
+        if (is_ice) {
+            /* Track the slide direction from the last two waypoints */
+            if (ps->anim.ice_wp_count >= 2) {
+                int last = ps->anim.ice_wp_count - 1;
+                ps->ice_slide_dir_x = (float)(ps->anim.ice_wp_cols[last] -
+                                               ps->anim.ice_wp_cols[last - 1]);
+                ps->ice_slide_dir_z = (float)(ps->anim.ice_wp_rows[last] -
+                                               ps->anim.ice_wp_rows[last - 1]);
+            }
+        }
+        if (ps->was_ice_sliding_flag && !is_ice) {
+            /* Check if Theseus hit a wall at the end of the slide */
+            int dx = (int)ps->ice_slide_dir_x;
+            int dz = (int)ps->ice_slide_dir_z;
+            Direction slide_dir = DIR_NORTH; /* fallback */
+            if (dx == 1)       slide_dir = DIR_EAST;
+            else if (dx == -1) slide_dir = DIR_WEST;
+            else if (dz == 1)  slide_dir = DIR_NORTH;
+            else if (dz == -1) slide_dir = DIR_SOUTH;
+
+            int final_col = ps->grid->theseus_col;
+            int final_row = ps->grid->theseus_row;
+            bool hit_wall = grid_has_wall(ps->grid, final_col, final_row,
+                                          slide_dir);
+            LOG_INFO("Ice slide end: dir=(%d,%d) pos=(%d,%d) hit_wall=%d",
+                     dx, dz, final_col, final_row, hit_wall);
+            if (hit_wall && (dx != 0 || dz != 0)) {
+                LOG_INFO("Ice wall collision: starting squish recovery amp=0.20");
+                ps->squish_recovery_active = true;
+                ps->squish_recovery_timer = 0.0f;
+                ps->squish_recovery_amplitude = 0.20f; /* strong impact squish */
+                ps->squish_recovery_dir_x = ps->ice_slide_dir_x;
+                ps->squish_recovery_dir_z = ps->ice_slide_dir_z;
+            }
+        }
+        ps->was_ice_sliding_flag = is_ice;
+    }
+
+    /* Update squish recovery timer (Step 6.6) */
+    if (ps->squish_recovery_active) {
+        ps->squish_recovery_timer += dt;
+        if (ps->squish_recovery_timer >= SQUISH_RECOVERY_DURATION) {
+            ps->squish_recovery_active = false;
+        }
     }
 
     /* Minotaur roll-end detection → start landing wobble.

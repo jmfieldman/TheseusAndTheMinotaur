@@ -283,7 +283,7 @@ Replace the Minotaur's current hop-slide with a 90° rolling motion. The Minotau
 
 ---
 
-### Step 6.5 — Ground Shake on Minotaur Landing
+### Step 6.5 — Ground Shake on Minotaur Landing ✅
 
 Add a localized screen shake when the Minotaur lands after each roll step.
 

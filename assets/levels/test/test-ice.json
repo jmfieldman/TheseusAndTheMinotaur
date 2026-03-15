@@ -11,7 +11,8 @@
   "minotaur": { "col": 7, "row": 7 },
   "walls": [
     { "col": 7, "row": 7, "side": "south" },
-    { "col": 7, "row": 7, "side": "west" }
+    { "col": 7, "row": 7, "side": "west" },
+    { "col": 6, "row": 3, "side": "west" }
   ],
   "impassable": [],
   "features": [
