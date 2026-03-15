@@ -171,25 +171,316 @@ Generate full diorama meshes from level data + biome config, following the 12-st
 
 ## Step 6 — Actor Rendering and Animation
 
-Procedural actor models with proper animations, including per-cause death animations with undo reversal.
+Procedural actor models with deformable mesh system, proper animations with jelly-like deformations, and per-cause death animations with undo reversal. Broken into substeps that build on each other — each substep is independently testable.
+
+---
+
+### Step 6.1 — Deformable Mesh System
+
+Add vertex-shader-driven mesh deformation to the voxel rendering pipeline. Actor meshes are subdivided at build time to provide enough vertex density for smooth positional deformations. Deformation is controlled entirely by per-draw-call uniforms — zero additional memory, no CPU vertex rewriting.
+
+**Rationale — precompute vs. dynamic:**
+
+- **Mesh subdivision: precomputed.** Subdividing each face into a grid of smaller quads is purely geometric and never changes at runtime. Done once at mesh build time, stored in the existing VBO. Cost: ~150 vertices per actor (up from ~36) — trivial.
+- **Deformation parameters: dynamic.** Squash, flare, lean, and directional squish vary frame-to-frame during animations. Expressed as ~7 float uniforms per draw call. The vertex shader applies the deformation, including corrected normals. No CPU vertex manipulation, no buffer re-upload.
 
 **Files:**
 
-- `src/render/actor_render.h / .c` — Generates Theseus and Minotaur voxel models. Theseus: beveled blue cube (~40-50% tile), composed of individual boxes that can separate for death animations. Minotaur: larger dark red cube (~75% tile) with white horn nubs and face detail. Renders at interpolated animation position each frame. See 02-visual-style.md Actor Geometry for color detail.
-- Update `src/engine/anim_queue.c` with actor-specific animations:
-  - Theseus: parabolic hop (no rotation), lean into jump, squash on landing
-  - Minotaur: 90° roll per step (horns retract before roll, extend after)
-  - Ground shake on heavy landing (Minotaur)
-  - Win animation (Theseus spins/glows at exit)
-- `src/render/death_anim.h / .c` — Per-cause death animations (see design doc §02 §7.7). Each animation decomposes Theseus into individual voxel boxes and animates them differently. All animations are reversible for undo:
-  - **Minotaur squish** (§7.7.1): Minotaur rolls onto Theseus, voxels flatten and scatter outward from impact. Extra ground shake.
-  - **Walk into Minotaur** (§7.7.2): Theseus hop cuts short mid-arc, voxels shatter on impact and scatter backward. Minotaur recoil pulse.
-  - **Spike impale** (§7.7.3): Spikes launch through tile, Theseus voxels pop upward and scatter. Gold voxels remain impaled on spike tips.
-  - **Medusa petrification** (§7.7.4): Grey color wave sweeps across voxels, Theseus freezes mid-motion, then cracks and crumbles into rubble.
-  - **Pit fall** (§7.7.5): Voxels drop coherently into hole with tumble rotation, shrink toward vanishing point. Lava variant: voxels glow orange/red and dissolve.
-- Each death animation stores enough state to play in reverse when undo is triggered (voxel positions, colors, timing keyframes).
+- Update `src/render/voxel_mesh.h / .c`:
+  - Add `voxel_mesh_set_subdivisions(VoxelMesh*, int subdivs)` — Sets the subdivision level for subsequent `add_box()` calls. Default 1 (no subdivision, current behavior). When set to e.g. 4, each box face emits a 4×4 grid of quads (5×5 = 25 vertices per face) instead of a single quad. Vertex positions, normals, UVs, and colors are interpolated across the subdivided grid. Subdivision happens during `add_box()` at build time — no runtime cost.
+  - The occupancy grid, face culling, and AO baking continue to operate on the original box bounds (subdivision is purely a vertex density increase, not a geometry change).
+- Update voxel vertex shader (embedded in `src/render/renderer.c`):
+  - Add deformation uniforms:
+    ```glsl
+    uniform float u_deform_squash;       // Y-axis scale (1.0 = rest, <1 = compress, >1 = stretch)
+    uniform float u_deform_flare;        // bottom XZ expansion (0.0 = none)
+    uniform vec2  u_deform_lean;         // top-of-mesh XZ shear (lean direction)
+    uniform vec2  u_deform_squish_dir;   // lateral compression direction (normalized)
+    uniform float u_deform_squish;       // lateral compression amount (0.0 = none)
+    uniform float u_deform_height;       // mesh height for normalizing Y (0 = disabled)
+    ```
+  - Deformation application order (all in model-local space, before model matrix):
+    1. **Squash/stretch:** `pos.y *= squash`. XZ compensated for volume preservation: `pos.xz *= 1.0 / sqrt(squash)`.
+    2. **Flare:** `float flare_t = 1.0 - pos.y / height; pos.xz *= 1.0 + flare * max(flare_t, 0.0)`. Strongest at Y=0 (bottom), zero at Y=height (top). With subdivided vertices at intermediate Y values, produces a smooth taper rather than a uniform bottom-face scale.
+    3. **Lean:** `pos.xz += lean * (pos.y / height)`. Bottom stays planted, top shears in the lean direction.
+    4. **Directional squish:** `float proj = dot(pos.xz, squish_dir); pos.xz -= squish_dir * proj * squish`. Compresses the mesh along an arbitrary horizontal direction (for pushing against boxes/walls).
+  - **Normal correction:** Compute the inverse-transpose of the deformation Jacobian and transform normals accordingly. For these simple deformations, the Jacobian is analytically derivable:
+    - Squash changes the Y component of normals (stretch normals in Y, shrink in XZ).
+    - Flare tilts normals outward at the bottom.
+    - Lean tilts normals opposite to the lean direction.
+    - Squish tilts normals in the squish direction.
+    - Renormalize after transformation.
+  - When `u_deform_height == 0.0`, all deformation is skipped (identity path for non-actor geometry — diorama, decorations, etc.). This avoids branching cost for the vast majority of draw calls.
 
-**Verification:** Trigger each death type and verify: (1) animation plays correctly, (2) undo from death reverses the animation smoothly (voxels reconstitute), (3) Theseus is playable again after undo. Also verify movement animations (hop, roll) play correctly with input buffering.
+**Verification:** Set all deformation uniforms to identity (squash=1, flare=0, lean=0,0, squish=0, height=0) and verify rendering is pixel-identical to current. Then test each uniform independently with debug hotkeys: squash=0.7 should compress vertically and expand horizontally; flare=0.3 should bulge the bottom; lean=(0.2, 0) should tilt the top rightward. Normals should produce correct shading on deformed geometry (lit faces stay lit, shadowed faces stay shadowed).
+
+---
+
+### Step 6.2 — Actor Geometry Module
+
+Extract actor mesh generation from inline `puzzle_scene.c` code into a dedicated module. Replace the current single-box actors with multi-box compositions using subdivided meshes for deformation support.
+
+**Files:**
+
+- `src/render/actor_render.h / .c` — Actor mesh generation and rendering API:
+  - `ActorParts` struct holds individual `VoxelMesh` components for each actor. Theseus: body (beveled blue cube). Minotaur: body (red cube), horns (white nubs on top face), face (detail voxels on camera-facing side).
+  - `actor_render_build_theseus(ActorParts*)` — Generates Theseus body mesh. ~40–50% tile size, RGB(80, 168, 251). Calls `voxel_mesh_set_subdivisions(&mesh, 4)` before adding boxes so each face has a 4×4 quad grid (~25 vertices per face). Composed of multiple boxes arranged so the body reads as a beveled cube. Each box is individually addressable for later death animation decomposition. Uses an invisible ground-plane occluder for AO baking (same technique as current code).
+  - `actor_render_build_minotaur(ActorParts*)` — Generates Minotaur body mesh (~65% tile, RGB(239, 34, 34)) with subdivision=4 for deformation support, horn mesh (white nubs protruding from top, no subdivision needed — rigid), and face mesh (eyes + snout + brow as small voxels on the camera-facing side, no subdivision needed — rigid). Each component is a separate `VoxelMesh` so horns/face can be independently transformed during roll animation.
+  - `actor_render_destroy(ActorParts*)` — Cleans up all component meshes.
+- Update `src/scene/puzzle_scene.c`:
+  - Replace inline `voxel_mesh_begin/add_box/build` for actors with calls to `actor_render_build_*()`.
+  - Store `ActorParts theseus_parts, minotaur_parts` instead of single `VoxelMesh theseus_mesh, minotaur_mesh`.
+  - Rendering still uses simple model-matrix positioning (same as current) — deformation uniforms set to identity for now. Animation changes come in later substeps.
+  - Before each actor draw call, set `u_deform_height` to the actor's mesh height. After drawing, reset to 0.0 to disable deformation for subsequent non-actor draws.
+- Update `src/render/README.md` — Add actor_render entry.
+
+**Verification:** Game looks identical to current state — actors are the same shape and color, shadows work, AO darkening on bottom edges present. The only change is code organization, richer Minotaur geometry (horns + face visible at rest), and subdivided actor meshes ready for deformation.
+
+---
+
+### Step 6.3 — Theseus Hop Deformation
+
+Full deformation chain for Theseus's hop animation: anticipation squat → jump elongation → lean → landing flare → damped wobble settle. All deformation is expressed by driving the shader uniforms from Step 6.1 — no mesh changes.
+
+**Changes:**
+
+- Add `DeformState` struct to `src/render/actor_render.h`:
+  - Holds all deformation parameters: `squash`, `flare`, `lean_x`, `lean_z`, `squish_dir_x`, `squish_dir_z`, `squish_amount`.
+  - Helper: `deform_state_identity()` → all values at rest (squash=1, everything else 0).
+  - Helper: `deform_state_apply(const DeformState*, GLuint shader)` → sets the uniform values.
+- Update `src/scene/puzzle_scene.c` Theseus rendering section:
+  - Compute `DeformState` each frame based on hop progress (`thop` from `anim_queue_theseus_pos()`):
+    - **Anticipation squat** (hop progress 0.0–0.1): Before liftoff, brief downward compression. `squash = 0.85`, `flare = 0.15`. Creates a "gathering energy" crouch. Requires the anim_queue to expose a small pre-hop window, or the first ~10% of the hop tween is repurposed as the squat phase (Theseus hasn't left the ground yet).
+    - **Jump elongation** (progress 0.1–0.5): Theseus stretches vertically as he rises. `squash = 1.15` at peak, tapering smoothly. Volume preservation makes him slightly narrower — reads as "shooting upward."
+    - **Lean** (progress 0.1–0.9): Top of mesh shears in the movement direction. `lean = movement_dir * 0.12` at liftoff, easing to 0 at apex, then `lean = -movement_dir * 0.06` approaching landing (feet-first). Movement direction derived from tween start/end positions.
+    - **Landing flare** (progress 0.85–1.0): Bottom expands on impact. `squash = 0.82`, `flare = 0.25`. The subdivided mesh makes this visibly taper — bottom 30% bulges, top stays compact.
+    - **Damped wobble** (post-hop, ~0.20s): After the anim_queue transitions past the Theseus phase, a `wobble_timer` ticks down. During wobble: `squash = 1.0 + amplitude * sin(timer * freq) * exp(-timer * damping)`. Parameters are tunable: `amplitude = 0.12`, `freq = 35.0`, `damping = 12.0`. The oscillation settles to rest naturally. `flare` tracks `(1.0 - squash) * 0.5` so the bottom subtly breathes with each wobble cycle.
+  - The deformation chain applies to all Theseus hop variants (normal hop, ice-slide initial hop, teleport-in landing). During ice-slide linear motion, lean and elongation are suppressed — only a subtle squat persists (see Step 6.7).
+
+**Verification:** Theseus visibly crouches before jumping, stretches in the air, leans into the hop direction, flares at the bottom on landing, and wobbles briefly to rest. The effect is lively but not cartoonish — dial down amplitudes if it reads as too rubbery. Verify with hops in all four directions. Verify the wobble settle looks natural (no abrupt snap to rest). Verify ice-slide doesn't apply hop deformations during the sliding portion.
+
+---
+
+### Step 6.4 — Minotaur Roll Animation
+
+Replace the Minotaur's current hop-slide with a 90° rolling motion. The Minotaur rotates around its leading bottom edge, with a slight upward arc for power feel. Landing uses the deformable mesh for impact squash.
+
+**Changes:**
+
+- Update `src/engine/anim_queue.h / .c`:
+  - Add `mino_dir_x` and `mino_dir_y` (ints: -1/0/+1) to `AnimQueue` — the direction of each Minotaur step, set when the minotaur phase begins. Needed by the renderer to determine the roll axis and pivot edge.
+  - Expose `anim_queue_minotaur_dir(const AnimQueue*, int* dx, int* dy)` query function.
+- Update `src/scene/puzzle_scene.c` Minotaur rendering:
+  - **Roll transform:** Instead of a simple translate, compute a rotation around the leading bottom edge. The pivot point is at the Minotaur's base, offset by half-size in the movement direction. The rotation axis is perpendicular to movement (e.g., moving east → rotate around Z axis at the east bottom edge). Rotation angle: 0° → 90° over the step duration.
+  - **Arc lift:** Add a small upward offset during the roll (parabolic, peak ~0.08 at midpoint) so the Minotaur doesn't clip through the floor during rotation. This gives the "jump-roll" power feel.
+  - **Landing deformation:** On roll completion (progress 0.85–1.0), apply `squash = 0.88`, `flare = 0.15` to the Minotaur's deform state. Followed by a short damped wobble (~0.15s, `amplitude = 0.08`, `freq = 25.0`, `damping = 15.0`) — heavier and less bouncy than Theseus. Conveys weight and impact.
+  - **Anticipation squat:** Before the roll begins (progress 0.0–0.08), brief `squash = 0.92` — a subtle "loading" compression before launching into the roll.
+  - **Horn retraction/extension:** During roll (progress 0.0–0.2), horn meshes scale Y toward 0 (retract into body). During landing (progress 0.8–1.0), horns scale Y back to 1.0, emanating from the new top face. Since the Minotaur has actually rotated 90°, the "new top face" is the face that was the trailing side — horns are drawn relative to the post-roll orientation, then transitioned to always-on-top at rest.
+  - **Face re-materialization:** Same retract/extend timing as horns. Face retracts during roll start, re-emerges on the camera-facing side at rest. The camera-facing side is always the same world direction (toward the camera), so after the roll the face mesh is placed on whichever body face now points toward the camera.
+  - When the Minotaur is idle (not animating), horns are on top and face is toward camera — this is the rest pose regardless of how many rolls have occurred.
+
+**Verification:** Minotaur visibly rolls (tumbles) from tile to tile instead of sliding. Landing produces a satisfying squash + wobble that conveys weight. Horns retract and re-emerge on top. Face always faces camera at rest. Roll direction is correct for all four cardinal directions. Two-step turns show distinct rolls with a pause between. Reverse (undo) plays the roll backward correctly.
+
+---
+
+### Step 6.5 — Ground Shake on Minotaur Landing
+
+Add a localized screen shake when the Minotaur lands after each roll step.
+
+**Changes:**
+
+- Update `src/scene/puzzle_scene.c`:
+  - Add `shake_timer`, `shake_intensity`, `shake_offset_x`, `shake_offset_y` fields to `PuzzleScene`.
+  - When the Minotaur step animation completes (anim phase transitions from MINOTAUR_STEP1→STEP2 or STEP2→next), trigger shake: set `shake_timer = 0.12`, `shake_intensity = 0.015` (world-space units).
+  - Each frame during shake: compute dampened sinusoidal offset (`intensity * sin(timer * 60) * timer/0.12`), apply as translation offset to the view matrix before rendering the diorama. The offset decays to zero over the shake duration.
+  - Death-by-squish (Step 6.10) uses a stronger shake (`intensity = 0.025`).
+
+**Verification:** Subtle screen jitter when Minotaur lands. Effect is brief and localized-feeling. Does not interfere with gameplay readability. Two successive Minotaur steps produce two distinct shakes.
+
+---
+
+### Step 6.6 — Contextual Deformations: Push, Turnstile, and Collision
+
+Deformation effects for Theseus interacting with pushable objects and walls. Uses directional squish (compression along the push axis) and bounce-back recovery.
+
+**Changes:**
+
+- Update `src/scene/puzzle_scene.c`:
+  - **Groove box push (successful):** During the push sub-phase (Theseus pressed against the box, both moving), apply directional squish: `squish_dir = movement_direction`, `squish_amount = 0.12`. Theseus compresses slightly in the push direction as if straining against the box. On push completion, release with a brief elastic recovery (squish goes 0.12 → -0.04 → 0 over ~0.10s).
+  - **Failed groove box push (bump):** The existing bump animation (approach → linger → return) already handles positioning. Add deformation on top: during the approach phase, ramp `squish_amount` up to 0.18 in the push direction (Theseus compresses harder against the immovable box). During linger, add a subtle oscillation in squish. During return, release with elastic bounce-back. This makes the "bonk" feel physical rather than just positional.
+  - **Manual turnstile push:** Same squish pattern as groove box push — Theseus compresses against the wall he's pushing. `squish_amount = 0.10`, lighter than groove box since the turnstile is lighter.
+  - **Ice slide wall collision:** When Theseus slides on ice and hits a wall, apply a strong directional squish on impact (`squish_amount = 0.20`), followed by a damped wobble as he reconstitutes on the tile. The squish direction is the slide direction. This reuses the same elastic recovery as failed groove box push but with higher initial amplitude.
+
+**Verification:** Push a groove box — Theseus visibly compresses against it during the push. Try to push an immovable box — Theseus squishes harder and bounces back. Push a turnstile — subtle compression. Slide into a wall on ice — satisfying squish on impact. All effects recover cleanly to rest pose.
+
+---
+
+### Step 6.7 — Contextual Deformations: Teleport, Ice Slide, and Pit Fall
+
+Deformation effects for special movement types that have distinct visual character.
+
+**Changes:**
+
+- Update `src/scene/puzzle_scene.c`:
+  - **Teleport beam-up (departure):** During teleport-out phase (scale-down/fade-out), replace the current uniform scale with vertical elongation: `squash` ramps from 1.0 → 2.5 over the phase duration while XZ scale shrinks to ~0.3 (via volume preservation). Theseus stretches tall and thin like a Star Trek transporter beam — "pulled upward" into a column before vanishing. The existing fade/alpha still applies on top.
+  - **Teleport reconstitution (arrival):** During teleport-in phase (scale-up/fade-in), reverse the effect: start at `squash = 2.5` (tall thin column) and contract to 1.0 as Theseus materializes. Follow with the standard landing flare + wobble from Step 6.3. Creates a "beam down and solidify" feel.
+  - **Ice slide squat:** During the ice-slide linear motion sub-phase (after the initial hop), apply a persistent mild squat: `squash = 0.90`, `flare = 0.08`. Theseus rides low and compact while sliding, conveying speed and lack of control. Lean is suppressed (no directional tilt during slide — he's sliding, not hopping).
+  - **Ice slide to normal tile transition:** When the ice slide ends on a non-ice tile, the squat transitions into a hop to the normal tile. The squat releases into the standard hop deformation chain from Step 6.3 (elongation → lean → landing flare → wobble).
+  - **Crumbling floor fall elongation:** When Theseus falls into a pit (before death voxel decomposition), apply dramatic vertical elongation: `squash` ramps from 1.0 → 3.0 as he drops, creating a Wile E. Coyote "taffy stretch" downward. XZ shrinks via volume preservation. This plays as a brief pre-decomposition effect (~0.15s) before the death animation framework takes over with individual voxel particles. The elongation direction is downward (negative Y stretch), with the top of the mesh anchored so it looks like he's being pulled down.
+
+**Verification:** Teleport looks like a transporter beam — Theseus stretches into a column, vanishes, then reconstitutes at the destination with a satisfying wobble. Ice slide shows Theseus riding low and compact. Ice-to-normal transition produces a smooth squat-to-hop handoff. Crumbling floor shows a comedic stretch before voxel scatter. All effects reverse correctly during undo.
+
+---
+
+### Step 6.8 — Win Animation
+
+Theseus celebration animation when reaching the exit tile, using deformation for a celebratory bounce.
+
+**Changes:**
+
+- Update `src/engine/anim_queue.h / .c`:
+  - Add `ANIM_PHASE_WIN` after the last Minotaur phase. Duration: ~1.0s.
+  - Add win animation tweens: `win_spin` (0→1 over duration, maps to 720° Y rotation), `win_glow` (0→1 pulsing intensity).
+  - `anim_queue_start()` detects `record.result == TURN_RESULT_WIN` and appends the win phase after all normal phases complete.
+  - Expose `anim_queue_win_progress(const AnimQueue*)` → 0–1 progress, -1 if not in win phase.
+- Update `src/scene/puzzle_scene.c`:
+  - During win phase: apply Y-axis spin rotation to Theseus model matrix. Add upward float (gentle rise ~0.15 units). Increase emissive color intensity (blue glow brightening).
+  - Apply a celebratory bounce deformation: damped squash/stretch oscillation synced with the spin (`squash` pulses between 0.85 and 1.15, decaying over the win duration). Creates a "bouncy celebration" feel.
+  - After win animation completes, transition to results screen (or existing win handling).
+
+**Verification:** Theseus spins, glows, and bounces upon reaching exit. The bounce deformation adds life to the spin. Animation plays fully before results appear. Looks celebratory without being excessive.
+
+---
+
+### Step 6.9 — Death Animation Framework
+
+Core infrastructure for voxel-decomposition death animations. Does not implement specific death types yet — just the framework for decomposing an actor into individually animated voxel particles. Death voxels are rigid (no deformation shader) — the deformable mesh is only for the intact actor.
+
+**Files:**
+
+- `src/render/death_anim.h / .c` — Death animation system:
+  - `DeathVoxel` struct: position (vec3), velocity (vec3), rotation (vec3), angular_velocity (vec3), scale (vec3), color (vec4), original_position (vec3), original_color (vec4). Each represents one box from the decomposed actor mesh.
+  - `DeathAnim` struct: array of `DeathVoxel` (max ~64), count, timer, duration, type enum (`DEATH_SQUISH`, `DEATH_WALK_INTO`, `DEATH_SPIKE`, `DEATH_PETRIFY`, `DEATH_PIT_FALL`), `finished` flag, `reversing` flag.
+  - `death_anim_init(DeathAnim*, DeathType, const ActorParts*, float actor_x, float actor_z)` — Decomposes the actor's body mesh into individual `DeathVoxel` particles at their current world positions. Sets initial velocities/rotations based on death type.
+  - `death_anim_update(DeathAnim*, float dt)` — Advances all voxel particles (physics: position += velocity * dt, velocity += gravity, rotation += angular_vel * dt). Clamps to ground plane. Applies type-specific behaviors (color shifts, scaling, etc.).
+  - `death_anim_render(const DeathAnim*, GLuint shader)` — Renders each `DeathVoxel` as an individually transformed box with `u_deform_height = 0.0` (deformation disabled). Uses a shared unit-cube VBO (generated once) with per-particle model matrix containing position, rotation, and scale.
+  - `death_anim_start_reverse(DeathAnim*)` — Switches to reverse playback. Stores current state as "end keyframe," interpolates all voxels back toward `original_position` and `original_color` over `duration * 0.5` seconds.
+  - `death_anim_is_finished(const DeathAnim*)` — True when forward or reverse playback is done.
+  - `death_anim_destroy(DeathAnim*)` — Cleanup.
+- Update `src/scene/puzzle_scene.c`:
+  - Add `DeathAnim death_anim` field to `PuzzleScene`.
+  - When `turn_result` is a loss, after the relevant animation phase completes, initialize the death animation. Suppress normal Theseus rendering while death anim is active. Reset deformation uniforms to identity.
+  - When undo is triggered during death state, call `death_anim_start_reverse()`. Defer grid restore until reverse completes. Resume normal Theseus rendering after reverse finishes.
+- Update `src/render/README.md` — Add death_anim entry.
+
+**Verification:** Framework compiles and links. A test death (e.g., collision with Minotaur) triggers the decomposition — Theseus breaks into individual blue boxes that fall with gravity. Undo reconstitutes them. Specific scatter patterns come in subsequent substeps.
+
+---
+
+### Step 6.10 — Death: Minotaur Squish
+
+The Minotaur rolls onto Theseus's tile and crushes him. Voxels flatten and scatter outward.
+
+**Changes:**
+
+- Update `src/render/death_anim.c`:
+  - `DEATH_SQUISH` initialization: Compute scatter direction for each voxel as radially outward from tile center. Initial velocity: strong horizontal outward + brief upward arc. Apply vertical scale compression (squash Y to ~0.2) over the first 0.15s, then release to tumble. The Minotaur's roll direction influences the bias of the scatter (more voxels scatter away from the roll direction).
+  - Duration: ~0.6s (scatter + settle).
+- Update `src/scene/puzzle_scene.c`:
+  - Trigger `DEATH_SQUISH` when `turn_result == TURN_RESULT_LOSS_COLLISION` and the Minotaur moved onto Theseus (Minotaur phase was active).
+  - Apply stronger ground shake on death impact (`shake_intensity = 0.025`).
+
+**Verification:** Minotaur rolls onto Theseus → blue voxels squash flat then scatter outward and settle on the floor. Ground shakes on impact. Undo reverses: voxels slide back and reassemble, Minotaur rolls backward.
+
+---
+
+### Step 6.11 — Death: Walk Into Minotaur
+
+Theseus hops toward the Minotaur and shatters on impact. The hop animation cuts short mid-arc.
+
+**Changes:**
+
+- Update `src/render/death_anim.c`:
+  - `DEATH_WALK_INTO` initialization: Voxels scatter backward (away from Minotaur, opposite to movement direction). Higher initial velocity than squish — feels like bouncing off a wall. Some upward scatter, some lateral spread.
+  - Duration: ~0.5s.
+- Update `src/scene/puzzle_scene.c`:
+  - Trigger `DEATH_WALK_INTO` when `turn_result == TURN_RESULT_LOSS_COLLISION` and Theseus moved onto the Minotaur (Theseus phase was active).
+  - The hop animation should terminate at ~60% progress (mid-arc), at which point the death animation begins at Theseus's mid-hop position. This requires checking for collision during the Theseus phase and interrupting the hop tween.
+  - Minotaur recoil: brief scale pulse (1.0 → 1.05 → 1.0 over 0.15s) applied to the Minotaur's model matrix.
+
+**Verification:** Theseus hops toward Minotaur, collides mid-air, shatters backward. Minotaur pulses. Undo reverses the shatter and hop.
+
+---
+
+### Step 6.12 — Death: Spike Impale
+
+Spikes shoot up through Theseus, launching voxels upward.
+
+**Changes:**
+
+- Update `src/render/death_anim.c`:
+  - `DEATH_SPIKE` initialization: Voxels launch primarily upward (strong +Y velocity) with slight horizontal scatter. A few voxels (2–3) are flagged as "impaled" — they travel upward to spike-tip height then stop, remaining visible on the spike geometry.
+  - Duration: ~0.7s (upward launch + fall + settle).
+- Update `src/scene/puzzle_scene.c`:
+  - Trigger `DEATH_SPIKE` when `turn_result == TURN_RESULT_LOSS_HAZARD` and the cause is spike activation (need to check event type in the turn record).
+  - Impaled voxels persist after the death animation finishes (rendered as static decoration on the spike tips until undo).
+
+**Verification:** Spikes activate → Theseus voxels pop upward and scatter, a few remain impaled on spike tips. Undo: voxels fall back onto spikes, slide down, reassemble.
+
+---
+
+### Step 6.13 — Death: Medusa Petrification
+
+Theseus turns to stone, freezes, cracks, and crumbles.
+
+**Changes:**
+
+- Update `src/render/death_anim.c`:
+  - `DEATH_PETRIFY` is a multi-phase death animation:
+    1. **Color wave** (0.0–0.3s): Sweep grey color across voxels from the Medusa's direction. Each voxel transitions blue → grey based on its distance from the Medusa-facing edge. Theseus freezes mid-lean (the lean from the hop that triggered death).
+    2. **Freeze hold** (0.3–0.5s): Static pause — fully grey, frozen pose.
+    3. **Crumble** (0.5–0.9s): Crack lines appear (thin dark voxels inserted between body voxels), then voxels collapse downward into a rubble pile with slight horizontal spread. No bounce — heavy stone-like fall.
+  - Duration: ~0.9s.
+  - Requires Medusa direction as initialization parameter (which side the Medusa faces from), used for color sweep direction and lean freeze angle.
+- Update `src/scene/puzzle_scene.c`:
+  - Trigger `DEATH_PETRIFY` when the death cause is Medusa (check `ANIM_EVT_THESEUS_HOP` with `TURN_RESULT_LOSS_HAZARD` and Medusa feature on the source tile).
+  - Pass Medusa facing direction from the turn record or feature data.
+
+**Verification:** Theseus turns grey in a wave from Medusa direction → freezes → cracks and crumbles into rubble pile. Undo: rubble lifts, reassembles, grey sweeps back to blue.
+
+---
+
+### Step 6.14 — Death: Pit Fall
+
+Theseus falls into a pit (crumbling floor, missing platform, bottomless void). The elongation deformation from Step 6.7 plays as a pre-decomposition effect before the death voxels take over.
+
+**Changes:**
+
+- Update `src/render/death_anim.c`:
+  - `DEATH_PIT_FALL` initialization: Voxels drop coherently as a group (not scattered) with slight tumble rotation. All voxels shrink toward a vanishing point below the diorama platform (scale decreases to 0 as Y decreases). No horizontal scatter — straight down.
+  - For lava variant: voxels shift color blue → orange → red during descent, with additive glow (increase alpha or emissive). Scale dissolves to 0 faster.
+  - Duration: ~0.8s (not counting the ~0.15s elongation pre-phase from Step 6.7).
+- Update `src/scene/puzzle_scene.c`:
+  - Trigger sequence: elongation deformation plays on the intact mesh (~0.15s, `squash` ramps 1.0 → 3.0), then the mesh is decomposed into death voxels which continue the fall.
+  - Trigger `DEATH_PIT_FALL` when the death cause is crumbling floor, missing platform, or pit tile.
+  - The pit opening should remain visible (dark void rendered in the floor) after Theseus falls.
+
+**Verification:** Floor crumbles → Theseus stretches downward (comedic elongation) → decomposes into voxels that drop into the void, shrinking and tumbling. Undo: voxels rise, reconstitute, Theseus un-stretches, floor reassembles. Lava variant: voxels glow orange/red during descent.
+
+---
+
+### Step 6 — Overall Verification
+
+After all substeps are complete, perform a full integration test:
+
+1. **Deformable mesh:** All deformation primitives (squash, flare, lean, directional squish) work independently and in combination. Normals are correctly adjusted (lighting follows deformation). Non-actor geometry is unaffected.
+2. **Movement animations:** Theseus hops with full deformation chain (anticipation → elongation → lean → landing flare → wobble) in all directions. Minotaur rolls with landing squash + wobble, horn retract/extend, and ground shake. Both work correctly during two-step Minotaur turns.
+3. **Contextual deformations:** Push squish against groove boxes and turnstiles. Failed push bounce-back. Ice slide squat with wall collision squish. Teleport beam-up/down elongation. Pit fall stretch.
+4. **Win:** Theseus spins, glows, and bounces at exit, then results appear.
+5. **All five death types:** Each triggers the correct animation based on death cause. Visual effects are distinct and readable.
+6. **Undo from death:** Every death animation reverses smoothly — voxels reconstitute, Theseus is playable again.
+7. **Input buffering:** Animations play correctly when fast-forwarded (buffered input pending). Undo buffering during death state works.
+8. **Reverse playback:** All movement and deformation animations reverse correctly during undo rewind. Deformation state recovers to identity on reverse completion.
 
 ---
 
