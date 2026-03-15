@@ -16,6 +16,7 @@ void settings_default(void) {
     g_settings.resolution_h  = 720;
     g_settings.camera_perspective = false;
     g_settings.camera_fov    = 20.0f;
+    g_settings.cel_shading   = false;
 }
 
 void settings_load(const char* path) {
@@ -68,6 +69,8 @@ void settings_load(const char* path) {
                     g_settings.camera_perspective = (strcmp(val, "true") == 0);
                 else if (strcmp(current_key, "camera_fov") == 0)
                     g_settings.camera_fov = CLAMP((float)atof(val), 5.0f, 90.0f);
+                else if (strcmp(current_key, "cel_shading") == 0)
+                    g_settings.cel_shading = (strcmp(val, "true") == 0);
 
                 current_key[0] = '\0';
             }
@@ -101,6 +104,7 @@ void settings_save(const char* path) {
     fprintf(f, "resolution_h: %d\n",   g_settings.resolution_h);
     fprintf(f, "camera_perspective: %s\n", g_settings.camera_perspective ? "true" : "false");
     fprintf(f, "camera_fov: %.1f\n",   g_settings.camera_fov);
+    fprintf(f, "cel_shading: %s\n",  g_settings.cel_shading ? "true" : "false");
 
     fclose(f);
     LOG_INFO("Settings saved to %s", path);

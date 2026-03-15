@@ -761,6 +761,11 @@ static void render_debug_labels(const PuzzleScene* ps, int vw, int vh) {
                      x, y, TEXT_SIZE_SMALL, label_color, TEXT_ALIGN_RIGHT);
     y += line_h;
 
+    /* Cel-shading */
+    text_render_draw(g_settings.cel_shading ? "[B] Cel-Shaded" : "[B] Standard",
+                     x, y, TEXT_SIZE_SMALL, label_color, TEXT_ALIGN_RIGHT);
+    y += line_h;
+
     /* Camera pitch */
     char pitch_buf[64];
     snprintf(pitch_buf, sizeof(pitch_buf), "[I/K] Pitch: %.0f\xC2\xB0",
@@ -1388,6 +1393,9 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
 
     /* Apply lighting */
     lighting_apply(&ps->diorama_light, shader);
+
+    /* Cel-shading toggle */
+    shader_set_int(shader, "u_cel_shading", g_settings.cel_shading ? 1 : 0);
 
     /* Set AO texture uniform for static diorama mesh */
     shader_set_int(shader, "u_ao_texture", 0);  /* texture unit 0 */
@@ -2097,6 +2105,13 @@ static void puzzle_handle_action(State* self, SemanticAction action) {
         return;
     }
 
+    /* Debug: 'B' toggles cel-shaded rendering */
+    if (action == ACTION_DEBUG_TOGGLE_CEL) {
+        g_settings.cel_shading = !g_settings.cel_shading;
+        LOG_INFO("Cel-shading: %s", g_settings.cel_shading ? "ON" : "OFF");
+        return;
+    }
+
     /* Debug: 'I'/'K' adjust camera pitch */
     if (action == ACTION_DEBUG_PITCH_UP) {
         ps->diorama_cam.pitch = CLAMP(ps->diorama_cam.pitch + 5.0f, 5.0f, 85.0f);
@@ -2321,7 +2336,14 @@ static void puzzle_render(State* self) {
 
     /* Render 3D diorama when 'C' toggle is active */
     if (ps->render_3d) {
-        render_diorama(ps, vw, vh);
+        if (g_settings.cel_shading) {
+            /* Render to FBO for outline post-processing */
+            renderer_begin_outline_pass(vw, vh);
+            render_diorama(ps, vw, vh);
+            renderer_end_outline_pass(vw, vh);
+        } else {
+            render_diorama(ps, vw, vh);
+        }
     }
 
     /* Draw 2D layers when not in 3D mode */

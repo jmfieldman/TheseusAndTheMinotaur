@@ -35,4 +35,10 @@ GLuint renderer_get_quad_vao(void);
 /* Get the voxel shader program (position + normal + color → lit output). */
 GLuint renderer_get_voxel_shader(void);
 
+/* Outline post-process pass (cel-shading outlines).
+ * Call begin before rendering 3D geometry, end after.
+ * The scene is rendered to an FBO, then composited with edge detection. */
+void renderer_begin_outline_pass(int w, int h);
+void renderer_end_outline_pass(int w, int h);
+
 #endif /* RENDERER_H */

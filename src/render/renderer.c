@@ -151,7 +151,8 @@ static const char* s_voxel_frag_src =
     "in float v_ao_mode;\n"
     "noperspective in float v_height_frac;\n"  /* actor per-pixel ground proximity (-1 = not actor) */
     "\n"
-    "out vec4 FragColor;\n"
+    "layout(location = 0) out vec4 FragColor;\n"
+    "layout(location = 1) out vec4 NormalOut;\n"
     "\n"
     "/* Procedural noise utilities (used by floor grain + wall stone pattern).\n"
     " * Pure-arithmetic hash — avoids sin() which loses precision on some\n"
@@ -342,6 +343,9 @@ static const char* s_voxel_frag_src =
     "uniform sampler2D u_floor_lightmap;\n"
     "uniform vec4 u_lightmap_bounds;\n"  /* origin_x, origin_z, extent_x, extent_z */
     "\n"
+    "/* Cel-shading toggle */\n"
+    "uniform int u_cel_shading;\n"  /* 0 = standard, 1 = cel-shaded */
+    "\n"
     "void main() {\n"
     "    vec3 N = normalize(v_normal);\n"
     "    vec3 base_color = v_color.rgb;\n"
@@ -357,6 +361,7 @@ static const char* s_voxel_frag_src =
     "         * with alpha from texture; blending darkens the floor. */\n"
     "        float shadow_val = texture(u_floor_lightmap, v_uv).r;\n"
     "        FragColor = vec4(0.0, 0.0, 0.0, 1.0 - shadow_val);\n"
+    "        NormalOut = vec4(0.5, 1.0, 0.5, 0.0);\n"  /* up-facing normal, alpha=0 marks non-geometry */
     "        return;\n"
     "    } else if (v_ao_mode > 1.5) {\n"
     "        /* Floor lightmap */\n"
@@ -372,25 +377,36 @@ static const char* s_voxel_frag_src =
     "        base_color *= mix(0.93, 1.03, stone);\n"
     "    } else if (v_ao_mode > 0.5) {\n"
     "        if (v_height_frac >= 0.0) {\n"
-    "            /* Actor per-pixel ground-proximity AO.\n"
-    "             * Computed from the undeformed vertex Y, interpolated\n"
-    "             * with noperspective to avoid Mach banding at subdivision\n"
-    "             * quad boundaries. */\n"
+    "            /* Actor per-pixel ground-proximity AO. */\n"
     "            float hf = clamp(v_height_frac, 0.0, 1.0);\n"
-    "            float ground_dark = 0.30;\n"
-    "            float ground_range = 0.50;\n"
     "            float abs_ny = abs(N.y);\n"
     "            float face_ao;\n"
-    "            if (abs_ny > 0.5) {\n"
-    "                face_ao = (N.y > 0.0) ? 1.0 : (1.0 - ground_dark * 0.6);\n"
+    "            if (u_cel_shading != 0) {\n"
+    "                /* Cel-shading: hard shadow band at bottom of side faces */\n"
+    "                if (abs_ny > 0.5) {\n"
+    "                    face_ao = (N.y > 0.0) ? 1.0 : 0.70;\n"
+    "                } else {\n"
+    "                    face_ao = (hf < 0.18) ? 0.65 : 1.0;\n"
+    "                }\n"
     "            } else {\n"
-    "                float t = smoothstep(0.0, ground_range, hf);\n"
-    "                face_ao = 1.0 - ground_dark * (1.0 - t);\n"
+    "                /* Standard: smooth gradient */\n"
+    "                float ground_dark = 0.30;\n"
+    "                float ground_range = 0.50;\n"
+    "                if (abs_ny > 0.5) {\n"
+    "                    face_ao = (N.y > 0.0) ? 1.0 : (1.0 - ground_dark * 0.6);\n"
+    "                } else {\n"
+    "                    float t = smoothstep(0.0, ground_range, hf);\n"
+    "                    face_ao = 1.0 - ground_dark * (1.0 - t);\n"
+    "                }\n"
     "            }\n"
     "            ao = mix(1.0, face_ao, u_ao_intensity);\n"
     "        } else if (u_has_ao != 0) {\n"
     "            /* Raytraced AO atlas (complex geometry) */\n"
     "            float ao_sample = texture(u_ao_texture, v_uv).r;\n"
+    "            if (u_cel_shading != 0) {\n"
+    "                /* Quantize AO to binary for cel-shaded look */\n"
+    "                ao_sample = (ao_sample < 0.7) ? 0.55 : 1.0;\n"
+    "            }\n"
     "            ao = mix(1.0, ao_sample, u_ao_intensity);\n"
     "        }\n"
     "    } else {\n"
@@ -426,6 +442,12 @@ static const char* s_voxel_frag_src =
     "            }\n"
     "            base_color = wall_stone(local_pos, seg_len, world_uv, base_color);\n"
     "        }\n"
+    "        /* Cel-shading: hard shadow band at bottom of wall side faces.\n"
+    "         * Applied after stone pattern so texture is preserved. */\n"
+    "        if (u_cel_shading != 0 && abs_n.y < 0.5) {\n"
+    "            float wall_frac = v_world_pos.y / 0.30;\n"
+    "            base_color *= (wall_frac < 0.18) ? 0.65 : 1.0;\n"
+    "        }\n"
     "    }\n"
     "\n"
     "    /* Apply AO to base color */\n"
@@ -435,9 +457,16 @@ static const char* s_voxel_frag_src =
     "    /* Ambient */\n"
     "    vec3 lit = u_ambient_color.rgb * base_color;\n"
     "\n"
-    "    /* Directional diffuse (half-Lambert for softer look) */\n"
+    "    /* Directional diffuse */\n"
     "    float ndl = dot(N, u_light_dir.xyz);\n"
-    "    float diffuse = ndl * 0.5 + 0.5;\n"  /* half-Lambert */
+    "    float diffuse;\n"
+    "    if (u_cel_shading != 0) {\n"
+    "        /* Cel-shaded: 3-band quantization with hard edges */\n"
+    "        float raw = ndl * 0.5 + 0.5;\n"  /* half-Lambert base */
+    "        diffuse = floor(raw * 3.0 + 0.5) / 3.0;\n"
+    "    } else {\n"
+    "        diffuse = ndl * 0.5 + 0.5;\n"  /* smooth half-Lambert */
+    "    }\n"
     "    lit += u_light_color.rgb * base_color * diffuse;\n"
     "\n"
     "    /* Point lights */\n"
@@ -447,10 +476,106 @@ static const char* s_voxel_frag_src =
     "        float atten = max(0.0, 1.0 - dist / u_point_radius[i]);\n"
     "        atten *= atten;\n"  /* quadratic falloff */
     "        float pndl = max(0.0, dot(N, normalize(to_light)));\n"
+    "        if (u_cel_shading != 0) {\n"
+    "            /* Quantize point light contribution */\n"
+    "            pndl = floor(pndl * 2.0 + 0.5) / 2.0;\n"
+    "        }\n"
     "        lit += u_point_color[i].rgb * base_color * pndl * atten;\n"
     "    }\n"
     "\n"
+    "    /* Cel-shading: optional rim highlight */\n"
+    "    if (u_cel_shading != 0) {\n"
+    "        /* Approximate view direction for isometric camera.\n"
+    "         * Uses the light direction reflected — gives a subtle\n"
+    "         * bright edge on faces angled away from the light. */\n"
+    "        float rim = 1.0 - max(0.0, dot(N, vec3(0.0, 1.0, 0.0)));\n"
+    "        rim = smoothstep(0.6, 0.9, rim);\n"
+    "        lit += rim * 0.08 * base_color;\n"
+    "    }\n"
+    "\n"
     "    FragColor = vec4(lit, final_alpha);\n"
+    "    NormalOut = vec4(N * 0.5 + 0.5, 1.0);\n"  /* encode [-1,1] → [0,1] */
+    "}\n";
+
+/* ---------- Outline post-process shader ---------- */
+
+/* Fullscreen vertex shader — renders a triangle that covers the screen.
+ * Uses vertex ID trick: no VBO needed. */
+static const char* s_outline_vert_src =
+    "#version 330 core\n"
+    "out vec2 v_uv;\n"
+    "void main() {\n"
+    "    /* Full-screen triangle from vertex ID (0,1,2) */\n"
+    "    v_uv = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);\n"
+    "    gl_Position = vec4(v_uv * 2.0 - 1.0, 0.0, 1.0);\n"
+    "}\n";
+
+/* Outline fragment shader — reads color, depth, and normal textures,
+ * detects edges via Sobel depth gradient + normal discontinuity,
+ * and composites black outlines over the scene. */
+static const char* s_outline_frag_src =
+    "#version 330 core\n"
+    "in vec2 v_uv;\n"
+    "out vec4 FragColor;\n"
+    "\n"
+    "uniform sampler2D u_color_tex;\n"   /* scene color */
+    "uniform sampler2D u_normal_tex;\n"  /* encoded normals */
+    "uniform sampler2D u_depth_tex;\n"   /* depth buffer */
+    "uniform vec2 u_texel_size;\n"       /* 1.0 / resolution */
+    "uniform float u_depth_threshold;\n" /* edge sensitivity for depth */
+    "uniform float u_normal_threshold;\n" /* edge sensitivity for normals */
+    "uniform float u_near;\n"            /* camera near plane */
+    "uniform float u_far;\n"             /* camera far plane */
+    "uniform int u_ortho;\n"             /* 1 = orthographic, 0 = perspective */
+    "\n"
+    "/* Linearize depth from NDC depth buffer value.\n"
+    " * In perspective: non-linear mapping requires the standard formula.\n"
+    " * In ortho: depth buffer is already linear in [0,1] — use as-is. */\n"
+    "float linearize_depth(float d) {\n"
+    "    if (u_ortho != 0) {\n"
+    "        return d;\n"  /* already linear, [0,1] range matches threshold scale */
+    "    }\n"
+    "    return (2.0 * u_near) / (u_far + u_near - d * (u_far - u_near));\n"
+    "}\n"
+    "\n"
+    "void main() {\n"
+    "    vec4 scene = texture(u_color_tex, v_uv);\n"
+    "\n"
+    "    /* Sample depth at cardinal neighbors */\n"
+    "    float d_c = linearize_depth(texture(u_depth_tex, v_uv).r);\n"
+    "    float d_l = linearize_depth(texture(u_depth_tex, v_uv + vec2(-u_texel_size.x, 0.0)).r);\n"
+    "    float d_r = linearize_depth(texture(u_depth_tex, v_uv + vec2( u_texel_size.x, 0.0)).r);\n"
+    "    float d_u = linearize_depth(texture(u_depth_tex, v_uv + vec2(0.0,  u_texel_size.y)).r);\n"
+    "    float d_d = linearize_depth(texture(u_depth_tex, v_uv + vec2(0.0, -u_texel_size.y)).r);\n"
+    "\n"
+    "    /* Sobel-like depth gradient */\n"
+    "    float depth_edge = abs(d_l - d_r) + abs(d_u - d_d);\n"
+    "    depth_edge = smoothstep(u_depth_threshold * 0.5, u_depth_threshold, depth_edge);\n"
+    "\n"
+    "    /* Sample normals at cardinal neighbors */\n"
+    "    vec3 n_c = texture(u_normal_tex, v_uv).rgb * 2.0 - 1.0;\n"
+    "    vec3 n_l = texture(u_normal_tex, v_uv + vec2(-u_texel_size.x, 0.0)).rgb * 2.0 - 1.0;\n"
+    "    vec3 n_r = texture(u_normal_tex, v_uv + vec2( u_texel_size.x, 0.0)).rgb * 2.0 - 1.0;\n"
+    "    vec3 n_u = texture(u_normal_tex, v_uv + vec2(0.0,  u_texel_size.y)).rgb * 2.0 - 1.0;\n"
+    "    vec3 n_d = texture(u_normal_tex, v_uv + vec2(0.0, -u_texel_size.y)).rgb * 2.0 - 1.0;\n"
+    "\n"
+    "    /* Normal discontinuity: how different are neighboring normals? */\n"
+    "    float normal_edge = 0.0;\n"
+    "    normal_edge += 1.0 - dot(n_c, n_l);\n"
+    "    normal_edge += 1.0 - dot(n_c, n_r);\n"
+    "    normal_edge += 1.0 - dot(n_c, n_u);\n"
+    "    normal_edge += 1.0 - dot(n_c, n_d);\n"
+    "    normal_edge *= 0.25;\n"  /* average */
+    "    normal_edge = smoothstep(u_normal_threshold * 0.5, u_normal_threshold, normal_edge);\n"
+    "\n"
+    "    /* Combine depth and normal edges */\n"
+    "    float edge = max(depth_edge, normal_edge);\n"
+    "    edge = clamp(edge, 0.0, 1.0);\n"
+    "\n"
+    "    /* Darken toward black at edges */\n"
+    "    vec3 outline_color = vec3(0.02, 0.02, 0.04);\n"  /* near-black with slight blue tint */
+    "    vec3 result = mix(scene.rgb, outline_color, edge);\n"
+    "    FragColor = vec4(result, scene.a);\n"
     "}\n";
 
 /* ---------- State ---------- */
@@ -459,11 +584,90 @@ static struct {
     GLuint ui_shader;
     GLuint ui_tex_shader;
     GLuint voxel_shader;
+    GLuint outline_shader;
     GLuint quad_vao;
     GLuint quad_vbo;
     GLuint fallback_tex;    /* 1×1 white texture — keeps samplers valid */
     float  projection[16];
+
+    /* Outline post-process FBO */
+    GLuint outline_fbo;
+    GLuint outline_color_tex;
+    GLuint outline_normal_tex;
+    GLuint outline_depth_tex;
+    GLuint outline_dummy_vao;   /* empty VAO for fullscreen triangle */
+    int    outline_width;
+    int    outline_height;
 } s_renderer;
+
+/* ---------- Outline FBO management ---------- */
+
+static void outline_fbo_ensure(int w, int h) {
+    if (s_renderer.outline_fbo && s_renderer.outline_width == w &&
+        s_renderer.outline_height == h) {
+        return;  /* already correct size */
+    }
+
+    /* Delete old textures if resizing */
+    if (s_renderer.outline_color_tex)  glDeleteTextures(1, &s_renderer.outline_color_tex);
+    if (s_renderer.outline_normal_tex) glDeleteTextures(1, &s_renderer.outline_normal_tex);
+    if (s_renderer.outline_depth_tex)  glDeleteTextures(1, &s_renderer.outline_depth_tex);
+
+    /* Create FBO on first call */
+    if (!s_renderer.outline_fbo) {
+        glGenFramebuffers(1, &s_renderer.outline_fbo);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, s_renderer.outline_fbo);
+
+    /* Color attachment 0: scene color (RGBA8) */
+    glGenTextures(1, &s_renderer.outline_color_tex);
+    glBindTexture(GL_TEXTURE_2D, s_renderer.outline_color_tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           s_renderer.outline_color_tex, 0);
+
+    /* Color attachment 1: normals (RGB8 — sufficient precision for edge detection) */
+    glGenTextures(1, &s_renderer.outline_normal_tex);
+    glBindTexture(GL_TEXTURE_2D, s_renderer.outline_normal_tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D,
+                           s_renderer.outline_normal_tex, 0);
+
+    /* Depth attachment (24-bit) */
+    glGenTextures(1, &s_renderer.outline_depth_tex);
+    glBindTexture(GL_TEXTURE_2D, s_renderer.outline_depth_tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0,
+                 GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
+                           s_renderer.outline_depth_tex, 0);
+
+    /* Enable both color attachments for MRT */
+    GLenum draw_bufs[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+    glDrawBuffers(2, draw_bufs);
+
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        LOG_ERROR("Outline FBO incomplete: 0x%x", status);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    s_renderer.outline_width = w;
+    s_renderer.outline_height = h;
+}
 
 /* Build an orthographic projection matrix (column-major). */
 static void build_ortho(float* out, float left, float right,
@@ -578,10 +782,29 @@ void renderer_init(void) {
     s_renderer.ui_shader = shader_compile(s_ui_vert_src, s_ui_frag_src);
     s_renderer.ui_tex_shader = shader_compile(s_ui_tex_vert_src, s_ui_tex_frag_src);
     s_renderer.voxel_shader = shader_compile(s_voxel_vert_src, s_voxel_frag_src);
+    s_renderer.outline_shader = shader_compile(s_outline_vert_src, s_outline_frag_src);
 
     if (!s_renderer.ui_shader || !s_renderer.ui_tex_shader) {
         LOG_ERROR("Failed to compile UI shaders");
     }
+    if (!s_renderer.outline_shader) {
+        LOG_ERROR("Failed to compile outline shader");
+    } else {
+        /* Set texture unit bindings and default edge detection parameters */
+        shader_use(s_renderer.outline_shader);
+        shader_set_int(s_renderer.outline_shader, "u_color_tex", 0);
+        shader_set_int(s_renderer.outline_shader, "u_normal_tex", 1);
+        shader_set_int(s_renderer.outline_shader, "u_depth_tex", 2);
+        shader_set_float(s_renderer.outline_shader, "u_depth_threshold", 0.003f);
+        shader_set_float(s_renderer.outline_shader, "u_normal_threshold", 0.4f);
+        shader_set_float(s_renderer.outline_shader, "u_near", 0.1f);
+        shader_set_float(s_renderer.outline_shader, "u_far", 100.0f);
+        shader_set_int(s_renderer.outline_shader, "u_ortho", 0);
+        glUseProgram(0);
+    }
+    /* Empty VAO for fullscreen triangle (vertex ID trick, no buffer needed) */
+    glGenVertexArrays(1, &s_renderer.outline_dummy_vao);
+
     if (!s_renderer.voxel_shader) {
         LOG_ERROR("Failed to compile voxel shader");
     } else {
@@ -598,6 +821,8 @@ void renderer_init(void) {
         shader_set_vec2(s_renderer.voxel_shader, "u_deform_squish_dir", 0.0f, 0.0f);
         shader_set_float(s_renderer.voxel_shader, "u_deform_squish", 0.0f);
         shader_set_float(s_renderer.voxel_shader, "u_deform_height", 0.0f);
+        /* Cel-shading off by default */
+        shader_set_int(s_renderer.voxel_shader, "u_cel_shading", 0);
         /* Default wall stone uniforms (weathered stone) */
         shader_set_vec4(s_renderer.voxel_shader, "u_wall_stone_a", 0.09f, 0.15f, 0.30f, 0.06f);
         shader_set_vec4(s_renderer.voxel_shader, "u_wall_stone_b", 0.50f, 0.22f, 0.12f, 0.20f);
@@ -633,9 +858,15 @@ void renderer_shutdown(void) {
     if (s_renderer.ui_shader)     glDeleteProgram(s_renderer.ui_shader);
     if (s_renderer.ui_tex_shader) glDeleteProgram(s_renderer.ui_tex_shader);
     if (s_renderer.voxel_shader)  glDeleteProgram(s_renderer.voxel_shader);
+    if (s_renderer.outline_shader) glDeleteProgram(s_renderer.outline_shader);
     if (s_renderer.quad_vao)      glDeleteVertexArrays(1, &s_renderer.quad_vao);
     if (s_renderer.quad_vbo)      glDeleteBuffers(1, &s_renderer.quad_vbo);
+    if (s_renderer.outline_dummy_vao) glDeleteVertexArrays(1, &s_renderer.outline_dummy_vao);
     if (s_renderer.fallback_tex)  glDeleteTextures(1, &s_renderer.fallback_tex);
+    if (s_renderer.outline_fbo)       glDeleteFramebuffers(1, &s_renderer.outline_fbo);
+    if (s_renderer.outline_color_tex)  glDeleteTextures(1, &s_renderer.outline_color_tex);
+    if (s_renderer.outline_normal_tex) glDeleteTextures(1, &s_renderer.outline_normal_tex);
+    if (s_renderer.outline_depth_tex)  glDeleteTextures(1, &s_renderer.outline_depth_tex);
     memset(&s_renderer, 0, sizeof(s_renderer));
     LOG_INFO("Renderer shut down");
 }
@@ -698,4 +929,74 @@ GLuint renderer_get_quad_vao(void) {
 
 GLuint renderer_get_voxel_shader(void) {
     return s_renderer.voxel_shader;
+}
+
+/* ---------- Outline post-process pass ---------- */
+
+void renderer_begin_outline_pass(int w, int h) {
+    outline_fbo_ensure(w, h);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, s_renderer.outline_fbo);
+
+    /* Enable both color outputs */
+    GLenum draw_bufs[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+    glDrawBuffers(2, draw_bufs);
+
+    glViewport(0, 0, w, h);
+
+    /* Clear color+normal+depth. Normal buffer gets default up-facing normal
+     * (encoded 0.5, 1.0, 0.5) so background areas don't trigger edge detection. */
+    glClearColor(0.07f, 0.07f, 0.09f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+}
+
+void renderer_end_outline_pass(int w, int h) {
+    /* Switch back to default framebuffer */
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    /* Restore single draw buffer */
+    GLenum draw_buf = GL_BACK;
+    glDrawBuffers(1, &draw_buf);
+
+    glViewport(0, 0, w, h);
+
+    /* Disable depth testing for fullscreen quad */
+    glDisable(GL_DEPTH_TEST);
+
+    /* Bind the outline shader */
+    shader_use(s_renderer.outline_shader);
+
+    /* Bind FBO textures to units 0, 1, 2 */
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, s_renderer.outline_color_tex);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, s_renderer.outline_normal_tex);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, s_renderer.outline_depth_tex);
+
+    /* Set texel size for edge detection sampling */
+    shader_set_vec2(s_renderer.outline_shader, "u_texel_size",
+                    1.0f / (float)w, 1.0f / (float)h);
+
+    /* Set projection mode for correct depth linearization.
+     * The diorama camera uses near=0.1, far=100.0 for both modes. */
+    shader_set_int(s_renderer.outline_shader, "u_ortho",
+                   g_settings.camera_perspective ? 0 : 1);
+    shader_set_float(s_renderer.outline_shader, "u_near", 0.1f);
+    shader_set_float(s_renderer.outline_shader, "u_far", 100.0f);
+
+    /* Draw fullscreen triangle (3 verts, no buffer — uses gl_VertexID) */
+    glBindVertexArray(s_renderer.outline_dummy_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+
+    /* Restore texture unit 0 and 1 to fallback textures for subsequent draws */
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, s_renderer.fallback_tex);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, s_renderer.fallback_tex);
+
+    glUseProgram(0);
 }

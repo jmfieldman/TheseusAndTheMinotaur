@@ -12,6 +12,7 @@ typedef struct {
     int   resolution_h;
     bool  camera_perspective;  /* false=orthographic, true=perspective */
     float camera_fov;          /* 5.0 - 90.0: vertical FOV in degrees (perspective mode) */
+    bool  cel_shading;         /* false=standard lighting, true=cel-shaded */
 } Settings;
 
 /* Global settings instance. */

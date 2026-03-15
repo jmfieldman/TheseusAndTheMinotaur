@@ -43,6 +43,7 @@ typedef enum {
     ACTION_DEBUG_FOV_UP,             /* 'O' — increase FOV */
     ACTION_DEBUG_FOV_DOWN,           /* 'L' — decrease FOV */
     ACTION_DEBUG_ANIM_SPEED,         /* 'P' — cycle animation speed multiplier */
+    ACTION_DEBUG_TOGGLE_CEL,         /* 'B' — toggle cel-shaded rendering */
 
     ACTION_COUNT
 } SemanticAction;
