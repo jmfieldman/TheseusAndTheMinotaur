@@ -223,9 +223,9 @@ Extract actor mesh generation from inline `puzzle_scene.c` code into a dedicated
 **Files:**
 
 - `src/render/actor_render.h / .c` — Actor mesh generation and rendering API:
-  - `ActorParts` struct holds individual `VoxelMesh` components for each actor. Theseus: body (beveled blue cube). Minotaur: body (red cube), horns (white nubs on top face), face (detail voxels on camera-facing side).
+  - `ActorParts` struct holds individual `VoxelMesh` components for each actor. Theseus: body (beveled blue cube). Minotaur: body (red cube), horns (white nubs on top face).
   - `actor_render_build_theseus(ActorParts*)` — Generates Theseus body mesh. ~40–50% tile size, RGB(80, 168, 251). Calls `voxel_mesh_set_subdivisions(&mesh, 4)` before adding boxes so each face has a 4×4 quad grid (~25 vertices per face). Composed of multiple boxes arranged so the body reads as a beveled cube. Each box is individually addressable for later death animation decomposition. Uses an invisible ground-plane occluder for AO baking (same technique as current code).
-  - `actor_render_build_minotaur(ActorParts*)` — Generates Minotaur body mesh (~65% tile, RGB(239, 34, 34)) with subdivision=4 for deformation support, horn mesh (white nubs protruding from top, no subdivision needed — rigid), and face mesh (eyes + snout + brow as small voxels on the camera-facing side, no subdivision needed — rigid). Each component is a separate `VoxelMesh` so horns/face can be independently transformed during roll animation.
+  - `actor_render_build_minotaur(ActorParts*)` — Generates Minotaur body mesh (~65% tile, RGB(239, 34, 34), true cube) with subdivision=4 for deformation support, and horn mesh (white nubs protruding from top, no subdivision needed — rigid). Each component is a separate `VoxelMesh` so horns can be independently transformed during roll animation.
   - `actor_render_destroy(ActorParts*)` — Cleans up all component meshes.
 - Update `src/scene/puzzle_scene.c`:
   - Replace inline `voxel_mesh_begin/add_box/build` for actors with calls to `actor_render_build_*()`.
@@ -234,7 +234,7 @@ Extract actor mesh generation from inline `puzzle_scene.c` code into a dedicated
   - Before each actor draw call, set `u_deform_height` to the actor's mesh height. After drawing, reset to 0.0 to disable deformation for subsequent non-actor draws.
 - Update `src/render/README.md` — Add actor_render entry.
 
-**Verification:** Game looks identical to current state — actors are the same shape and color, shadows work, AO darkening on bottom edges present. The only change is code organization, richer Minotaur geometry (horns + face visible at rest), and subdivided actor meshes ready for deformation.
+**Verification:** Game looks identical to current state — actors are the same shape and color, shadows work, AO darkening on bottom edges present. The only change is code organization, richer Minotaur geometry (horns visible at rest), and subdivided actor meshes ready for deformation.
 
 ---
 
@@ -275,11 +275,11 @@ Replace the Minotaur's current hop-slide with a 90° rolling motion. The Minotau
   - **Arc lift:** Add a small upward offset during the roll (parabolic, peak ~0.08 at midpoint) so the Minotaur doesn't clip through the floor during rotation. This gives the "jump-roll" power feel.
   - **Landing deformation:** On roll completion (progress 0.85–1.0), apply `squash = 0.88`, `flare = 0.15` to the Minotaur's deform state. Followed by a short damped wobble (~0.15s, `amplitude = 0.08`, `freq = 25.0`, `damping = 15.0`) — heavier and less bouncy than Theseus. Conveys weight and impact.
   - **Anticipation squat:** Before the roll begins (progress 0.0–0.08), brief `squash = 0.92` — a subtle "loading" compression before launching into the roll.
-  - **Horn retraction/extension:** During roll (progress 0.0–0.2), horn meshes scale Y toward 0 (retract into body). During landing (progress 0.8–1.0), horns scale Y back to 1.0, emanating from the new top face. Since the Minotaur has actually rotated 90°, the "new top face" is the face that was the trailing side — horns are drawn relative to the post-roll orientation, then transitioned to always-on-top at rest.
-  - **Face re-materialization:** Same retract/extend timing as horns. Face retracts during roll start, re-emerges on the camera-facing side at rest. The camera-facing side is always the same world direction (toward the camera), so after the roll the face mesh is placed on whichever body face now points toward the camera.
-  - When the Minotaur is idle (not animating), horns are on top and face is toward camera — this is the rest pose regardless of how many rolls have occurred.
+  - **Horn retraction/extension:** During anticipation (progress 0.0–0.10), horn meshes scale Y toward 0 (retract into body). Horns stay fully retracted during the entire roll since the cube is rotating and they would point sideways. When the Minotaur comes to rest, the post-roll wobble provides a natural moment for horns to pop back out.
+  - The Minotaur is a **true cube** (height = width = depth), so a 90° roll lands on an identical face — no rotation unwinding or "landing phase" is needed. The roll simply completes at 90° and the cube looks the same.
+  - When the Minotaur is idle (not animating), horns are on top — this is the rest pose regardless of how many rolls have occurred.
 
-**Verification:** Minotaur visibly rolls (tumbles) from tile to tile instead of sliding. Landing produces a satisfying squash + wobble that conveys weight. Horns retract and re-emerge on top. Face always faces camera at rest. Roll direction is correct for all four cardinal directions. Two-step turns show distinct rolls with a pause between. Reverse (undo) plays the roll backward correctly.
+**Verification:** Minotaur visibly rolls (tumbles) from tile to tile instead of sliding. Landing produces a satisfying squash + wobble that conveys weight. Horns retract during roll and re-emerge on top at rest. Roll direction is correct for all four cardinal directions. Two-step turns show distinct rolls with a pause between. Reverse (undo) plays the roll backward correctly.
 
 ---
 

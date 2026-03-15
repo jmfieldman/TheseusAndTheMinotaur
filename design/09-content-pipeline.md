@@ -355,15 +355,11 @@ beveled edges), built as positioned voxel arrays at runtime:
 - **Theseus:** A beveled cube with blue vertex colors — RGB(80, 168, 251). The cube
   geometry is generated once at startup. Animation (hop arc, squash, lean)
   is purely tween-based transforms applied to the cube mesh.
-- **Minotaur:** A larger beveled cube with red vertex colors — RGB(239, 34, 34).
+- **Minotaur:** A larger true cube with red vertex colors — RGB(239, 34, 34).
   Includes procedurally generated sub-meshes for:
   - **Horns:** White voxel horn shapes attached to the top face, with
     retract/extend tween support (see [02 -- Visual Style](02-visual-style.md)
     §7.2).
-  - **Face:** Smaller detail voxels (eyes, snout, brow) on the camera-facing
-    side, with retract/re-materialize tween support.
-  - **Expression variants:** Voxel arrangements for angry/neutral/etc.
-    generated at startup and swapped based on proximity to Theseus.
 - Animation states (idle, hop/roll, celebrate, caught/death) are all
   tween-based transforms — no skeletal animation or keyframe data needed.
 

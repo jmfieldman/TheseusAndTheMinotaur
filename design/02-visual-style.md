@@ -152,15 +152,6 @@ grid dimensions or screen resolution.
   a key visual identifier and always appear on the uppermost face when the
   Minotaur is at rest.
 - Horn behavior during movement is described in §7.2.
-- **Face:** The Minotaur has a **face** composed of smaller detail voxels
-  (eyes, snout, brow) on the side facing the camera. The face is always on
-  the **camera-facing side** -- after each roll, the face re-materializes on
-  whichever side now faces the camera. Like the horns, the face retracts into
-  the body as the roll begins and re-emerges on the new camera-facing side
-  when the Minotaur comes to rest. This ensures the player always sees the
-  Minotaur's expression regardless of roll orientation.
-- The face can convey subtle **expression shifts** (e.g. angrier eyes when
-  close to Theseus, neutral when far away) using small voxel rearrangements.
 
 ## 3. Materials
 
@@ -415,18 +406,16 @@ feel:
   sliding.
 - The Minotaur does **not** have a fixed "down" face -- each roll changes
   which face is on top.
-- **Horn and face behavior:**
-  - The Minotaur has **white voxel horns** (top) and a **detail-voxel face**
-    (camera-facing side) that are key visual identifiers.
-  - As the Minotaur begins a roll, both the horns and face **retract** into
-    the body (smooth, quick tween inward).
-  - When the Minotaur lands on the destination tile and comes to rest:
-    - The horns **extend back out from the new top face** (whichever face is
-      now pointing upward).
-    - The face **re-materializes on the new camera-facing side**.
-  - This means the horns are **always on top** and the face is **always
-    toward the camera** when the Minotaur is at rest, regardless of how many
-    rolls have occurred.
+- **Horn behavior:**
+  - The Minotaur has **white voxel horns** on top that are a key visual
+    identifier.
+  - As the Minotaur begins a roll, the horns **retract** into the body
+    (smooth, quick tween inward).
+  - When the Minotaur lands on the destination tile and comes to rest,
+    the horns **extend back out from the top** with a pop-out animation.
+  - Since the Minotaur is a true cube, the 90° roll lands on an identical
+    face — no rotation unwinding is needed. The horns are always on top
+    at rest regardless of how many rolls have occurred.
 - **Ground shake:** When the Minotaur lands, a subtle **localized screen shake
   / ground impact effect** plays around the landing tile. This can be
   implemented as:

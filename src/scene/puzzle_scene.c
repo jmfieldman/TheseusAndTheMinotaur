@@ -1100,7 +1100,7 @@ static void mat4_rot_z(float m[16], float angle_rad) {
     m[4] = -s; m[5] = c;
 }
 
-/* Build a Y-axis scale matrix (for horn/face retraction). */
+/* Build a Y-axis scale matrix (for horn retraction). */
 static void mat4_scale_y(float m[16], float sy) {
     mat4_identity(m);
     m[5] = sy;
@@ -1354,12 +1354,11 @@ static void build_diorama(PuzzleScene* ps) {
 
     ps->diorama_built = true;
 
-    LOG_INFO("Diorama built: %d static verts, theseus %d verts, minotaur %d+%d+%d verts",
+    LOG_INFO("Diorama built: %d static verts, theseus %d verts, minotaur %d+%d verts",
              voxel_mesh_get_vertex_count(&ps->diorama_mesh),
              voxel_mesh_get_vertex_count(&ps->theseus_parts.body),
              voxel_mesh_get_vertex_count(&ps->minotaur_parts.body),
-             voxel_mesh_get_vertex_count(&ps->minotaur_parts.horns),
-             voxel_mesh_get_vertex_count(&ps->minotaur_parts.face));
+             voxel_mesh_get_vertex_count(&ps->minotaur_parts.horns));
 }
 
 static void render_diorama(PuzzleScene* ps, int vw, int vh) {
@@ -1724,32 +1723,6 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 }
             }
 
-            /* ── Draw face (with retraction during roll) ── */
-            if (ps->minotaur_parts.has_face) {
-                float face_scale = 1.0f;
-                if (actually_moving) {
-                    if (roll_t < 0.10f) {
-                        /* Retract face during anticipation */
-                        face_scale = 1.0f - roll_t / 0.10f;
-                    } else {
-                        /* Stay retracted during roll */
-                        face_scale = 0.0f;
-                    }
-                }
-
-                if (face_scale > 0.01f) {
-                    /* For face, we don't scale Y — we scale the protrusion depth.
-                     * Since face is on -Z, scale Z from center of body. The face
-                     * mesh has small Z extent, so uniform scale works visually. */
-                    float face_model[16];
-                    /* Use the body model matrix for face (same world transform) */
-                    memcpy(face_model, model, sizeof(face_model));
-                    shader_set_mat4(shader, "u_model", face_model);
-                    shader_set_int(shader, "u_has_ao",
-                                   voxel_mesh_has_ao(&ps->minotaur_parts.face) ? 1 : 0);
-                    voxel_mesh_draw(&ps->minotaur_parts.face);
-                }
-            }
         }
 
         /* Theseus — hops during move animation */
