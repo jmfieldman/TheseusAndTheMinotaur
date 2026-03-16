@@ -1180,6 +1180,12 @@ static void draw_shadow_at_y(const PuzzleScene* ps, GLuint shader,
     glBindTexture(GL_TEXTURE_2D, shadow_tex);
     glActiveTexture(GL_TEXTURE0);
 
+    /* Disable writes to the normal buffer (attachment 1) during shadow
+     * rendering.  Shadow blending would otherwise corrupt the NormalOut
+     * alpha channel that encodes material boundaries (conveyor vs floor)
+     * used by the outline post-process shader. */
+    glColorMaski(1, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+
     /* Disable depth writes so shadow doesn't block actor rendering.
      * Caller sets depth func (GL_LESS for normal, GL_GREATER for rim).
      * Polygon offset biases shadow depth slightly closer to the camera,
@@ -1214,6 +1220,9 @@ static void draw_shadow_at_y(const PuzzleScene* ps, GLuint shader,
 
     glDisable(GL_POLYGON_OFFSET_FILL);
     glDepthMask(GL_TRUE);
+
+    /* Re-enable normal buffer writes */
+    glColorMaski(1, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
     /* Restore standard blend function */
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -1284,8 +1293,9 @@ static float actor_groove_y(const PuzzleScene* ps, float col, float row) {
 
 /* Compute actor Y offset for conveyor tiles.
  * Actors standing on a conveyor are raised by CONVEYOR_HEIGHT. */
-#define CONVEYOR_ELEV 0.075f  /* must match diorama_gen.c CONVEYOR_HEIGHT */
-#define CONVEYOR_BELT_TOP 0.078f  /* CONVEYOR_HEIGHT + belt thickness (0.003) */
+#define CONVEYOR_ELEV     0.10f   /* must match diorama_gen.c CONVEYOR_HEIGHT */
+#define CONVEYOR_BELT_H   0.006f  /* must match diorama_gen.c CONVEYOR_BELT_H */
+#define CONVEYOR_BELT_TOP (CONVEYOR_ELEV + CONVEYOR_BELT_H)  /* shadow plane */
 static float actor_conveyor_y(const PuzzleScene* ps, float col, float row) {
     if (!ps->conveyor_tile_map) return 0.0f;
 

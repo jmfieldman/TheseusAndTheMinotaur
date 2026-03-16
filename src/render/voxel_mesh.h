@@ -53,6 +53,7 @@ typedef enum {
     AO_MODE_SHADOW         = 3,  /* Actor shadow: samples shadow texture as alpha */
     AO_MODE_CONVEYOR_BELT  = 4,  /* Conveyor belt surface: scrolling ridges */
     AO_MODE_CONVEYOR_STRIPE = 5, /* Conveyor side walls: hazard stripes */
+    AO_MODE_CONVEYOR_RAIL  = 6,  /* Conveyor metallic rail: vertex color + lightmap AO */
 } AoMode;
 
 /* Wall orientation — controls which axis the slab pattern divides along.

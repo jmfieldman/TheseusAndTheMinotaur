@@ -14,8 +14,11 @@
 #define WALL_HEIGHT       0.30f
 #define WALL_THICKNESS    0.20f
 #define FLOOR_THICKNESS   0.15f
-#define CONVEYOR_HEIGHT   0.075f  /* platform elevation */
-#define CONVEYOR_RAIL     0.06f   /* metallic rail width on each side */
+#define CONVEYOR_HEIGHT   0.10f   /* platform elevation */
+#define CONVEYOR_RAIL     0.10f   /* metallic rail width on each side */
+#define CONVEYOR_BELT_H   0.006f  /* belt surface thickness */
+#define CONVEYOR_RAIL_H   0.02f   /* rail height above platform */
+#define CONVEYOR_ROLLER_R 0.035f  /* roller drum radius */
 
 /* ---------- Seeded RNG (xorshift32) ---------- */
 
@@ -915,6 +918,8 @@ static void gen_features(VoxelMesh* mesh, const Grid* grid,
 
                     float bh = CONVEYOR_HEIGHT;
                     float rw = CONVEYOR_RAIL;
+                    float rh = CONVEYOR_RAIL_H;
+                    float belt_h = CONVEYOR_BELT_H;
 
                     /* Side walls — hazard stripes (AO_MODE_CONVEYOR_STRIPE).
                      * Full tile coverage (no margin). */
@@ -924,43 +929,76 @@ static void gen_features(VoxelMesh* mesh, const Grid* grid,
                                AO_MODE_CONVEYOR_STRIPE);
                     set_last_box_orient(mesh, dir_orient);
 
-                    /* Metallic side rails on the top surface.
-                     * Placed along the edges perpendicular to movement. */
-                    float rail_r = 0.50f, rail_g = 0.52f, rail_b = 0.55f;
+                    /* Metallic side rails — raised edges perpendicular to
+                     * movement.  Taller and wider to create strong outline
+                     * edges and frame the belt visually. */
+                    float rail_r = 0.55f, rail_g = 0.57f, rail_b = 0.60f;
                     if (horiz) {
                         /* Rails on north and south edges */
                         add_box_ao(mesh, fx, bh, fz,
-                                   1.0f, 0.004f, rw,
+                                   1.0f, rh, rw,
                                    rail_r, rail_g, rail_b, 1.0f, false,
-                                   AO_MODE_LIGHTMAP);
+                                   AO_MODE_CONVEYOR_RAIL);
                         add_box_ao(mesh, fx, bh, fz + 1.0f - rw,
-                                   1.0f, 0.004f, rw,
+                                   1.0f, rh, rw,
                                    rail_r, rail_g, rail_b, 1.0f, false,
-                                   AO_MODE_LIGHTMAP);
+                                   AO_MODE_CONVEYOR_RAIL);
                         /* Belt center surface */
                         add_box_ao(mesh, fx, bh, fz + rw,
-                                   1.0f, 0.003f,
+                                   1.0f, belt_h,
                                    1.0f - 2.0f * rw,
-                                   0.20f, 0.20f, 0.22f, 1.0f, false,
+                                   0.25f, 0.25f, 0.27f, 1.0f, false,
                                    AO_MODE_CONVEYOR_BELT);
                         set_last_box_orient(mesh, dir_orient);
+                        /* Roller drums at tile boundaries */
+                        float drum_r = CONVEYOR_ROLLER_R;
+                        float drum_col = 0.40f;
+                        /* Front roller */
+                        add_box_ao(mesh, fx, bh - drum_r, fz + rw,
+                                   drum_r * 2.0f, drum_r * 2.0f,
+                                   1.0f - 2.0f * rw,
+                                   drum_col, drum_col, drum_col + 0.02f,
+                                   1.0f, false, AO_MODE_CONVEYOR_RAIL);
+                        /* Back roller */
+                        add_box_ao(mesh, fx + 1.0f - drum_r * 2.0f,
+                                   bh - drum_r, fz + rw,
+                                   drum_r * 2.0f, drum_r * 2.0f,
+                                   1.0f - 2.0f * rw,
+                                   drum_col, drum_col, drum_col + 0.02f,
+                                   1.0f, false, AO_MODE_CONVEYOR_RAIL);
                     } else {
                         /* Rails on east and west edges */
                         add_box_ao(mesh, fx, bh, fz,
-                                   rw, 0.004f, 1.0f,
+                                   rw, rh, 1.0f,
                                    rail_r, rail_g, rail_b, 1.0f, false,
-                                   AO_MODE_LIGHTMAP);
+                                   AO_MODE_CONVEYOR_RAIL);
                         add_box_ao(mesh, fx + 1.0f - rw, bh, fz,
-                                   rw, 0.004f, 1.0f,
+                                   rw, rh, 1.0f,
                                    rail_r, rail_g, rail_b, 1.0f, false,
-                                   AO_MODE_LIGHTMAP);
+                                   AO_MODE_CONVEYOR_RAIL);
                         /* Belt center surface */
                         add_box_ao(mesh, fx + rw, bh, fz,
-                                   1.0f - 2.0f * rw, 0.003f,
+                                   1.0f - 2.0f * rw, belt_h,
                                    1.0f,
-                                   0.20f, 0.20f, 0.22f, 1.0f, false,
+                                   0.25f, 0.25f, 0.27f, 1.0f, false,
                                    AO_MODE_CONVEYOR_BELT);
                         set_last_box_orient(mesh, dir_orient);
+                        /* Roller drums at tile boundaries */
+                        float drum_r = CONVEYOR_ROLLER_R;
+                        float drum_col = 0.40f;
+                        /* Front roller */
+                        add_box_ao(mesh, fx + rw, bh - drum_r, fz,
+                                   1.0f - 2.0f * rw, drum_r * 2.0f,
+                                   drum_r * 2.0f,
+                                   drum_col, drum_col, drum_col + 0.02f,
+                                   1.0f, false, AO_MODE_CONVEYOR_RAIL);
+                        /* Back roller */
+                        add_box_ao(mesh, fx + rw, bh - drum_r,
+                                   fz + 1.0f - drum_r * 2.0f,
+                                   1.0f - 2.0f * rw, drum_r * 2.0f,
+                                   drum_r * 2.0f,
+                                   drum_col, drum_col, drum_col + 0.02f,
+                                   1.0f, false, AO_MODE_CONVEYOR_RAIL);
                     }
                 } else {
                     /* Default: subtle floor accent marking */

@@ -649,7 +649,8 @@ void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
                 }
 
             } else if (ao_mode == AO_MODE_CONVEYOR_BELT ||
-                       ao_mode == AO_MODE_CONVEYOR_STRIPE) {
+                       ao_mode == AO_MODE_CONVEYOR_STRIPE ||
+                       ao_mode == AO_MODE_CONVEYOR_RAIL) {
                 /* --- Conveyor belt / stripe: pass through ao_mode, no AO baking --- */
                 float inv_n = 1.0f / (float)subdivs;
                 for (int sy = 0; sy < subdivs; sy++) {
