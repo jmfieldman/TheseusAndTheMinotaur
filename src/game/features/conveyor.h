@@ -23,4 +23,10 @@ struct cJSON;
 
 Feature* conveyor_create(int col, int row, const struct cJSON* config);
 
+/*
+ * Query the push direction of a conveyor feature.
+ * Returns DIR_NONE if f is not a conveyor.
+ */
+Direction conveyor_get_direction(const Feature* f);
+
 #endif /* GAME_FEATURE_CONVEYOR_H */

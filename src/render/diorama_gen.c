@@ -3,6 +3,7 @@
 #include "engine/utils.h"
 #include "game/feature.h"
 #include "game/features/groove_box.h"
+#include "game/features/conveyor.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -13,6 +14,8 @@
 #define WALL_HEIGHT       0.30f
 #define WALL_THICKNESS    0.20f
 #define FLOOR_THICKNESS   0.15f
+#define CONVEYOR_HEIGHT   0.075f  /* platform elevation */
+#define CONVEYOR_RAIL     0.06f   /* metallic rail width on each side */
 
 /* ---------- Seeded RNG (xorshift32) ---------- */
 
@@ -69,6 +72,13 @@ static void add_box_ao(VoxelMesh* mesh, float x, float y, float z,
                         float r, float g, float b, float a,
                         bool no_cull, AoMode ao_mode) {
     voxel_mesh_add_box_ex(mesh, x, y, z, sx, sy, sz, r, g, b, a, no_cull, ao_mode);
+}
+
+/* Set wall_orient on the most recently added box (used to encode
+ * conveyor direction: 0=E, 1=W, 2=N, 3=S). */
+static void set_last_box_orient(VoxelMesh* mesh, uint8_t orient) {
+    if (mesh->box_count > 0)
+        mesh->boxes[mesh->box_count - 1].wall_orient = orient;
 }
 
 static void add_light(DioramaGenResult* result,
@@ -885,6 +895,73 @@ static void gen_features(VoxelMesh* mesh, const Grid* grid,
                     add_box(mesh, fx + 0.53f, 0.001f, fz + 0.05f,
                             0.42f, 0.006f, 0.42f,
                             0.42f, 0.38f, 0.28f, 1.0f, false);
+                } else if (strcmp(name, "conveyor") == 0) {
+                    /* Conveyor belt: slightly raised platform with
+                     * metallic side rails, belt center, and hazard-stripe sides.
+                     * Belt runs in the conveyor's push direction. */
+                    Direction cdir = conveyor_get_direction(feat);
+                    bool horiz = (cdir == DIR_EAST || cdir == DIR_WEST);
+
+                    /* Direction encoding for shader UV:
+                     * 0=East, 1=West, 2=North, 3=South */
+                    uint8_t dir_orient;
+                    switch (cdir) {
+                        case DIR_EAST:  dir_orient = 0; break;
+                        case DIR_WEST:  dir_orient = 1; break;
+                        case DIR_NORTH: dir_orient = 2; break;
+                        case DIR_SOUTH: dir_orient = 3; break;
+                        default:        dir_orient = 0; break;
+                    }
+
+                    float bh = CONVEYOR_HEIGHT;
+                    float rw = CONVEYOR_RAIL;
+
+                    /* Side walls — hazard stripes (AO_MODE_CONVEYOR_STRIPE).
+                     * Full tile coverage (no margin). */
+                    add_box_ao(mesh, fx, 0.0f, fz,
+                               1.0f, bh, 1.0f,
+                               0.85f, 0.75f, 0.15f, 1.0f, false,
+                               AO_MODE_CONVEYOR_STRIPE);
+                    set_last_box_orient(mesh, dir_orient);
+
+                    /* Metallic side rails on the top surface.
+                     * Placed along the edges perpendicular to movement. */
+                    float rail_r = 0.50f, rail_g = 0.52f, rail_b = 0.55f;
+                    if (horiz) {
+                        /* Rails on north and south edges */
+                        add_box_ao(mesh, fx, bh, fz,
+                                   1.0f, 0.004f, rw,
+                                   rail_r, rail_g, rail_b, 1.0f, false,
+                                   AO_MODE_LIGHTMAP);
+                        add_box_ao(mesh, fx, bh, fz + 1.0f - rw,
+                                   1.0f, 0.004f, rw,
+                                   rail_r, rail_g, rail_b, 1.0f, false,
+                                   AO_MODE_LIGHTMAP);
+                        /* Belt center surface */
+                        add_box_ao(mesh, fx, bh, fz + rw,
+                                   1.0f, 0.003f,
+                                   1.0f - 2.0f * rw,
+                                   0.20f, 0.20f, 0.22f, 1.0f, false,
+                                   AO_MODE_CONVEYOR_BELT);
+                        set_last_box_orient(mesh, dir_orient);
+                    } else {
+                        /* Rails on east and west edges */
+                        add_box_ao(mesh, fx, bh, fz,
+                                   rw, 0.004f, 1.0f,
+                                   rail_r, rail_g, rail_b, 1.0f, false,
+                                   AO_MODE_LIGHTMAP);
+                        add_box_ao(mesh, fx + 1.0f - rw, bh, fz,
+                                   rw, 0.004f, 1.0f,
+                                   rail_r, rail_g, rail_b, 1.0f, false,
+                                   AO_MODE_LIGHTMAP);
+                        /* Belt center surface */
+                        add_box_ao(mesh, fx + rw, bh, fz,
+                                   1.0f - 2.0f * rw, 0.003f,
+                                   1.0f,
+                                   0.20f, 0.20f, 0.22f, 1.0f, false,
+                                   AO_MODE_CONVEYOR_BELT);
+                        set_last_box_orient(mesh, dir_orient);
+                    }
                 } else {
                     /* Default: subtle floor accent marking */
                     float inset = 0.2f;

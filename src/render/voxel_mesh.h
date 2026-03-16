@@ -47,10 +47,12 @@
 
 /* AO mode for each box — controls how ambient occlusion is computed. */
 typedef enum {
-    AO_MODE_NONE     = 0,  /* Wall heuristic: darkening baked into vertex color */
-    AO_MODE_ATLAS    = 1,  /* Raytraced AO texture atlas (complex geometry) */
-    AO_MODE_LIGHTMAP = 2,  /* Floor shadow lightmap (smooth, tunable) */
-    AO_MODE_SHADOW   = 3,  /* Actor shadow: samples shadow texture as alpha */
+    AO_MODE_NONE           = 0,  /* Wall heuristic: darkening baked into vertex color */
+    AO_MODE_ATLAS          = 1,  /* Raytraced AO texture atlas (complex geometry) */
+    AO_MODE_LIGHTMAP       = 2,  /* Floor shadow lightmap (smooth, tunable) */
+    AO_MODE_SHADOW         = 3,  /* Actor shadow: samples shadow texture as alpha */
+    AO_MODE_CONVEYOR_BELT  = 4,  /* Conveyor belt surface: scrolling ridges */
+    AO_MODE_CONVEYOR_STRIPE = 5, /* Conveyor side walls: hazard stripes */
 } AoMode;
 
 /* Wall orientation — controls which axis the slab pattern divides along.

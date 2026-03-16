@@ -648,6 +648,65 @@ void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
                     }
                 }
 
+            } else if (ao_mode == AO_MODE_CONVEYOR_BELT ||
+                       ao_mode == AO_MODE_CONVEYOR_STRIPE) {
+                /* --- Conveyor belt / stripe: pass through ao_mode, no AO baking --- */
+                float inv_n = 1.0f / (float)subdivs;
+                for (int sy = 0; sy < subdivs; sy++) {
+                    for (int sx = 0; sx < subdivs; sx++) {
+                        float u0 = (float)sx * inv_n;
+                        float v0 = (float)sy * inv_n;
+                        float u1 = (float)(sx + 1) * inv_n;
+                        float v1 = (float)(sy + 1) * inv_n;
+
+                        float p00[3], p10[3], p01[3], p11[3];
+                        if (subdivs > 1) {
+                            bilerp3(p00, corners, u0, v0);
+                            bilerp3(p10, corners, u1, v0);
+                            bilerp3(p01, corners, u0, v1);
+                            bilerp3(p11, corners, u1, v1);
+                        } else {
+                            for (int k = 0; k < 3; k++) {
+                                p00[k] = face->verts[0][k]; p10[k] = face->verts[1][k];
+                                p01[k] = face->verts[5][k]; p11[k] = face->verts[2][k];
+                            }
+                        }
+
+                        float qp[6][3] = {
+                            {p00[0], p00[1], p00[2]},
+                            {p10[0], p10[1], p10[2]},
+                            {p11[0], p11[1], p11[2]},
+                            {p00[0], p00[1], p00[2]},
+                            {p11[0], p11[1], p11[2]},
+                            {p01[0], p01[1], p01[2]},
+                        };
+
+                        /* Conveyor UV encoding from wall_orient:
+                         * 0=East, 1=West → horiz (uv.x=0), dir +1/-1
+                         * 2=North, 3=South → vert (uv.x=1), dir +1/-1 */
+                        float conv_axis = (box->wall_orient >= 2) ? 1.0f : 0.0f;
+                        float conv_sign = (box->wall_orient == 0 || box->wall_orient == 2) ? 1.0f : -1.0f;
+
+                        for (int v = 0; v < 6; v++) {
+                            float* dst = &verts[vert_count * FLOATS_PER_VERTEX];
+                            dst[0] = box->x + qp[v][0] * box->sx;
+                            dst[1] = box->y + qp[v][1] * box->sy;
+                            dst[2] = box->z + qp[v][2] * box->sz;
+                            dst[3] = face->nx;
+                            dst[4] = face->ny;
+                            dst[5] = face->nz;
+                            dst[6] = box->r;
+                            dst[7] = box->g;
+                            dst[8] = box->b;
+                            dst[9] = box->a;
+                            dst[10] = conv_axis;
+                            dst[11] = conv_sign;
+                            dst[12] = (float)ao_mode;
+                            vert_count++;
+                        }
+                    }
+                }
+
             } else {
                 /* --- AO_MODE_NONE: wall heuristic darkening --- */
                 float inv_n = 1.0f / (float)subdivs;

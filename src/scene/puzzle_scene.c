@@ -22,6 +22,7 @@
 #include "game/game.h"
 #include "game/features/groove_box.h"
 #include "game/features/auto_turnstile.h"
+#include "game/features/conveyor.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -178,6 +179,11 @@ typedef struct {
     int             groove_map_cols;
     int             groove_map_rows;
     float           trench_depth;    /* cached from biome config */
+
+    /* Conveyor tile tracking (for actor elevation) */
+    bool*           conveyor_tile_map;  /* flat bool array [rows * cols] */
+    int             conveyor_map_cols;
+    int             conveyor_map_rows;
 
     /* Failed push "bump" animation (no game state change, purely visual) */
     bool            bump_active;
@@ -936,6 +942,13 @@ static bool is_groove_tile(const PuzzleScene* ps, int col, int row) {
     return ps->groove_tile_map[row * ps->groove_map_cols + col];
 }
 
+static bool is_conveyor_tile(const PuzzleScene* ps, int col, int row) {
+    if (!ps->conveyor_tile_map) return false;
+    if (col < 0 || col >= ps->conveyor_map_cols) return false;
+    if (row < 0 || row >= ps->conveyor_map_rows) return false;
+    return ps->conveyor_tile_map[row * ps->conveyor_map_cols + col];
+}
+
 /*
  * Generate a blurred rectangular shadow texture for an actor.
  *
@@ -1253,6 +1266,74 @@ static float actor_groove_y(const PuzzleScene* ps, float col, float row) {
     return y;
 }
 
+/* Compute actor Y offset for conveyor tiles.
+ * Actors standing on a conveyor are raised by CONVEYOR_HEIGHT. */
+#define CONVEYOR_ELEV 0.075f  /* must match diorama_gen.c CONVEYOR_HEIGHT */
+static float actor_conveyor_y(const PuzzleScene* ps, float col, float row) {
+    if (!ps->conveyor_tile_map) return 0.0f;
+
+    int ic = (int)floorf(col);
+    int ir = (int)floorf(row);
+    float fc = col - (float)ic;
+    float fr = row - (float)ir;
+
+    bool cur = is_conveyor_tile(ps, ic, ir);
+
+    /* Simple: if on a conveyor tile, raise. With smooth transition near edges. */
+    if (cur) {
+        /* Check if moving off conveyor soon — smooth transition */
+        float y = CONVEYOR_ELEV;
+        float blend = 0.3f;
+        /* Check edges for smooth step-down */
+        if (fc > (1.0f - blend) && !is_conveyor_tile(ps, ic + 1, ir)) {
+            float t = (fc - (1.0f - blend)) / blend;
+            float s = t * t * (3.0f - 2.0f * t);
+            y = CONVEYOR_ELEV * (1.0f - s);
+        } else if (fc < blend && !is_conveyor_tile(ps, ic - 1, ir)) {
+            float t = (blend - fc) / blend;
+            float s = t * t * (3.0f - 2.0f * t);
+            y = CONVEYOR_ELEV * (1.0f - s);
+        }
+        if (fr > (1.0f - blend) && !is_conveyor_tile(ps, ic, ir + 1)) {
+            float t = (fr - (1.0f - blend)) / blend;
+            float s = t * t * (3.0f - 2.0f * t);
+            float ry = CONVEYOR_ELEV * (1.0f - s);
+            if (ry < y) y = ry;
+        } else if (fr < blend && !is_conveyor_tile(ps, ic, ir - 1)) {
+            float t = (blend - fr) / blend;
+            float s = t * t * (3.0f - 2.0f * t);
+            float ry = CONVEYOR_ELEV * (1.0f - s);
+            if (ry < y) y = ry;
+        }
+        return y;
+    }
+
+    /* Not on conveyor — check if approaching one */
+    float y = 0.0f;
+    float blend = 0.3f;
+    if (fc > (1.0f - blend) && is_conveyor_tile(ps, ic + 1, ir)) {
+        float t = (fc - (1.0f - blend)) / blend;
+        float s = t * t * (3.0f - 2.0f * t);
+        y = CONVEYOR_ELEV * s;
+    } else if (fc < blend && is_conveyor_tile(ps, ic - 1, ir)) {
+        float t = (blend - fc) / blend;
+        float s = t * t * (3.0f - 2.0f * t);
+        y = CONVEYOR_ELEV * s;
+    }
+    if (fr > (1.0f - blend) && is_conveyor_tile(ps, ic, ir + 1)) {
+        float t = (fr - (1.0f - blend)) / blend;
+        float s = t * t * (3.0f - 2.0f * t);
+        float ry = CONVEYOR_ELEV * s;
+        if (ry > y) y = ry;
+    } else if (fr < blend && is_conveyor_tile(ps, ic, ir - 1)) {
+        float t = (blend - fr) / blend;
+        float s = t * t * (3.0f - 2.0f * t);
+        float ry = CONVEYOR_ELEV * s;
+        if (ry > y) y = ry;
+    }
+    return y;
+}
+
 static void draw_shadow(const PuzzleScene* ps, GLuint shader,
                          float x, float z, float scale,
                          GLuint shadow_tex, float extent) {
@@ -1293,6 +1374,8 @@ static void build_diorama(PuzzleScene* ps) {
         destroy_turnstile_meshes(ps);
         free(ps->groove_tile_map);
         ps->groove_tile_map = NULL;
+        free(ps->conveyor_tile_map);
+        ps->conveyor_tile_map = NULL;
     }
 
     int cols = ps->grid->cols;
@@ -1326,6 +1409,21 @@ static void build_diorama(PuzzleScene* ps) {
                 if (pc >= 0 && pc < cols && pr >= 0 && pr < rows)
                     ps->groove_tile_map[pr * cols + pc] = true;
             }
+        }
+    }
+
+    /* Build conveyor tile map for actor elevation */
+    ps->conveyor_map_cols = cols;
+    ps->conveyor_map_rows = rows;
+    ps->conveyor_tile_map = calloc((size_t)(cols * rows), sizeof(bool));
+    if (ps->conveyor_tile_map) {
+        for (int fi = 0; fi < ps->grid->feature_count; fi++) {
+            const Feature* feat = ps->grid->features[fi];
+            if (!feat) continue;
+            if (conveyor_get_direction(feat) == DIR_NONE) continue;
+            int cc = feat->col, cr = feat->row;
+            if (cc >= 0 && cc < cols && cr >= 0 && cr < rows)
+                ps->conveyor_tile_map[cr * cols + cc] = true;
         }
     }
 
@@ -1556,6 +1654,32 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                          ws->gap_color[0], ws->gap_color[1], ws->gap_color[2], 0.0f);
     }
 
+    /* Conveyor belt scroll animation.
+     * During a CONVEYOR_PUSH environment event, scroll = effect_progress
+     * maps to one tile of belt movement. */
+    {
+        float scroll = 0.0f;
+        float dir_x = 1.0f, dir_z = 0.0f;
+        if (anim_queue_is_playing(&ps->anim)) {
+            const AnimEvent* cur = anim_queue_current_event(&ps->anim);
+            AnimPhase phase = anim_queue_phase(&ps->anim);
+            if (cur && phase == ANIM_PHASE_ENVIRONMENT &&
+                cur->type == ANIM_EVT_CONVEYOR_PUSH) {
+                scroll = anim_queue_effect_progress(&ps->anim);
+                /* Convert direction enum to world XZ vector */
+                switch (cur->conveyor.direction) {
+                    case DIR_EAST:  dir_x =  1.0f; dir_z =  0.0f; break;
+                    case DIR_WEST:  dir_x = -1.0f; dir_z =  0.0f; break;
+                    case DIR_NORTH: dir_x =  0.0f; dir_z =  1.0f; break;
+                    case DIR_SOUTH: dir_x =  0.0f; dir_z = -1.0f; break;
+                    default: break;
+                }
+            }
+        }
+        shader_set_float(shader, "u_conveyor_scroll", scroll);
+        shader_set_vec2(shader, "u_conveyor_dir", dir_x, dir_z);
+    }
+
     /* Draw static geometry (floor, walls, exit marker) */
     voxel_mesh_draw(&ps->diorama_mesh);
 
@@ -1746,11 +1870,13 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 mrow = (float)ps->grid->minotaur_row;
             }
 
-            /* Compute groove Y offset for minotaur */
-            float mino_gy = actor_groove_y(ps, mcol, mrow);
+            /* Compute groove Y offset for minotaur (conveyor elevation + groove trench) */
+            float mino_gy = actor_groove_y(ps, mcol, mrow)
+                          + actor_conveyor_y(ps, mcol, mrow);
 
-            /* Soft ground shadow — always at Y=0.01 (floor level). */
-            draw_shadow_at_y(ps, shader, mcol + 0.5f, 0.01f,
+            /* Soft ground shadow — at floor or conveyor surface level. */
+            float mino_shadow_y = 0.01f + actor_conveyor_y(ps, mcol, mrow);
+            draw_shadow_at_y(ps, shader, mcol + 0.5f, mino_shadow_y,
                              mrow + 0.5f, 1.0f,
                              ps->shadow_tex_minotaur, ps->shadow_extent_m);
 
@@ -2082,8 +2208,9 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 }
             }
 
-            /* Compute groove Y offset for Theseus */
-            float thes_gy = actor_groove_y(ps, tcol, trow);
+            /* Compute groove Y offset for Theseus (conveyor elevation + groove trench) */
+            float thes_gy = actor_groove_y(ps, tcol, trow)
+                          + actor_conveyor_y(ps, tcol, trow);
             float hop_y = thop * 0.3f;
 
             /* Soft ground shadow — shrinks with hop height.
@@ -2091,7 +2218,8 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
              * GL_LESS passes on rim, trench floor, and normal floor,
              * but correctly fails against groove box top (Y=0.45). */
             float shadow_scale = 1.0f - thop * 0.5f;
-            draw_shadow_at_y(ps, shader, tcol + 0.5f, 0.01f,
+            float thes_shadow_y = 0.01f + actor_conveyor_y(ps, tcol, trow);
+            draw_shadow_at_y(ps, shader, tcol + 0.5f, thes_shadow_y,
                              trow + 0.5f, shadow_scale,
                              ps->shadow_tex_theseus, ps->shadow_extent_t);
 
@@ -2483,6 +2611,8 @@ static void puzzle_on_exit(State* self) {
         destroy_shadow_resources(ps);
         free(ps->groove_tile_map);
         ps->groove_tile_map = NULL;
+        free(ps->conveyor_tile_map);
+        ps->conveyor_tile_map = NULL;
         ps->diorama_built = false;
     }
     if (ps->grid) {
@@ -2953,6 +3083,8 @@ static void puzzle_destroy(State* self) {
         destroy_shadow_resources(ps);
         free(ps->groove_tile_map);
         ps->groove_tile_map = NULL;
+        free(ps->conveyor_tile_map);
+        ps->conveyor_tile_map = NULL;
     }
     if (ps->grid) {
         grid_destroy(ps->grid);

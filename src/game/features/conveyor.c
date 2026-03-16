@@ -93,6 +93,11 @@ static const FeatureVTable conveyor_vt = {
     .destroy               = conv_destroy,
 };
 
+Direction conveyor_get_direction(const Feature* f) {
+    if (!f || f->vt != &conveyor_vt || !f->data) return DIR_NONE;
+    return ((const ConveyorData*)f->data)->direction;
+}
+
 /* ── Factory ──────────────────────────────────────────── */
 
 static Direction parse_dir(const char* s) {
