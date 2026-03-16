@@ -40,11 +40,13 @@ typedef enum {
 
 /* Theseus sub-phase for multi-part moves */
 typedef enum {
-    THESEUS_SUB_HOP,          /* normal hop or first hop of ice slide */
-    THESEUS_SUB_ICE_SLIDE,    /* constant-velocity slide across ice waypoints */
-    THESEUS_SUB_TELEPORT_OUT, /* shrink/fade at source */
-    THESEUS_SUB_TELEPORT_IN,  /* grow/fade at destination */
-    THESEUS_SUB_PUSH,         /* push move (box slides, Theseus steps) */
+    THESEUS_SUB_HOP,              /* normal hop or first hop of ice slide */
+    THESEUS_SUB_ICE_SLIDE,        /* constant-velocity slide across ice waypoints */
+    THESEUS_SUB_ICE_EXIT_HOP,     /* landing hop when sliding off ice onto normal tile */
+    THESEUS_SUB_ICE_WALL_BUMP,    /* slide into wall and bounce back on ice */
+    THESEUS_SUB_TELEPORT_OUT,     /* shrink/fade at source */
+    THESEUS_SUB_TELEPORT_IN,      /* grow/fade at destination */
+    THESEUS_SUB_PUSH,             /* push move (box slides, Theseus steps) */
 } TheseusSubPhase;
 
 /* Animation timing constants (seconds) */
@@ -58,6 +60,8 @@ typedef enum {
 
 /* Per-event-type durations */
 #define ANIM_ICE_SLIDE_PER_TILE  0.06f
+#define ANIM_ICE_EXIT_HOP_DUR   0.10f  /* short hop when sliding off ice */
+#define ANIM_ICE_WALL_BUMP_DUR  0.40f  /* slide into wall + bounce back */
 #define ANIM_TELEPORT_HALF       0.10f
 #define ANIM_PUSH_DURATION       0.15f
 #define ANIM_CRUMBLE_DURATION    0.15f
@@ -88,6 +92,9 @@ typedef struct {
     int              ice_wp_count;        /* total waypoints */
     int              ice_wp_cols[ICE_SLIDE_MAX_WAYPOINTS];
     int              ice_wp_rows[ICE_SLIDE_MAX_WAYPOINTS];
+    bool             ice_hit_wall;        /* true if slide ended by hitting wall */
+    float            ice_bump_dir_x;      /* slide direction for wall bump */
+    float            ice_bump_dir_z;
 
     /* Teleport effect progress (0→1 for each half) */
     Tween            effect;
@@ -199,6 +206,14 @@ const AnimEvent* anim_queue_current_event(const AnimQueue* aq);
 
 /* Is the Theseus phase in ice-slide sub-phase (no hop)? */
 bool anim_queue_is_ice_sliding(const AnimQueue* aq);
+
+/* Is the Theseus phase in ice wall bump sub-phase? */
+bool anim_queue_is_ice_wall_bumping(const AnimQueue* aq);
+
+/* Get ice wall bump progress (0→1) and direction.
+ * Returns -1.0 if not in wall bump. */
+float anim_queue_ice_bump_progress(const AnimQueue* aq,
+                                    float* out_dir_x, float* out_dir_z);
 
 /* Is the queue currently playing in reverse (undo)? */
 bool anim_queue_is_reversing(const AnimQueue* aq);

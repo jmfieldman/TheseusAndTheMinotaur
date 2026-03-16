@@ -69,23 +69,28 @@ static void start_theseus_phase(AnimQueue* aq) {
         aq->theseus_event_type = ANIM_EVT_THESEUS_ICE_SLIDE;
         aq->theseus_sub = THESEUS_SUB_HOP;
 
-        /* Copy waypoints */
+        /* Copy waypoints and wall-hit flag */
         aq->ice_wp_count = move_evt->ice_slide.waypoint_count;
         memcpy(aq->ice_wp_cols, move_evt->ice_slide.waypoint_cols,
                sizeof(int) * (size_t)aq->ice_wp_count);
         memcpy(aq->ice_wp_rows, move_evt->ice_slide.waypoint_rows,
                sizeof(int) * (size_t)aq->ice_wp_count);
         aq->ice_wp_index = 0;
+        aq->ice_hit_wall = move_evt->ice_slide.hit_wall;
 
-        /* Phase 1: hop to first ice tile (waypoint 0) */
+        /* Phase 1: hop to first ice tile (waypoint 0).
+         * Use linear easing at slide speed so lateral velocity is continuous
+         * into the SUB_ICE_SLIDE phase (no deceleration at landing).
+         * Hop arc is subtle (0→0.4 = 40% of normal height) — just a quick
+         * step onto the ice, not a full jump. */
         tween_init(&aq->move_x, (float)r->theseus_from_col,
                    (float)aq->ice_wp_cols[0],
-                   ANIM_THESEUS_DURATION, ease_out_cubic);
+                   ANIM_ICE_SLIDE_PER_TILE, ease_linear);
         tween_init(&aq->move_y, (float)r->theseus_from_row,
                    (float)aq->ice_wp_rows[0],
-                   ANIM_THESEUS_DURATION, ease_out_cubic);
-        tween_init(&aq->hop, 0.0f, 1.0f,
-                   ANIM_THESEUS_DURATION, ease_parabolic_arc);
+                   ANIM_ICE_SLIDE_PER_TILE, ease_linear);
+        tween_init(&aq->hop, 0.0f, 0.4f,
+                   ANIM_ICE_SLIDE_PER_TILE, ease_parabolic_arc);
         return;
     }
 
@@ -382,6 +387,46 @@ static void start_ice_slide_sub(AnimQueue* aq) {
     tween_init(&aq->hop, 0.0f, 0.0f, 0.001f, ease_linear);
 }
 
+/* Compute and store the slide direction from the last two waypoints. */
+static void compute_ice_slide_dir(AnimQueue* aq) {
+    if (aq->ice_wp_count >= 2) {
+        int last = aq->ice_wp_count - 1;
+        aq->ice_bump_dir_x = (float)(aq->ice_wp_cols[last] -
+                                      aq->ice_wp_cols[last - 1]);
+        aq->ice_bump_dir_z = (float)(aq->ice_wp_rows[last] -
+                                      aq->ice_wp_rows[last - 1]);
+    } else {
+        aq->ice_bump_dir_x = 0.0f;
+        aq->ice_bump_dir_z = 0.0f;
+    }
+}
+
+/* Start ice exit hop: short landing hop when sliding off ice onto normal tile.
+ * Theseus stays at the final position — just a vertical hop arc. */
+static void start_ice_exit_hop(AnimQueue* aq) {
+    aq->theseus_sub = THESEUS_SUB_ICE_EXIT_HOP;
+    int last = aq->ice_wp_count - 1;
+    float col = (float)aq->ice_wp_cols[last];
+    float row = (float)aq->ice_wp_rows[last];
+    tween_init(&aq->move_x, col, col, ANIM_ICE_EXIT_HOP_DUR, ease_linear);
+    tween_init(&aq->move_y, row, row, ANIM_ICE_EXIT_HOP_DUR, ease_linear);
+    tween_init(&aq->hop, 0.0f, 0.5f, ANIM_ICE_EXIT_HOP_DUR, ease_parabolic_arc);
+}
+
+/* Start ice wall bump: use effect tween as 0→1 progress over bump duration.
+ * Positional displacement is computed in anim_queue_theseus_pos(). */
+static void start_ice_wall_bump(AnimQueue* aq) {
+    aq->theseus_sub = THESEUS_SUB_ICE_WALL_BUMP;
+    compute_ice_slide_dir(aq);
+    int last = aq->ice_wp_count - 1;
+    float col = (float)aq->ice_wp_cols[last];
+    float row = (float)aq->ice_wp_rows[last];
+    tween_init(&aq->move_x, col, col, ANIM_ICE_WALL_BUMP_DUR, ease_linear);
+    tween_init(&aq->move_y, row, row, ANIM_ICE_WALL_BUMP_DUR, ease_linear);
+    tween_init(&aq->hop, 0.0f, 0.0f, 0.001f, ease_linear);
+    tween_init(&aq->effect, 0.0f, 1.0f, ANIM_ICE_WALL_BUMP_DUR, ease_linear);
+}
+
 /* ── Reverse playback helpers ─────────────────────────── */
 
 /*
@@ -649,8 +694,10 @@ static void start_reverse_theseus_phase(AnimQueue* aq) {
     }
 
     if (move_evt && move_evt->type == ANIM_EVT_THESEUS_ICE_SLIDE) {
-        /* Reverse ice slide: slide back from final waypoint to first, then hop back */
+        /* Reverse ice slide: wall bump/exit hop reversed → slide backwards → hop back.
+         * Waypoints are stored in reverse order so the slide retraces the path. */
         aq->theseus_event_type = ANIM_EVT_THESEUS_ICE_SLIDE;
+        aq->ice_hit_wall = move_evt->ice_slide.hit_wall;
 
         /* Copy waypoints in reverse */
         int wpc = move_evt->ice_slide.waypoint_count;
@@ -664,22 +711,40 @@ static void start_reverse_theseus_phase(AnimQueue* aq) {
         if (wpc <= 1) {
             /* Only one waypoint — just hop back */
             aq->theseus_sub = THESEUS_SUB_HOP;
-            float dur = rev_dur(ANIM_THESEUS_DURATION);
-            tween_init(&aq->move_x, (float)r->theseus_to_col,
-                       (float)r->theseus_from_col, dur, ease_out_cubic);
-            tween_init(&aq->move_y, (float)r->theseus_to_row,
-                       (float)r->theseus_from_row, dur, ease_out_cubic);
-            tween_init(&aq->hop, 0.0f, 1.0f, dur, ease_parabolic_arc);
-        } else {
-            /* Start sliding backwards (no hop during slide phase) */
-            aq->theseus_sub = THESEUS_SUB_ICE_SLIDE;
-            aq->ice_wp_index = 1;
             float dur = rev_dur(ANIM_ICE_SLIDE_PER_TILE);
-            tween_init(&aq->move_x, (float)aq->ice_wp_cols[0],
-                       (float)aq->ice_wp_cols[1], dur, ease_linear);
-            tween_init(&aq->move_y, (float)aq->ice_wp_rows[0],
-                       (float)aq->ice_wp_rows[1], dur, ease_linear);
-            tween_init(&aq->hop, 0.0f, 0.0f, 0.001f, ease_linear);
+            tween_init(&aq->move_x, (float)r->theseus_to_col,
+                       (float)r->theseus_from_col, dur, ease_linear);
+            tween_init(&aq->move_y, (float)r->theseus_to_row,
+                       (float)r->theseus_from_row, dur, ease_linear);
+            tween_init(&aq->hop, 0.0f, 0.4f, dur, ease_parabolic_arc);
+        } else {
+            /* Start with wall bump or exit hop (reversed), then slide */
+            if (aq->ice_hit_wall) {
+                /* Reversed wall bump: effect 1→0 (plays the bump backwards) */
+                aq->theseus_sub = THESEUS_SUB_ICE_WALL_BUMP;
+                /* For reverse, compute direction from the ORIGINAL last two waypoints
+                 * (first two in our reversed array = last two in original) */
+                aq->ice_bump_dir_x = (float)(move_evt->ice_slide.waypoint_cols[wpc - 1] -
+                                              move_evt->ice_slide.waypoint_cols[wpc - 2]);
+                aq->ice_bump_dir_z = (float)(move_evt->ice_slide.waypoint_rows[wpc - 1] -
+                                              move_evt->ice_slide.waypoint_rows[wpc - 2]);
+                float col = (float)aq->ice_wp_cols[0];
+                float row = (float)aq->ice_wp_rows[0];
+                float dur = rev_dur(ANIM_ICE_WALL_BUMP_DUR);
+                tween_init(&aq->move_x, col, col, dur, ease_linear);
+                tween_init(&aq->move_y, row, row, dur, ease_linear);
+                tween_init(&aq->hop, 0.0f, 0.0f, 0.001f, ease_linear);
+                tween_init(&aq->effect, 1.0f, 0.0f, dur, ease_linear);
+            } else {
+                /* Reversed exit hop: hop at final position (which is first in reversed array) */
+                aq->theseus_sub = THESEUS_SUB_ICE_EXIT_HOP;
+                float col = (float)aq->ice_wp_cols[0];
+                float row = (float)aq->ice_wp_rows[0];
+                float dur = rev_dur(ANIM_ICE_EXIT_HOP_DUR);
+                tween_init(&aq->move_x, col, col, dur, ease_linear);
+                tween_init(&aq->move_y, row, row, dur, ease_linear);
+                tween_init(&aq->hop, 0.0f, 0.5f, dur, ease_parabolic_arc);
+            }
         }
         return;
     }
@@ -887,24 +952,56 @@ static void anim_queue_update_reverse(AnimQueue* aq, float dt) {
     case ANIM_PHASE_THESEUS: {
         /* Handle reverse Theseus sub-phases */
         if (aq->theseus_event_type == ANIM_EVT_THESEUS_ICE_SLIDE) {
-            if (aq->theseus_sub == THESEUS_SUB_ICE_SLIDE) {
+            if (aq->theseus_sub == THESEUS_SUB_ICE_WALL_BUMP) {
+                /* Reversed wall bump: effect tween 1→0 */
+                tween_update(&aq->effect, dt);
+                tween_update(&aq->move_x, dt);
+                tween_update(&aq->move_y, dt);
+                if (aq->effect.finished) {
+                    /* Wall bump done, start sliding backwards */
+                    aq->theseus_sub = THESEUS_SUB_ICE_SLIDE;
+                    aq->ice_wp_index = 1;
+                    float dur = rev_dur(ANIM_ICE_SLIDE_PER_TILE);
+                    tween_init(&aq->move_x, (float)aq->ice_wp_cols[0],
+                               (float)aq->ice_wp_cols[1], dur, ease_linear);
+                    tween_init(&aq->move_y, (float)aq->ice_wp_rows[0],
+                               (float)aq->ice_wp_rows[1], dur, ease_linear);
+                    tween_init(&aq->hop, 0.0f, 0.0f, 0.001f, ease_linear);
+                }
+            } else if (aq->theseus_sub == THESEUS_SUB_ICE_EXIT_HOP) {
+                /* Reversed exit hop at the destination position */
+                tween_update(&aq->move_x, dt);
+                tween_update(&aq->move_y, dt);
+                tween_update(&aq->hop, dt);
+                if (aq->hop.finished) {
+                    /* Exit hop done, start sliding backwards */
+                    aq->theseus_sub = THESEUS_SUB_ICE_SLIDE;
+                    aq->ice_wp_index = 1;
+                    float dur = rev_dur(ANIM_ICE_SLIDE_PER_TILE);
+                    tween_init(&aq->move_x, (float)aq->ice_wp_cols[0],
+                               (float)aq->ice_wp_cols[1], dur, ease_linear);
+                    tween_init(&aq->move_y, (float)aq->ice_wp_rows[0],
+                               (float)aq->ice_wp_rows[1], dur, ease_linear);
+                    tween_init(&aq->hop, 0.0f, 0.0f, 0.001f, ease_linear);
+                }
+            } else if (aq->theseus_sub == THESEUS_SUB_ICE_SLIDE) {
                 tween_update(&aq->move_x, dt);
                 tween_update(&aq->move_y, dt);
                 if (aq->move_x.finished && aq->move_y.finished) {
                     aq->ice_wp_index++;
                     if (aq->ice_wp_index >= aq->ice_wp_count) {
-                        /* Done sliding, now hop from first ice tile back to from */
+                        /* Done sliding backwards, hop from first ice tile back to origin */
                         aq->theseus_sub = THESEUS_SUB_HOP;
-                        float dur = rev_dur(ANIM_THESEUS_DURATION);
+                        float dur = rev_dur(ANIM_ICE_SLIDE_PER_TILE);
                         tween_init(&aq->move_x,
                                    (float)aq->ice_wp_cols[aq->ice_wp_count - 1],
                                    (float)aq->record.theseus_from_col,
-                                   dur, ease_out_cubic);
+                                   dur, ease_linear);
                         tween_init(&aq->move_y,
                                    (float)aq->ice_wp_rows[aq->ice_wp_count - 1],
                                    (float)aq->record.theseus_from_row,
-                                   dur, ease_out_cubic);
-                        tween_init(&aq->hop, 0.0f, 1.0f, dur, ease_parabolic_arc);
+                                   dur, ease_linear);
+                        tween_init(&aq->hop, 0.0f, 0.4f, dur, ease_parabolic_arc);
                     } else {
                         int prev = aq->ice_wp_index - 1;
                         int curr = aq->ice_wp_index;
@@ -920,7 +1017,7 @@ static void anim_queue_update_reverse(AnimQueue* aq, float dt) {
                     }
                 }
             } else {
-                /* HOP sub-phase (reverse: hop from first ice tile back to from) */
+                /* HOP sub-phase (reverse: hop from first ice tile back to origin) */
                 tween_update(&aq->move_x, dt);
                 tween_update(&aq->move_y, dt);
                 tween_update(&aq->hop, dt);
@@ -1017,27 +1114,50 @@ void anim_queue_update(AnimQueue* aq, float dt) {
                 tween_update(&aq->hop, dt);
                 if (aq->move_x.finished && aq->move_y.finished) {
                     start_ice_slide_sub(aq);
-                    if (aq->ice_wp_count <= 1) goto theseus_done;
+                    if (aq->ice_wp_count <= 1) {
+                        /* Only one waypoint — skip to termination phase */
+                        if (aq->ice_hit_wall) {
+                            start_ice_wall_bump(aq);
+                        } else {
+                            start_ice_exit_hop(aq);
+                        }
+                    }
                 }
-            } else {
+            } else if (aq->theseus_sub == THESEUS_SUB_ICE_SLIDE) {
                 tween_update(&aq->move_x, dt);
                 tween_update(&aq->move_y, dt);
                 if (aq->move_x.finished && aq->move_y.finished) {
                     aq->ice_wp_index++;
                     if (aq->ice_wp_index >= aq->ice_wp_count) {
-                        goto theseus_done;
+                        /* All waypoints traversed — wall bump or exit hop */
+                        if (aq->ice_hit_wall) {
+                            start_ice_wall_bump(aq);
+                        } else {
+                            start_ice_exit_hop(aq);
+                        }
+                    } else {
+                        int prev = aq->ice_wp_index - 1;
+                        int curr = aq->ice_wp_index;
+                        tween_init(&aq->move_x,
+                                   (float)aq->ice_wp_cols[prev],
+                                   (float)aq->ice_wp_cols[curr],
+                                   ANIM_ICE_SLIDE_PER_TILE, ease_linear);
+                        tween_init(&aq->move_y,
+                                   (float)aq->ice_wp_rows[prev],
+                                   (float)aq->ice_wp_rows[curr],
+                                   ANIM_ICE_SLIDE_PER_TILE, ease_linear);
                     }
-                    int prev = aq->ice_wp_index - 1;
-                    int curr = aq->ice_wp_index;
-                    tween_init(&aq->move_x,
-                               (float)aq->ice_wp_cols[prev],
-                               (float)aq->ice_wp_cols[curr],
-                               ANIM_ICE_SLIDE_PER_TILE, ease_linear);
-                    tween_init(&aq->move_y,
-                               (float)aq->ice_wp_rows[prev],
-                               (float)aq->ice_wp_rows[curr],
-                               ANIM_ICE_SLIDE_PER_TILE, ease_linear);
                 }
+            } else if (aq->theseus_sub == THESEUS_SUB_ICE_EXIT_HOP) {
+                tween_update(&aq->move_x, dt);
+                tween_update(&aq->move_y, dt);
+                tween_update(&aq->hop, dt);
+                if (aq->hop.finished) goto theseus_done;
+            } else if (aq->theseus_sub == THESEUS_SUB_ICE_WALL_BUMP) {
+                tween_update(&aq->effect, dt);
+                tween_update(&aq->move_x, dt);
+                tween_update(&aq->move_y, dt);
+                if (aq->effect.finished) goto theseus_done;
             }
             break;
         }
@@ -1205,6 +1325,7 @@ void anim_queue_theseus_pos(const AnimQueue* aq,
         *out_row = tween_value(&aq->move_y);
 
         if (aq->theseus_sub == THESEUS_SUB_ICE_SLIDE ||
+            aq->theseus_sub == THESEUS_SUB_ICE_WALL_BUMP ||
             aq->theseus_event_type == ANIM_EVT_THESEUS_TELEPORT ||
             aq->theseus_sub == THESEUS_SUB_PUSH) {
             *out_hop = 0.0f;
@@ -1366,6 +1487,21 @@ bool anim_queue_is_ice_sliding(const AnimQueue* aq) {
             aq->phase == ANIM_PHASE_THESEUS &&
             aq->theseus_event_type == ANIM_EVT_THESEUS_ICE_SLIDE &&
             aq->theseus_sub == THESEUS_SUB_ICE_SLIDE);
+}
+
+bool anim_queue_is_ice_wall_bumping(const AnimQueue* aq) {
+    return (aq->playing &&
+            aq->phase == ANIM_PHASE_THESEUS &&
+            aq->theseus_event_type == ANIM_EVT_THESEUS_ICE_SLIDE &&
+            aq->theseus_sub == THESEUS_SUB_ICE_WALL_BUMP);
+}
+
+float anim_queue_ice_bump_progress(const AnimQueue* aq,
+                                    float* out_dir_x, float* out_dir_z) {
+    if (!anim_queue_is_ice_wall_bumping(aq)) return -1.0f;
+    if (out_dir_x) *out_dir_x = aq->ice_bump_dir_x;
+    if (out_dir_z) *out_dir_z = aq->ice_bump_dir_z;
+    return tween_value(&aq->effect);
 }
 
 bool anim_queue_is_reversing(const AnimQueue* aq) {

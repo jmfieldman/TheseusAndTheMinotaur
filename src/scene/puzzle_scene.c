@@ -40,6 +40,10 @@
 /* Actor size as fraction of tile size */
 #define THESEUS_SIZE_FRAC   0.45f
 #define MINOTAUR_SIZE_FRAC  0.65f
+/* 3D wall thickness — must match diorama_gen.c WALL_THICKNESS */
+#define WALL_THICKNESS_3D   0.20f
+/* 3D Theseus body size — must match actor_render.c THESEUS_SIZE */
+#define THESEUS_BODY_SIZE   0.45f
 /* Exit tile marker inset */
 #define EXIT_MARKER_INSET   0.15f
 /* Entrance marker inset */
@@ -187,14 +191,11 @@ typedef struct {
     /* Step1→Step2 transition tracking for mid-roll stomp effects */
     bool            was_mino_in_step1; /* true if previous frame was STEP1 */
 
-    /* Contextual deformations: push, turnstile, ice collision (Step 6.6) */
+    /* Contextual deformations: push, turnstile (Step 6.6) */
     bool            was_pushing;         /* true if previous frame was in BOX_SLIDE phase */
     bool            was_turnstile_pushing; /* true if previous frame was in TURNSTILE_ROTATE */
-    bool            was_ice_sliding_flag;  /* true if previous frame was ice sliding */
     float           push_dir_x;          /* direction of last push for recovery */
     float           push_dir_z;
-    float           ice_slide_dir_x;     /* direction of last ice slide for impact squish */
-    float           ice_slide_dir_z;
     bool            squish_recovery_active;  /* true while post-push/turnstile/ice elastic recovery plays */
     float           squish_recovery_timer;
     float           squish_recovery_amplitude; /* initial squish amount (sign = overshoot direction) */
@@ -1909,6 +1910,35 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 trow += ps->bump_dir_z * bump_frac * max_disp;
             }
 
+            /* Ice wall bump: positional offset driven by anim_queue (Step 6.6).
+             * The wall bump sub-phase provides a 0→1 progress value.
+             * Phase 1 (0→contact_frac): slide toward wall at constant velocity.
+             * Phase 2 (contact_frac→1): damped elastic bounce back to center.
+             * Max displacement: Theseus's leading edge touches the wall's inner face. */
+            #define ICE_BUMP_CONTACT_FRAC  (0.06f / ANIM_ICE_WALL_BUMP_DUR)
+            #define ICE_BUMP_MAX_DISP  (0.5f - WALL_THICKNESS_3D * 0.5f - THESEUS_BODY_SIZE * 0.5f)
+            {
+                float bump_dir_x, bump_dir_z;
+                float bump_t = anim_queue_ice_bump_progress(&ps->anim,
+                                                             &bump_dir_x, &bump_dir_z);
+                if (bump_t >= 0.0f) {
+                    float disp;
+                    if (bump_t < ICE_BUMP_CONTACT_FRAC) {
+                        /* Slide toward wall at constant velocity */
+                        disp = (bump_t / ICE_BUMP_CONTACT_FRAC) * ICE_BUMP_MAX_DISP;
+                    } else {
+                        /* Bounce back: damped elastic from max displacement to 0 */
+                        float u = (bump_t - ICE_BUMP_CONTACT_FRAC) /
+                                  (1.0f - ICE_BUMP_CONTACT_FRAC);
+                        float bounce = cosf(u * 12.0f) * expf(-u * 5.0f);
+                        if (bounce < 0.0f) bounce *= 0.3f; /* limit backward overshoot */
+                        disp = ICE_BUMP_MAX_DISP * bounce;
+                    }
+                    tcol += bump_dir_x * disp;
+                    trow += bump_dir_z * disp;
+                }
+            }
+
             /* Compute groove Y offset for Theseus */
             float thes_gy = actor_groove_y(ps, tcol, trow);
             float hop_y = thop * 0.3f;
@@ -1936,7 +1966,8 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             bool in_hop = animating &&
                           anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
                           !in_push && !in_turnstile &&
-                          !anim_queue_is_ice_sliding(&ps->anim);
+                          !anim_queue_is_ice_sliding(&ps->anim) &&
+                          !anim_queue_is_ice_wall_bumping(&ps->anim);
 
             if (in_push) {
                 /* ── Groove box push deformation (Step 6.6) ──
@@ -2126,10 +2157,44 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 }
             }
 
-            /* ── Post-push/turnstile/ice squish recovery (Step 6.6) ──
+            /* ── Ice wall bump deformation (Step 6.6) ──
+             * Driven by anim_queue sub-phase (supports forward + reverse).
+             * Approach: lean forward. Impact: strong directional squish + squash.
+             * Bounce: damped elastic recovery. */
+            {
+                float bump_dir_x2, bump_dir_z2;
+                float bump_p = anim_queue_ice_bump_progress(&ps->anim,
+                                                             &bump_dir_x2, &bump_dir_z2);
+                if (bump_p >= 0.0f && !ps->bump_active) {
+                    deform.squish_dir_x = bump_dir_x2;
+                    deform.squish_dir_z = bump_dir_z2;
+
+                    if (bump_p < ICE_BUMP_CONTACT_FRAC) {
+                        /* Approaching wall: forward lean builds */
+                        float u = bump_p / ICE_BUMP_CONTACT_FRAC;
+                        deform.lean_x = bump_dir_x2 * 0.05f * u;
+                        deform.lean_z = bump_dir_z2 * 0.05f * u;
+                    } else {
+                        /* Post-impact: damped squish oscillation */
+                        float u = (bump_p - ICE_BUMP_CONTACT_FRAC) /
+                                  (1.0f - ICE_BUMP_CONTACT_FRAC);
+                        float osc = 0.22f * cosf(u * 20.0f) * expf(-u * 6.0f);
+                        deform.squish_amount = osc;
+                        float squash_osc = fabsf(osc);
+                        deform.squash = 1.0f - squash_osc * 0.4f;
+                        deform.flare  = squash_osc * 0.25f;
+                        float lean_osc = 0.06f * cosf(u * 14.0f) * expf(-u * 5.0f);
+                        deform.lean_x = -bump_dir_x2 * lean_osc;
+                        deform.lean_z = -bump_dir_z2 * lean_osc;
+                    }
+                }
+            }
+
+            /* ── Post-push/turnstile squish recovery (Step 6.6) ──
              * Damped elastic oscillation in squish direction.
              * Uses cosine so the effect starts at peak on impact, then rings down. */
-            if (ps->squish_recovery_active && !ps->bump_active) {
+            if (ps->squish_recovery_active && !ps->bump_active
+                && !anim_queue_is_ice_wall_bumping(&ps->anim)) {
                 #define SQUISH_RECOVERY_DURATION 0.25f
                 #define SQUISH_RECOVERY_FREQ    22.0f
                 #define SQUISH_RECOVERY_DAMPING 10.0f
@@ -2245,11 +2310,8 @@ static void puzzle_on_enter(State* self) {
     ps->was_mino_rolling = false;
     ps->was_pushing = false;
     ps->was_turnstile_pushing = false;
-    ps->was_ice_sliding_flag = false;
     ps->push_dir_x = 0.0f;
     ps->push_dir_z = 0.0f;
-    ps->ice_slide_dir_x = 0.0f;
-    ps->ice_slide_dir_z = 0.0f;
     ps->squish_recovery_active = false;
     ps->squish_recovery_timer = 0.0f;
     ps->debug_anim_speed = 1.0f;
@@ -2479,7 +2541,8 @@ static void puzzle_update(State* self, float dt) {
                           anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
                           anim_queue_theseus_event_type(&ps->anim) != ANIM_EVT_BOX_SLIDE &&
                           anim_queue_theseus_event_type(&ps->anim) != ANIM_EVT_TURNSTILE_ROTATE &&
-                          !anim_queue_is_ice_sliding(&ps->anim);
+                          !anim_queue_is_ice_sliding(&ps->anim) &&
+                          !anim_queue_is_ice_wall_bumping(&ps->anim);
         if (ps->was_theseus_hopping && !is_hopping) {
             ps->wobble_active = true;
             ps->wobble_timer = 0.0f;
@@ -2551,49 +2614,6 @@ static void puzzle_update(State* self, float dt) {
             ps->squish_recovery_dir_z = ps->push_dir_z;
         }
         ps->was_turnstile_pushing = is_turnstile;
-    }
-
-    /* Detect ice slide end → start impact squish if Theseus hit a wall (Step 6.6).
-     * Only triggers the wall collision squish when there's actually a wall in
-     * the slide direction at the final waypoint tile. */
-    {
-        bool is_ice = anim_queue_is_ice_sliding(&ps->anim);
-        if (is_ice) {
-            /* Track the slide direction from the last two waypoints */
-            if (ps->anim.ice_wp_count >= 2) {
-                int last = ps->anim.ice_wp_count - 1;
-                ps->ice_slide_dir_x = (float)(ps->anim.ice_wp_cols[last] -
-                                               ps->anim.ice_wp_cols[last - 1]);
-                ps->ice_slide_dir_z = (float)(ps->anim.ice_wp_rows[last] -
-                                               ps->anim.ice_wp_rows[last - 1]);
-            }
-        }
-        if (ps->was_ice_sliding_flag && !is_ice) {
-            /* Check if Theseus hit a wall at the end of the slide */
-            int dx = (int)ps->ice_slide_dir_x;
-            int dz = (int)ps->ice_slide_dir_z;
-            Direction slide_dir = DIR_NORTH; /* fallback */
-            if (dx == 1)       slide_dir = DIR_EAST;
-            else if (dx == -1) slide_dir = DIR_WEST;
-            else if (dz == 1)  slide_dir = DIR_NORTH;
-            else if (dz == -1) slide_dir = DIR_SOUTH;
-
-            int final_col = ps->grid->theseus_col;
-            int final_row = ps->grid->theseus_row;
-            bool hit_wall = grid_has_wall(ps->grid, final_col, final_row,
-                                          slide_dir);
-            LOG_INFO("Ice slide end: dir=(%d,%d) pos=(%d,%d) hit_wall=%d",
-                     dx, dz, final_col, final_row, hit_wall);
-            if (hit_wall && (dx != 0 || dz != 0)) {
-                LOG_INFO("Ice wall collision: starting squish recovery amp=0.20");
-                ps->squish_recovery_active = true;
-                ps->squish_recovery_timer = 0.0f;
-                ps->squish_recovery_amplitude = 0.20f; /* strong impact squish */
-                ps->squish_recovery_dir_x = ps->ice_slide_dir_x;
-                ps->squish_recovery_dir_z = ps->ice_slide_dir_z;
-            }
-        }
-        ps->was_ice_sliding_flag = is_ice;
     }
 
     /* Update squish recovery timer (Step 6.6) */

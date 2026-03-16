@@ -240,9 +240,14 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
 
                 TurnResult slide_result = ice_slide_with_waypoints(grid, player_dir, &ice_evt);
 
-                /* Final position after slide */
+                /* Final position after slide.
+                 * If Theseus is still on ice, the slide ended by hitting a wall.
+                 * If not on ice, he slid off onto a normal tile. */
                 ice_evt.to_col = grid->theseus_col;
                 ice_evt.to_row = grid->theseus_row;
+                ice_evt.ice_slide.hit_wall = tile_has_ice(grid,
+                                                           grid->theseus_col,
+                                                           grid->theseus_row);
                 turn_record_push_event(record, &ice_evt);
 
                 if (slide_result != TURN_RESULT_CONTINUE) {

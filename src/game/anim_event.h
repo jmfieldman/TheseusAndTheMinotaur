@@ -61,9 +61,10 @@ typedef struct {
     union {
         /* ANIM_EVT_THESEUS_ICE_SLIDE */
         struct {
-            int waypoint_cols[ICE_SLIDE_MAX_WAYPOINTS];
-            int waypoint_rows[ICE_SLIDE_MAX_WAYPOINTS];
-            int waypoint_count;
+            int  waypoint_cols[ICE_SLIDE_MAX_WAYPOINTS];
+            int  waypoint_rows[ICE_SLIDE_MAX_WAYPOINTS];
+            int  waypoint_count;
+            bool hit_wall;      /* true if slide ended by hitting a wall */
         } ice_slide;
 
         /* ANIM_EVT_TURNSTILE_ROTATE / ANIM_EVT_AUTO_TURNSTILE_ROTATE */
