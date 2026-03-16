@@ -15,7 +15,9 @@
     { "col": 2, "row": 3, "side": "east" },
     { "col": 3, "row": 3, "side": "south" },
     { "col": 5, "row": 5, "side": "east" },
-    { "col": 5, "row": 5, "side": "south" }
+    { "col": 5, "row": 5, "side": "south" },
+    { "col": 2, "row": 6, "side": "south" },
+    { "col": 3, "row": 6, "side": "south" }
   ],
   "impassable": [],
   "features": [
@@ -28,6 +30,11 @@
       "type": "auto_turnstile",
       "position": { "col": 5, "row": 5 },
       "config": { "junction_col": 6, "junction_row": 5, "direction": "ccw" }
+    },
+    {
+      "type": "auto_turnstile",
+      "position": { "col": 2, "row": 6 },
+      "config": { "junction_col": 3, "junction_row": 6, "direction": "ccw" }
     }
   ]
 }

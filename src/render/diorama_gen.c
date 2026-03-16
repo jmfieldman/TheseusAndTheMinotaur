@@ -393,6 +393,53 @@ static void emit_wall_segment(VoxelMesh* mesh, const BiomeConfig* biome,
  *   or the west wall of cell (vx, vz)  [if vx == 0].
  */
 
+/* ── Cell-set membership helpers (for turnstile wall separation) ── */
+
+static bool cell_in_set(int col, int row,
+                         const int (*cells)[2], int count) {
+    for (int i = 0; i < count; i++) {
+        if (cells[i][0] == col && cells[i][1] == row) return true;
+    }
+    return false;
+}
+
+/* Does the horizontal wall at (vx, vz) touch any cell in the set? */
+static bool h_wall_touches_set(int vx, int vz, int rows,
+                                const int (*cells)[2], int count) {
+    if (!cells || count == 0) return false;
+    /* Horizontal wall at vz from vx to vx+1:
+     *   south wall of cell (vx, vz)   [if vz < rows]
+     *   north wall of cell (vx, vz-1) [if vz > 0]   */
+    if (vz < rows && cell_in_set(vx, vz, cells, count)) return true;
+    if (vz > 0   && cell_in_set(vx, vz - 1, cells, count)) return true;
+    return false;
+}
+
+/* Does the vertical wall at (vx, vz) touch any cell in the set? */
+static bool v_wall_touches_set(int vx, int vz, int cols,
+                                const int (*cells)[2], int count) {
+    if (!cells || count == 0) return false;
+    /* Vertical wall at vx from vz to vz+1:
+     *   west wall of cell (vx, vz)    [if vx < cols]
+     *   east wall of cell (vx-1, vz)  [if vx > 0]   */
+    if (vx < cols && cell_in_set(vx, vz, cells, count)) return true;
+    if (vx > 0   && cell_in_set(vx - 1, vz, cells, count)) return true;
+    return false;
+}
+
+/* Does the corner vertex at (vx, vz) touch any cell in the set? */
+static bool corner_touches_set(int vx, int vz,
+                                const int (*cells)[2], int count) {
+    if (!cells || count == 0) return false;
+    /* Corner at (vx, vz) touches up to 4 cells:
+     *   (vx-1, vz-1), (vx, vz-1), (vx-1, vz), (vx, vz) */
+    if (cell_in_set(vx,     vz,     cells, count)) return true;
+    if (cell_in_set(vx - 1, vz,     cells, count)) return true;
+    if (cell_in_set(vx,     vz - 1, cells, count)) return true;
+    if (cell_in_set(vx - 1, vz - 1, cells, count)) return true;
+    return false;
+}
+
 /* True if a non-door horizontal wall exists at z=vz from x=vx to x=vx+1 */
 static bool has_h_wall(const Grid* grid, int vx, int vz) {
     if (vx < 0 || vx >= grid->cols) return false;
@@ -431,8 +478,17 @@ static bool is_wall_corner(const Grid* grid, int vx, int vz) {
     return has_horiz && has_vert;
 }
 
-static void gen_walls(VoxelMesh* mesh, const Grid* grid,
-                      const BiomeConfig* biome, RNG* rng) {
+/*
+ * gen_walls_filtered — generate walls with cell-based filtering.
+ *
+ * mode == 0: emit ALL walls (no filtering)
+ * mode == 1: EXCLUDE walls touching any cell in filter_cells (main diorama)
+ * mode == 2: INCLUDE ONLY walls touching a cell in filter_cells (turnstile mesh)
+ */
+static void gen_walls_filtered(VoxelMesh* mesh, const Grid* grid,
+                                const BiomeConfig* biome, RNG* rng,
+                                int mode,
+                                const int (*filter_cells)[2], int filter_count) {
     float half_t = WALL_THICKNESS * 0.5f;
     int cols = grid->cols;
     int rows = grid->rows;
@@ -441,6 +497,10 @@ static void gen_walls(VoxelMesh* mesh, const Grid* grid,
     for (int vz = 0; vz <= rows; vz++) {
         for (int vx = 0; vx <= cols; vx++) {
             if (!is_wall_corner(grid, vx, vz)) continue;
+
+            bool touches = corner_touches_set(vx, vz, filter_cells, filter_count);
+            if (mode == 1 && touches)  continue; /* exclude */
+            if (mode == 2 && !touches) continue; /* include only */
 
             voxel_mesh_add_wall(mesh,
                        (float)vx - half_t, 0.0f, (float)vz - half_t,
@@ -460,6 +520,10 @@ static void gen_walls(VoxelMesh* mesh, const Grid* grid,
     for (int vz = 0; vz <= rows; vz++) {
         for (int vx = 0; vx < cols; vx++) {
             if (!has_h_wall(grid, vx, vz)) continue;
+
+            bool touches = h_wall_touches_set(vx, vz, rows, filter_cells, filter_count);
+            if (mode == 1 && touches)  continue;
+            if (mode == 2 && !touches) continue;
 
             bool corner_left  = is_wall_corner(grid, vx, vz);
             bool corner_right = is_wall_corner(grid, vx + 1, vz);
@@ -481,6 +545,10 @@ static void gen_walls(VoxelMesh* mesh, const Grid* grid,
         for (int vz = 0; vz < rows; vz++) {
             if (!has_v_wall(grid, vx, vz)) continue;
 
+            bool touches = v_wall_touches_set(vx, vz, cols, filter_cells, filter_count);
+            if (mode == 1 && touches)  continue;
+            if (mode == 2 && !touches) continue;
+
             bool corner_bottom = is_wall_corner(grid, vx, vz);
             bool corner_top    = is_wall_corner(grid, vx, vz + 1);
 
@@ -495,6 +563,11 @@ static void gen_walls(VoxelMesh* mesh, const Grid* grid,
                               WALL_THICKNESS, seg_len, WALL_ORIENT_V);
         }
     }
+}
+
+static void gen_walls(VoxelMesh* mesh, const Grid* grid,
+                      const BiomeConfig* biome, RNG* rng) {
+    gen_walls_filtered(mesh, grid, biome, rng, 0, NULL, 0);
 }
 
 /* ---------- Step 4: Back wall ---------- */
@@ -1120,6 +1193,12 @@ static void gen_edge_border(VoxelMesh* mesh, const Grid* grid,
 
 void diorama_generate(VoxelMesh* mesh, const Grid* grid,
                       const BiomeConfig* biome, DioramaGenResult* result) {
+    diorama_generate_ex(mesh, grid, biome, result, NULL);
+}
+
+void diorama_generate_ex(VoxelMesh* mesh, const Grid* grid,
+                          const BiomeConfig* biome, DioramaGenResult* result,
+                          const DioramaExcludeSet* exclude) {
     memset(result, 0, sizeof(DioramaGenResult));
 
     RNG rng;
@@ -1128,10 +1207,17 @@ void diorama_generate(VoxelMesh* mesh, const Grid* grid,
     /* Build groove tile lookup for trench floor generation */
     GrooveTileInfo* groove_info = build_groove_info(grid);
 
-    /* Pipeline (no monolithic platform — individual floor tiles only,
-     * so below-surface effects like pits remain visible) */
+    /* Pipeline */
     gen_floor(mesh, grid, biome, &rng, groove_info);
-    gen_walls(mesh, grid, biome, &rng);
+
+    if (exclude && exclude->count > 0) {
+        /* Exclude auto-turnstile cells from static wall mesh */
+        gen_walls_filtered(mesh, grid, biome, &rng,
+                           1, (const int (*)[2])exclude->cells, exclude->count);
+    } else {
+        gen_walls(mesh, grid, biome, &rng);
+    }
+
     gen_doors(mesh, grid, biome);
     gen_impassable(mesh, grid, biome, &rng);
     gen_features(mesh, grid, biome);
@@ -1146,6 +1232,14 @@ void diorama_generate(VoxelMesh* mesh, const Grid* grid,
     result->grid_cols = grid->cols;
     result->grid_rows = grid->rows;
 
-    LOG_INFO("diorama_generate: %d boxes queued for biome '%s'",
+    LOG_INFO("diorama_generate_ex: %d boxes queued for biome '%s'",
              mesh->box_count, biome->id);
+}
+
+void diorama_generate_walls_only(VoxelMesh* mesh, const Grid* grid,
+                                  const BiomeConfig* biome,
+                                  const int (*cells)[2], int cell_count) {
+    RNG rng;
+    rng_seed(&rng, grid->level_id);
+    gen_walls_filtered(mesh, grid, biome, &rng, 2, cells, cell_count);
 }

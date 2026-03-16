@@ -21,6 +21,7 @@
 #include "data/settings.h"
 #include "game/game.h"
 #include "game/features/groove_box.h"
+#include "game/features/auto_turnstile.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -158,6 +159,19 @@ typedef struct {
     DioramaCamera   diorama_cam;
     LightingState   diorama_light;
     WallStyle       wall_style;      /* cached for shader uniforms at render time */
+
+    /* Auto-turnstile wall meshes (separated from diorama for rotation animation) */
+    #define MAX_AUTO_TURNSTILES 8
+    struct {
+        VoxelMesh mesh;
+        int       jc, jr;         /* junction col/row */
+        bool      clockwise;
+        bool      valid;
+        bool      was_animating;  /* true if this turnstile was animating last frame */
+        int       cells[4][2];    /* the 4 tile positions around junction */
+    } turnstile_meshes[MAX_AUTO_TURNSTILES];
+    int             turnstile_mesh_count;
+    BiomeConfig     cached_biome;   /* cached for turnstile mesh regeneration */
 
     /* Groove trench tracking */
     bool*           groove_tile_map; /* flat bool array [rows * cols], true if tile is on a groove path */
@@ -1129,6 +1143,14 @@ static void mat4_rot_z(float m[16], float angle_rad) {
     m[4] = -s; m[5] = c;
 }
 
+/* Build a rotation matrix around the Y axis (column-major). */
+static void mat4_rot_y(float m[16], float angle_rad) {
+    mat4_identity(m);
+    float c = cosf(angle_rad), s = sinf(angle_rad);
+    m[0] = c;  m[2] = -s;
+    m[8] = s;  m[10] = c;
+}
+
 /* Build a Y-axis scale matrix (for horn retraction). */
 static void mat4_scale_y(float m[16], float sy) {
     mat4_identity(m);
@@ -1237,6 +1259,30 @@ static void draw_shadow(const PuzzleScene* ps, GLuint shader,
     draw_shadow_at_y(ps, shader, x, 0.01f, z, scale, shadow_tex, extent);
 }
 
+/* Helper: destroy all turnstile wall meshes */
+static void destroy_turnstile_meshes(PuzzleScene* ps) {
+    for (int i = 0; i < ps->turnstile_mesh_count; i++) {
+        if (ps->turnstile_meshes[i].valid)
+            voxel_mesh_destroy(&ps->turnstile_meshes[i].mesh);
+    }
+    ps->turnstile_mesh_count = 0;
+}
+
+/* Regenerate a single turnstile's wall mesh from current grid state */
+static void regenerate_turnstile_mesh(PuzzleScene* ps, int idx) {
+    if (ps->turnstile_meshes[idx].valid) {
+        voxel_mesh_destroy(&ps->turnstile_meshes[idx].mesh);
+        ps->turnstile_meshes[idx].valid = false;
+    }
+
+    voxel_mesh_begin(&ps->turnstile_meshes[idx].mesh);
+    diorama_generate_walls_only(&ps->turnstile_meshes[idx].mesh,
+                                 ps->grid, &ps->cached_biome,
+                                 (const int (*)[2])ps->turnstile_meshes[idx].cells, 4);
+    voxel_mesh_build(&ps->turnstile_meshes[idx].mesh, 0.0625f);
+    ps->turnstile_meshes[idx].valid = true;
+}
+
 static void build_diorama(PuzzleScene* ps) {
     if (ps->diorama_built) {
         voxel_mesh_destroy(&ps->diorama_mesh);
@@ -1244,6 +1290,7 @@ static void build_diorama(PuzzleScene* ps) {
         actor_render_destroy(&ps->minotaur_parts);
         voxel_mesh_destroy(&ps->groove_box_mesh);
         destroy_shadow_resources(ps);
+        destroy_turnstile_meshes(ps);
         free(ps->groove_tile_map);
         ps->groove_tile_map = NULL;
     }
@@ -1261,6 +1308,7 @@ static void build_diorama(PuzzleScene* ps) {
                  platform_get_asset_dir(), ps->grid->biome);
         biome_config_load(&biome, biome_path);
     }
+    ps->cached_biome = biome;  /* cache for turnstile mesh regeneration */
 
     /* Cache trench depth and build groove tile map for actor Y adjustment */
     ps->trench_depth = biome.groove_trench.trench_depth;
@@ -1281,11 +1329,51 @@ static void build_diorama(PuzzleScene* ps) {
         }
     }
 
-    /* Generate diorama via procedural pipeline */
+    /* Identify auto-turnstile features and build exclusion set */
+    DioramaExcludeSet exclude;
+    exclude.count = 0;
+    ps->turnstile_mesh_count = 0;
+
+    for (int fi = 0; fi < ps->grid->feature_count; fi++) {
+        const Feature* feat = ps->grid->features[fi];
+        if (!feat) continue;
+        int jc, jr;
+        bool cw;
+        if (!auto_turnstile_get_junction(feat, &jc, &jr, &cw)) continue;
+        if (ps->turnstile_mesh_count >= MAX_AUTO_TURNSTILES) break;
+
+        int idx = ps->turnstile_mesh_count++;
+        ps->turnstile_meshes[idx].jc = jc;
+        ps->turnstile_meshes[idx].jr = jr;
+        ps->turnstile_meshes[idx].clockwise = cw;
+        ps->turnstile_meshes[idx].valid = false;
+
+        /* 4 tiles: NW, NE, SE, SW */
+        ps->turnstile_meshes[idx].cells[0][0] = jc - 1;
+        ps->turnstile_meshes[idx].cells[0][1] = jr;
+        ps->turnstile_meshes[idx].cells[1][0] = jc;
+        ps->turnstile_meshes[idx].cells[1][1] = jr;
+        ps->turnstile_meshes[idx].cells[2][0] = jc;
+        ps->turnstile_meshes[idx].cells[2][1] = jr - 1;
+        ps->turnstile_meshes[idx].cells[3][0] = jc - 1;
+        ps->turnstile_meshes[idx].cells[3][1] = jr - 1;
+
+        /* Add these 4 cells to the exclusion set */
+        for (int ci = 0; ci < 4; ci++) {
+            if (exclude.count < 32) {
+                exclude.cells[exclude.count][0] = ps->turnstile_meshes[idx].cells[ci][0];
+                exclude.cells[exclude.count][1] = ps->turnstile_meshes[idx].cells[ci][1];
+                exclude.count++;
+            }
+        }
+    }
+
+    /* Generate diorama via procedural pipeline (excluding turnstile cells) */
     voxel_mesh_begin(&ps->diorama_mesh);
 
     DioramaGenResult gen_result;
-    diorama_generate(&ps->diorama_mesh, ps->grid, &biome, &gen_result);
+    diorama_generate_ex(&ps->diorama_mesh, ps->grid, &biome, &gen_result,
+                         exclude.count > 0 ? &exclude : NULL);
 
     /* Generate floor shadow lightmap before building the mesh */
     {
@@ -1310,6 +1398,10 @@ static void build_diorama(PuzzleScene* ps) {
 
     voxel_mesh_build(&ps->diorama_mesh, 0.0625f);
 
+    /* Generate separate wall meshes for each auto-turnstile */
+    for (int i = 0; i < ps->turnstile_mesh_count; i++) {
+        regenerate_turnstile_mesh(ps, i);
+    }
     /* Set up camera */
     diorama_camera_init(&ps->diorama_cam, cols, rows);
     diorama_camera_set_target(&ps->diorama_cam,
@@ -1466,6 +1558,57 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
 
     /* Draw static geometry (floor, walls, exit marker) */
     voxel_mesh_draw(&ps->diorama_mesh);
+
+    /* Draw auto-turnstile walls (rotated around junction during animation) */
+    for (int ti = 0; ti < ps->turnstile_mesh_count; ti++) {
+        if (!ps->turnstile_meshes[ti].valid) continue;
+
+        int jc = ps->turnstile_meshes[ti].jc;
+        int jr = ps->turnstile_meshes[ti].jr;
+        bool cw = ps->turnstile_meshes[ti].clockwise;
+
+        /* Determine rotation angle from animation */
+        float angle = 0.0f;
+        if (anim_queue_is_playing(&ps->anim)) {
+            const AnimEvent* cur = anim_queue_current_event(&ps->anim);
+            AnimPhase phase = anim_queue_phase(&ps->anim);
+            if (cur && (phase == ANIM_PHASE_ENVIRONMENT) &&
+                cur->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
+                cur->turnstile.junction_col == jc &&
+                cur->turnstile.junction_row == jr) {
+                float raw_t = anim_queue_rotation_progress(&ps->anim);
+                /* Linear rotation with snap-oscillation at the end.
+                 * The rotation tween gives 0→1 linearly. We apply a
+                 * small damped overshoot oscillation past t≈0.85 so the
+                 * walls "snap into place" with a quick wiggle. */
+                float target = cw ? (float)M_PI_2 : -(float)M_PI_2;
+                if (raw_t < 0.85f) {
+                    angle = target * (raw_t / 0.85f);
+                } else {
+                    float u = (raw_t - 0.85f) / 0.15f; /* 0→1 in last 15% */
+                    float osc = sinf(u * (float)M_PI * 2.0f)
+                              * (1.0f - u) * 0.04f;
+                    angle = target * (1.0f + osc);
+                }
+            }
+        }
+
+        /* Build model matrix: T(jc,0,jr) * Ry(angle) * T(-jc,0,-jr) */
+        float t1[16], ry[16], t2[16], tmp[16], model[16];
+        mat4_translate(t1, (float)jc, 0.0f, (float)jr);
+        mat4_rot_y(ry, angle);
+        mat4_translate(t2, -(float)jc, 0.0f, -(float)jr);
+        mat4_mul(tmp, t1, ry);
+        mat4_mul(model, tmp, t2);
+
+        shader_set_mat4(shader, "u_model", model);
+        voxel_mesh_draw(&ps->turnstile_meshes[ti].mesh);
+    }
+
+    /* Reset model matrix back to identity */
+    if (ps->turnstile_mesh_count > 0) {
+        shader_set_mat4(shader, "u_model", identity);
+    }
 
     /* Blending is already enabled globally (engine default) for shadow alpha */
 
@@ -2333,6 +2476,7 @@ static void puzzle_on_exit(State* self) {
     undo_clear(&ps->undo);
     if (ps->diorama_built) {
         voxel_mesh_destroy(&ps->diorama_mesh);
+        destroy_turnstile_meshes(ps);
         actor_render_destroy(&ps->theseus_parts);
         actor_render_destroy(&ps->minotaur_parts);
         voxel_mesh_destroy(&ps->groove_box_mesh);
@@ -2624,6 +2768,27 @@ static void puzzle_update(State* self, float dt) {
         }
     }
 
+    /* Auto-turnstile environment animation end → regenerate wall meshes.
+     * Per-turnstile tracking: each turnstile regenerates as soon as its
+     * specific animation event finishes, avoiding a one-frame gap when
+     * multiple turnstiles animate sequentially. */
+    for (int ti = 0; ti < ps->turnstile_mesh_count; ti++) {
+        bool is_animating = false;
+        if (anim_queue_is_playing(&ps->anim) &&
+            anim_queue_phase(&ps->anim) == ANIM_PHASE_ENVIRONMENT) {
+            const AnimEvent* cur = anim_queue_current_event(&ps->anim);
+            if (cur && cur->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
+                cur->turnstile.junction_col == ps->turnstile_meshes[ti].jc &&
+                cur->turnstile.junction_row == ps->turnstile_meshes[ti].jr) {
+                is_animating = true;
+            }
+        }
+        if (ps->turnstile_meshes[ti].was_animating && !is_animating) {
+            regenerate_turnstile_mesh(ps, ti);
+        }
+        ps->turnstile_meshes[ti].was_animating = is_animating;
+    }
+
     /* Minotaur roll-end detection → start landing wobble.
      * Only triggers when the minotaur actually moved (minotaur_steps > 0).
      * Zero-step turns run placeholder tweens through the minotaur phases
@@ -2781,6 +2946,7 @@ static void puzzle_destroy(State* self) {
     if (ps->diorama_built) {
         dust_puff_shutdown();
         voxel_mesh_destroy(&ps->diorama_mesh);
+        destroy_turnstile_meshes(ps);
         actor_render_destroy(&ps->theseus_parts);
         actor_render_destroy(&ps->minotaur_parts);
         voxel_mesh_destroy(&ps->groove_box_mesh);

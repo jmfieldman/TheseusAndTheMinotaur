@@ -68,7 +68,7 @@ typedef enum {
 #define ANIM_GATE_LOCK_DURATION  0.12f
 #define ANIM_PLATE_DURATION      0.10f
 #define ANIM_SPIKE_DURATION      0.12f
-#define ANIM_AUTO_TURNSTILE_DURATION 0.25f
+#define ANIM_AUTO_TURNSTILE_DURATION 0.15f   /* matches conveyor speed */
 #define ANIM_PLATFORM_DURATION   0.20f
 #define ANIM_CONVEYOR_DURATION   0.15f
 #define ANIM_TURNSTILE_DURATION  0.20f

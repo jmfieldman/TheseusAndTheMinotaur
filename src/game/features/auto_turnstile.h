@@ -20,4 +20,12 @@ struct cJSON;
 
 Feature* auto_turnstile_create(int col, int row, const struct cJSON* config);
 
+/*
+ * Query junction info from an auto-turnstile feature.
+ * Returns true if the feature is an auto_turnstile.
+ */
+bool auto_turnstile_get_junction(const Feature* f,
+                                  int* out_jc, int* out_jr,
+                                  bool* out_clockwise);
+
 #endif /* GAME_FEATURE_AUTO_TURNSTILE_H */

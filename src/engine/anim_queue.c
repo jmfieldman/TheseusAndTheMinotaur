@@ -213,7 +213,7 @@ static void setup_env_event_tweens(AnimQueue* aq, const AnimEvent* e, float dur)
         tween_init(&aq->aux_y, (float)e->from_row, (float)e->to_row,
                    dur, ease_linear);
     } else if (e->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE) {
-        tween_init(&aq->rotation, 0.0f, 1.0f, dur, ease_in_out_quad);
+        tween_init(&aq->rotation, 0.0f, 1.0f, dur, ease_linear);
     }
 }
 
@@ -520,7 +520,7 @@ static void setup_reverse_env_event_tweens(AnimQueue* aq, const AnimEvent* e, fl
         tween_init(&aq->aux_y, (float)e->to_row, (float)e->from_row,
                    dur, ease_linear);
     } else if (e->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE) {
-        tween_init(&aq->rotation, 1.0f, 0.0f, dur, ease_in_out_quad);
+        tween_init(&aq->rotation, 1.0f, 0.0f, dur, ease_linear);
     }
 }
 

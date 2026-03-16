@@ -60,4 +60,30 @@ typedef struct {
 void diorama_generate(VoxelMesh* mesh, const Grid* grid,
                       const BiomeConfig* biome, DioramaGenResult* result);
 
+/*
+ * Exclusion set for diorama generation — cells whose walls are skipped.
+ * Used to separate auto-turnstile walls from the static mesh.
+ */
+typedef struct {
+    int  cells[32][2];  /* (col, row) pairs */
+    int  count;
+} DioramaExcludeSet;
+
+/*
+ * Generate the full diorama but skip walls on excluded cells.
+ * If exclude is NULL, behaves identically to diorama_generate().
+ */
+void diorama_generate_ex(VoxelMesh* mesh, const Grid* grid,
+                          const BiomeConfig* biome, DioramaGenResult* result,
+                          const DioramaExcludeSet* exclude);
+
+/*
+ * Generate ONLY the walls for a specific set of cells into a separate mesh.
+ * The mesh must be initialized with voxel_mesh_begin().
+ * Caller should call voxel_mesh_build() after this returns.
+ */
+void diorama_generate_walls_only(VoxelMesh* mesh, const Grid* grid,
+                                  const BiomeConfig* biome,
+                                  const int (*cells)[2], int cell_count);
+
 #endif /* DIORAMA_GEN_H */

@@ -191,6 +191,17 @@ static const FeatureVTable auto_turnstile_vt = {
 
 /* ── Factory ──────────────────────────────────────────── */
 
+bool auto_turnstile_get_junction(const Feature* f,
+                                  int* out_jc, int* out_jr,
+                                  bool* out_clockwise) {
+    if (!f || f->vt != &auto_turnstile_vt) return false;
+    const AutoTurnstileData* d = (const AutoTurnstileData*)f->data;
+    if (out_jc)  *out_jc  = d->jc;
+    if (out_jr)  *out_jr  = d->jr;
+    if (out_clockwise) *out_clockwise = d->clockwise;
+    return true;
+}
+
 Feature* auto_turnstile_create(int col, int row, const cJSON* config) {
     Feature* f = feature_create(&auto_turnstile_vt, col, row);
     if (!f) return NULL;
