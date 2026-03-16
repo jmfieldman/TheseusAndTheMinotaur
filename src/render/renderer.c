@@ -658,7 +658,7 @@ static const char* s_outline_frag_src =
     "    /* Darken toward black at edges */\n"
     "    vec3 outline_color = vec3(0.02, 0.02, 0.04);\n"  /* near-black with slight blue tint */
     "    vec3 result = mix(scene.rgb, outline_color, edge);\n"
-    "    FragColor = vec4(result, scene.a);\n"
+    "    FragColor = vec4(result, 1.0);\n"  /* force opaque — shadow blending contaminates FBO alpha */
     "}\n";
 
 /* ---------- State ---------- */

@@ -1180,8 +1180,20 @@ static void draw_shadow_at_y(const PuzzleScene* ps, GLuint shader,
     glBindTexture(GL_TEXTURE_2D, shadow_tex);
     glActiveTexture(GL_TEXTURE0);
 
-    /* Disable depth writes so shadow doesn't block actor rendering */
+    /* Disable depth writes so shadow doesn't block actor rendering.
+     * Caller sets depth func (GL_LESS for normal, GL_GREATER for rim).
+     * Polygon offset biases shadow depth slightly closer to the camera,
+     * preventing z-fighting when the shadow sits just above a surface. */
     glDepthMask(GL_FALSE);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.0f, -1.0f);
+
+    /* Preserve FBO alpha channel: shadow blending contaminates the alpha
+     * of the color attachment (SRC_ALPHA blend lowers dst alpha), causing
+     * the outline compositing pass to show background bleed-through.
+     * Use separate blend: normal RGB blending, but always keep alpha=1. */
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                        GL_ZERO, GL_ONE);
 
     /* Quad spans [-1,+1] in local space; scale to shadow extent */
     float s = extent * scale;
@@ -1200,7 +1212,11 @@ static void draw_shadow_at_y(const PuzzleScene* ps, GLuint shader,
     glDrawArrays(GL_TRIANGLES, 0, ps->shadow_vertex_count);
     glBindVertexArray(0);
 
+    glDisable(GL_POLYGON_OFFSET_FILL);
     glDepthMask(GL_TRUE);
+
+    /* Restore standard blend function */
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     /* Restore floor lightmap on unit 1 */
     if (ps->diorama_mesh.floor_lm_texture) {
@@ -1269,6 +1285,7 @@ static float actor_groove_y(const PuzzleScene* ps, float col, float row) {
 /* Compute actor Y offset for conveyor tiles.
  * Actors standing on a conveyor are raised by CONVEYOR_HEIGHT. */
 #define CONVEYOR_ELEV 0.075f  /* must match diorama_gen.c CONVEYOR_HEIGHT */
+#define CONVEYOR_BELT_TOP 0.078f  /* CONVEYOR_HEIGHT + belt thickness (0.003) */
 static float actor_conveyor_y(const PuzzleScene* ps, float col, float row) {
     if (!ps->conveyor_tile_map) return 0.0f;
 
@@ -1874,11 +1891,21 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             float mino_gy = actor_groove_y(ps, mcol, mrow)
                           + actor_conveyor_y(ps, mcol, mrow);
 
-            /* Soft ground shadow — at floor or conveyor surface level. */
-            float mino_shadow_y = 0.01f + actor_conveyor_y(ps, mcol, mrow);
-            draw_shadow_at_y(ps, shader, mcol + 0.5f, mino_shadow_y,
-                             mrow + 0.5f, 1.0f,
-                             ps->shadow_tex_minotaur, ps->shadow_extent_m);
+            /* Soft ground shadow — slightly above floor or belt surface.
+             * Check the TILE directly for conveyor status rather than using
+             * actor_conveyor_y(), which smoothstep-transitions to 0 near tile
+             * edges (at integer positions fc=0 is within the blend zone).
+             * The belt geometry is always at CONVEYOR_BELT_TOP regardless of
+             * the actor's smooth body elevation. */
+            {
+                bool on_conv = is_conveyor_tile(ps,
+                    (int)floorf(mcol), (int)floorf(mrow));
+                float shadow_y = on_conv
+                    ? CONVEYOR_BELT_TOP + 0.005f : 0.01f;
+                draw_shadow_at_y(ps, shader, mcol + 0.5f, shadow_y,
+                                 mrow + 0.5f, 1.0f,
+                                 ps->shadow_tex_minotaur, ps->shadow_extent_m);
+            }
 
             /* ── Roll animation state ── */
             float mino_half = MINOTAUR_SIZE_FRAC * 0.5f;
@@ -2218,10 +2245,15 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
              * GL_LESS passes on rim, trench floor, and normal floor,
              * but correctly fails against groove box top (Y=0.45). */
             float shadow_scale = 1.0f - thop * 0.5f;
-            float thes_shadow_y = 0.01f + actor_conveyor_y(ps, tcol, trow);
-            draw_shadow_at_y(ps, shader, tcol + 0.5f, thes_shadow_y,
-                             trow + 0.5f, shadow_scale,
-                             ps->shadow_tex_theseus, ps->shadow_extent_t);
+            {
+                bool on_conv = is_conveyor_tile(ps,
+                    (int)floorf(tcol), (int)floorf(trow));
+                float shadow_y = on_conv
+                    ? CONVEYOR_BELT_TOP + 0.005f : 0.01f;
+                draw_shadow_at_y(ps, shader, tcol + 0.5f, shadow_y,
+                                 trow + 0.5f, shadow_scale,
+                                 ps->shadow_tex_theseus, ps->shadow_extent_t);
+            }
 
             /* ── Compute Theseus deformation ── */
             DeformState deform;
