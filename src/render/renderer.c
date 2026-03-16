@@ -725,17 +725,19 @@ static void outline_fbo_ensure(int w, int h) {
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D,
                            s_renderer.outline_normal_tex, 0);
 
-    /* Depth attachment (24-bit) */
+    /* Depth+stencil attachment (24-bit depth + 8-bit stencil).
+     * Stencil is used by multi-plane shadow rendering to prevent
+     * double-darkening when floor and conveyor shadows overlap. */
     glGenTextures(1, &s_renderer.outline_depth_tex);
     glBindTexture(GL_TEXTURE_2D, s_renderer.outline_depth_tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0,
-                 GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, w, h, 0,
+                 GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
-                           s_renderer.outline_depth_tex, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                           GL_TEXTURE_2D, s_renderer.outline_depth_tex, 0);
 
     /* Enable both color attachments for MRT */
     GLenum draw_bufs[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
@@ -1033,10 +1035,13 @@ void renderer_begin_outline_pass(int w, int h) {
 
     glViewport(0, 0, w, h);
 
-    /* Clear color+normal+depth. Normal buffer gets default up-facing normal
-     * (encoded 0.5, 1.0, 0.5) so background areas don't trigger edge detection. */
+    /* Clear color+normal+depth+stencil. Normal buffer gets default up-facing
+     * normal (encoded 0.5, 1.0, 0.5) so background areas don't trigger edge
+     * detection.  Stencil is cleared to 0 for multi-plane shadow rendering. */
     glClearColor(0.07f, 0.07f, 0.09f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glClearStencil(0);
+    glStencilMask(0xFF);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 }
 
 void renderer_end_outline_pass(int w, int h) {

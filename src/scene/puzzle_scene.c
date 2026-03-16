@@ -1357,6 +1357,39 @@ static void draw_shadow(const PuzzleScene* ps, GLuint shader,
     draw_shadow_at_y(ps, shader, x, 0.01f, z, scale, shadow_tex, extent);
 }
 
+/* Multi-plane actor shadow: draws on both floor and conveyor surfaces
+ * without double-darkening.  Uses stencil to prevent overlap:
+ *   1. Floor shadow (GL_LESS, Y=0.01): writes stencil=1 where it renders.
+ *      Passes on floor (Y=0), blocked by belt (Y=0.078 is closer).
+ *   2. Conveyor shadow (GL_LESS, Y=belt+eps): only renders where stencil≠1,
+ *      i.e. where the floor shadow was blocked by the belt.
+ *      Passes on belt, blocked on walls (closer depth). */
+static void draw_actor_shadow_multiplane(const PuzzleScene* ps, GLuint shader,
+                                          float x, float z, float scale,
+                                          GLuint shadow_tex, float extent) {
+    /* --- Floor plane: write stencil=1 wherever the shadow renders --- */
+    glEnable(GL_STENCIL_TEST);
+    glStencilMask(0xFF);
+    glClear(GL_STENCIL_BUFFER_BIT);
+    glStencilFunc(GL_ALWAYS, 1, 0xFF);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+
+    draw_shadow_at_y(ps, shader, x, 0.01f, z, scale, shadow_tex, extent);
+
+    /* --- Conveyor plane: only where floor shadow didn't reach --- */
+    if (ps->conveyor_tile_map) {
+        glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
+        glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+
+        draw_shadow_at_y(ps, shader,
+                         x, CONVEYOR_BELT_TOP + 0.005f,
+                         z, scale, shadow_tex, extent);
+    }
+
+    glDisable(GL_STENCIL_TEST);
+    glStencilMask(0xFF);
+}
+
 /* Helper: destroy all turnstile wall meshes */
 static void destroy_turnstile_meshes(PuzzleScene* ps) {
     for (int i = 0; i < ps->turnstile_mesh_count; i++) {
@@ -1891,21 +1924,11 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             float mino_gy = actor_groove_y(ps, mcol, mrow)
                           + actor_conveyor_y(ps, mcol, mrow);
 
-            /* Soft ground shadow — slightly above floor or belt surface.
-             * Check the TILE directly for conveyor status rather than using
-             * actor_conveyor_y(), which smoothstep-transitions to 0 near tile
-             * edges (at integer positions fc=0 is within the blend zone).
-             * The belt geometry is always at CONVEYOR_BELT_TOP regardless of
-             * the actor's smooth body elevation. */
-            {
-                bool on_conv = is_conveyor_tile(ps,
-                    (int)floorf(mcol), (int)floorf(mrow));
-                float shadow_y = on_conv
-                    ? CONVEYOR_BELT_TOP + 0.005f : 0.01f;
-                draw_shadow_at_y(ps, shader, mcol + 0.5f, shadow_y,
-                                 mrow + 0.5f, 1.0f,
-                                 ps->shadow_tex_minotaur, ps->shadow_extent_m);
-            }
+            /* Multi-plane shadow on floor + conveyor belt (stencil prevents
+             * double-darkening; GL_LESS blocks shadows on walls). */
+            draw_actor_shadow_multiplane(ps, shader,
+                mcol + 0.5f, mrow + 0.5f, 1.0f,
+                ps->shadow_tex_minotaur, ps->shadow_extent_m);
 
             /* ── Roll animation state ── */
             float mino_half = MINOTAUR_SIZE_FRAC * 0.5f;
@@ -2245,15 +2268,9 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
              * GL_LESS passes on rim, trench floor, and normal floor,
              * but correctly fails against groove box top (Y=0.45). */
             float shadow_scale = 1.0f - thop * 0.5f;
-            {
-                bool on_conv = is_conveyor_tile(ps,
-                    (int)floorf(tcol), (int)floorf(trow));
-                float shadow_y = on_conv
-                    ? CONVEYOR_BELT_TOP + 0.005f : 0.01f;
-                draw_shadow_at_y(ps, shader, tcol + 0.5f, shadow_y,
-                                 trow + 0.5f, shadow_scale,
-                                 ps->shadow_tex_theseus, ps->shadow_extent_t);
-            }
+            draw_actor_shadow_multiplane(ps, shader,
+                tcol + 0.5f, trow + 0.5f, shadow_scale,
+                ps->shadow_tex_theseus, ps->shadow_extent_t);
 
             /* ── Compute Theseus deformation ── */
             DeformState deform;

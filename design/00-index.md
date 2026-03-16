@@ -19,6 +19,7 @@ engine with orthographic projection.
 | 08 | [Engine Architecture](08-engine-architecture.md)  | SDL3+OpenGL, rendering pipeline, scene graph, ECS             |
 | 09 | [Content Pipeline](09-content-pipeline.md)        | Asset formats, voxel authoring workflow, level data format    |
 | 10 | [Platform Targets](10-platform-targets.md)        | Target platforms, build matrix, platform-specific concerns    |
+| 12 | [Proposed Shadow System](12-proposed-shadow-system.md) | Multi-plane blob shadow architecture (proposed, not yet implemented) |
 
 ## High-Level Parameters
 
