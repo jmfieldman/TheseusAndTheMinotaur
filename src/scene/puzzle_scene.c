@@ -1471,15 +1471,19 @@ static void regenerate_turnstile_mesh(PuzzleScene* ps, int idx) {
     voxel_mesh_build(&ps->turnstile_meshes[idx].gears[gc], 0.0625f);
     gc++;
 
-    /* 4 satellite gears at tile corners (far enough out to be visible) */
-    float sat_dist = 0.82f;   /* distance from junction to satellite center (near corners) */
+    /* 4 satellite gears positioned under the exposed corners of the 12-gon.
+     * The 12-gon has radius 1.0 inscribed in the 2×2 square.  At each
+     * diagonal (45°), the polygon edge is at ~cos(15°) ≈ 0.966 distance,
+     * but the square corner extends to √2 ≈ 1.414.  The gear center at
+     * ~(0.82, 0.82) = diagonal dist ~1.16 is visible through the gap. */
+    float sat_axis = 0.82f;   /* per-axis offset from junction (under corner gap) */
     float sat_radius = 0.18f; /* slightly smaller than central gear */
     float sat_speed = -1.8f;  /* opposite direction, faster */
     float diag[][2] = {
-        { -sat_dist, -sat_dist },
-        {  sat_dist, -sat_dist },
-        {  sat_dist,  sat_dist },
-        { -sat_dist,  sat_dist },
+        { -sat_axis, -sat_axis },
+        {  sat_axis, -sat_axis },
+        {  sat_axis,  sat_axis },
+        { -sat_axis,  sat_axis },
     };
     for (int s = 0; s < 4; s++) {
         ps->turnstile_meshes[idx].gear_cx[gc] = cx + diag[s][0];

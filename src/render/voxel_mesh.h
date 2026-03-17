@@ -114,6 +114,12 @@ typedef struct {
     float    floor_lm_extent_z; /* world-space lightmap extent Z */
     int      floor_lm_cols;     /* grid cols for UV computation */
     int      floor_lm_rows;     /* grid rows for UV computation */
+
+    /* Raw vertex staging — for non-box polygon geometry (e.g., prisms).
+     * Appended to the VBO after box-generated vertices during build(). */
+    float*   raw_verts;          /* pre-formatted 13-float-per-vertex data */
+    int      raw_vert_count;     /* number of vertices staged */
+    int      raw_vert_cap;       /* allocated capacity (in vertices) */
 } VoxelMesh;
 
 /* Initialize mesh for accumulating boxes. */
@@ -190,5 +196,24 @@ void voxel_mesh_set_floor_lightmap(VoxelMesh* mesh, GLuint texture,
                                     float origin_x, float origin_z,
                                     float extent_x, float extent_z,
                                     int cols, int rows);
+
+/* Add a polygon prism (extruded polygon) to the mesh.
+ * verts_xz: array of [x,z] vertices defining the polygon outline (CCW).
+ * y_base: bottom Y coordinate.  height: extrusion height.
+ * Generates top face, bottom face, and side quads.
+ * top_ao_mode/side_ao_mode control AO routing for top and side faces. */
+void voxel_mesh_add_polygon_prism(VoxelMesh* mesh,
+                                   const float (*verts_xz)[2], int vert_count,
+                                   float y_base, float height,
+                                   float r, float g, float b, float a,
+                                   AoMode top_ao_mode, AoMode side_ao_mode);
+
+/* Add a flat polygon cap (no sides, no bottom).
+ * Used for thin surface overlays like the turnstile plate. */
+void voxel_mesh_add_polygon_cap(VoxelMesh* mesh,
+                                 const float (*verts_xz)[2], int vert_count,
+                                 float y,
+                                 float r, float g, float b, float a,
+                                 AoMode ao_mode);
 
 #endif /* VOXEL_MESH_H */
