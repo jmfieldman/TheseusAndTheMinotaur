@@ -200,16 +200,33 @@ outer boundary of the grid (openings in the boundary wall).
 
 ### 7.4 Win Condition
 
-Theseus wins **instantly** when he steps onto the virtual exit tile:
+The win condition is **deferred** -- stepping onto the exit tile does not
+immediately end the level. The full turn cycle must complete first:
 
-1. Theseus moves through the exit door opening onto the virtual exit tile.
-2. The level is immediately won -- **no Environment Phase or Minotaur Phase
-   occurs** after this move.
-3. The Minotaur's position is irrelevant; the win is instant.
+1. Theseus moves onto the **exit tile** (the interior tile adjacent to the
+   exit door opening). A pending flag is set, but the turn continues.
+2. The **Environment Phase** resolves normally.
+3. The **Minotaur Phase** resolves normally (both steps). If the Minotaur
+   captures Theseus during this phase, the result is a normal loss -- no win.
+4. At the **start of the next turn**, if Theseus is still alive on the exit
+   tile, the win triggers automatically:
+   - Theseus is **forced to take a normal step** in the exit-door direction,
+     hopping from the exit tile onto the **virtual exit tile** outside the
+     grid boundary. This is not player-controlled -- it is an automatic move.
+   - Immediately after Theseus passes through the exit opening, the **exit
+     door closes and locks behind him** (same visual as the locking-gate
+     feature: bars/gate rise up in the doorway). This seals Theseus safely
+     outside the grid -- the Minotaur cannot follow.
+   - No Environment Phase or Minotaur Phase occurs for this forced step.
+5. With Theseus on the virtual tile and the door sealed, the **victory
+   celebration** begins (see [11 -- Implementation Plan](11-implementation-plan.md)
+   Step 6.8 for animation details).
 
-This replaces the previous design where Theseus had to survive a full turn
-cycle on an exit tile. The new model is simpler and creates a satisfying
-"escape" moment.
+The turn counter from the turn where Theseus reached the exit tile is the
+**final move count** (the forced step out does not increment the counter).
+
+This model ensures the Minotaur always gets his two steps -- the player
+cannot escape for free if the Minotaur could have caught them.
 
 ### 7.5 Level Start and Reset Sequence
 
@@ -234,8 +251,9 @@ On a **mid-level reset**, before the above sequence plays:
 
 ## 8. Loss Conditions
 
-Theseus loses when any of the following occur (note: none of these can occur
-on the virtual exit tile, since stepping onto it is an instant win):
+Theseus loses when any of the following occur (note: the exit tile is an
+interior tile where Theseus can still be captured -- the win is deferred
+until the start of the next turn, see §7.4):
 
 1. **Theseus walks into Minotaur:** If Theseus moves onto the Minotaur's tile
    during the Theseus phase, Theseus dies immediately (before Environment or

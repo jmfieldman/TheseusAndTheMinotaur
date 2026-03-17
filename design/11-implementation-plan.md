@@ -315,7 +315,7 @@ Deformation effects for Theseus interacting with pushable objects and walls. Use
 
 ---
 
-### Step 6.7 — Contextual Deformations: Teleport, Ice Slide, and Pit Fall
+### Step 6.7 — Contextual Deformations: Teleport, Ice Slide, and Pit Fall ✅
 
 Deformation effects for special movement types that have distinct visual character.
 
@@ -334,21 +334,62 @@ Deformation effects for special movement types that have distinct visual charact
 
 ### Step 6.8 — Win Animation
 
-Theseus celebration animation when reaching the exit tile, using deformation for a celebratory bounce.
+Victory celebration when Theseus escapes the maze. The win condition is **deferred** (see 01-core-mechanics.md §7.4): Theseus reaching the exit tile does **not** end the level immediately. The full turn cycle completes (Environment Phase → Minotaur Phase), and the win is only confirmed at the **start of Theseus's next turn** if he is still alive on the exit tile. This ensures the Minotaur always gets his two steps.
+
+The celebration hop has two variants based on whether the player achieved the level's `optimal_turns` (from the level JSON).
+
+**Win condition logic (in `turn_resolve()` / puzzle scene):**
+
+- When Theseus moves onto the **exit tile** (the interior tile adjacent to the exit door opening), set a pending flag (e.g. `grid.theseus_on_exit = true`) but do **not** return `TURN_RESULT_WIN` yet. The Environment and Minotaur phases still resolve normally.
+- If the Minotaur kills Theseus during this turn (captures him on the exit tile), the result is a normal loss — no win.
+- At the **start of the next turn** (before accepting player input), if `theseus_on_exit` is true and Theseus is alive, **then** the win triggers:
+  - Theseus is **forced to take a normal step** in the exit-door direction, hopping from the exit tile onto the **virtual exit tile** outside the grid. This is automatic, not player-controlled. It uses the standard hop animation (normal arc, normal deformation).
+  - Immediately after Theseus passes through the exit opening, the **exit door closes and locks behind him** — same visual treatment as the locking-gate feature (bars/gate rise up in the doorway). This seals Theseus safely outside the grid.
+  - No Environment Phase or Minotaur Phase occurs for this forced step.
+- The turn counter from the previous turn (when Theseus reached the exit tile) is the **final move count**. The forced step out does not increment the counter.
+- Input is blocked once the win triggers; the forced step + celebration play automatically.
+
+**Exit direction:**
+
+The exit tile is always on a border of the grid. Theseus's forced step goes **outward** through the exit door opening:
+- **Left-wall exit:** Theseus hops westward (screen-left) onto the virtual tile.
+- **Right-wall exit:** Theseus hops eastward (screen-right) onto the virtual tile.
+- **Top (back) wall exit:** Theseus hops northward (away from camera) onto the virtual tile.
+- There are never south-wall exits (per §7.1).
+
+**Animation sequence:**
+
+1. **Forced exit hop (~0.15s):** Standard hop animation from the exit tile to the virtual tile in the exit direction. Normal parabolic arc, normal squash/stretch deformation. This reads as a regular move — the celebration hasn't started yet.
+2. **Exit door locks (~0.3s, overlaps with end of hop):** As Theseus clears the doorway, the exit door closes behind him using the locking-gate animation (bars/gate rise from floor). Same visual system as `locking_gate` feature. Once sealed, the Minotaur is visually cut off from Theseus.
+3. **Victory celebration (loops until camera transition completes):** Theseus hops **in place** on the virtual tile in a repeating celebratory bounce. Each bounce is a parabolic arc (higher apex than normal — peak ~0.3 units) with exaggerated squash/stretch deformation (range 0.75–1.25). The bounce loops continuously.
+   - **Optimal variant (player achieved `optimal_turns`):** Each in-place hop includes a full **360° Y-axis spin**. The spin is timed to complete exactly once per hop cycle, so Theseus twirls excitedly on every bounce. Increase emissive glow intensity (blue brightening to ~1.5×).
+   - **Non-optimal variant:** No spin — Theseus bounces in place with the exaggerated arc. Still celebratory, but more restrained.
+4. **Victory overlay:** While Theseus bounces, the results overlay appears (turn count vs. optimal, stars earned, etc.). Theseus **continues hopping** behind/beneath the overlay.
+5. **Camera transition to next level:** When the player dismisses the results (or after a timeout), the camera begins zooming/panning to the next level's diorama position. Theseus **continues hopping in place** during this transition. The next level diorama is positioned off-camera, so by the time the camera arrives at the new location, the old puzzle geometry, actors, and Theseus can be **torn down invisibly** — the player never sees them disappear. The new level's entrance sequence (§7.5) begins once the camera settles.
 
 **Changes:**
 
 - Update `src/engine/anim_queue.h / .c`:
-  - Add `ANIM_PHASE_WIN` after the last Minotaur phase. Duration: ~1.0s.
-  - Add win animation tweens: `win_spin` (0→1 over duration, maps to 720° Y rotation), `win_glow` (0→1 pulsing intensity).
-  - `anim_queue_start()` detects `record.result == TURN_RESULT_WIN` and appends the win phase after all normal phases complete.
-  - Expose `anim_queue_win_progress(const AnimQueue*)` → 0–1 progress, -1 if not in win phase.
+  - Add `ANIM_PHASE_WIN_EXIT` for the forced exit hop. Duration: ~0.15s (same as normal hop).
+  - Add `ANIM_PHASE_WIN_GATE` for the exit door lock animation. Duration: ~0.3s.
+  - Add `ANIM_PHASE_WIN_CELEBRATE` for the looping in-place bounce. This phase does **not** have a fixed duration — it loops until externally signaled to stop (when the camera transition completes and the old scene is torn down).
+  - `anim_queue_start()` detects `record.result == TURN_RESULT_WIN` and appends the three win phases after all normal phases complete. Passes `is_optimal` flag (comparing turn count against level's `optimal_turns`) and `exit_direction` (derived from exit tile grid position).
+  - Expose `anim_queue_win_phase(const AnimQueue*)` → current win sub-phase enum (EXIT, GATE, CELEBRATE, NONE).
+  - Expose `anim_queue_win_is_optimal(const AnimQueue*)` → bool.
+  - Expose `anim_queue_win_exit_dir(const AnimQueue*)` → direction enum (WEST, EAST, NORTH).
+  - Expose `anim_queue_win_stop_celebrate(AnimQueue*)` — called by puzzle scene to end the loop.
+- Update `src/game/turn.h / .c` (or equivalent turn resolution):
+  - Add `theseus_on_exit` flag to `Grid` (or turn state). Set when Theseus moves onto the exit tile; do not short-circuit the turn.
+  - Check `theseus_on_exit` at start-of-turn to produce `TURN_RESULT_WIN` before accepting input.
 - Update `src/scene/puzzle_scene.c`:
-  - During win phase: apply Y-axis spin rotation to Theseus model matrix. Add upward float (gentle rise ~0.15 units). Increase emissive color intensity (blue glow brightening).
-  - Apply a celebratory bounce deformation: damped squash/stretch oscillation synced with the spin (`squash` pulses between 0.85 and 1.15, decaying over the win duration). Creates a "bouncy celebration" feel.
-  - After win animation completes, transition to results screen (or existing win handling).
+  - At start of each turn, before accepting input, check for deferred win and trigger win animation if applicable.
+  - During `ANIM_PHASE_WIN_EXIT`: standard hop tween from exit tile to virtual tile in exit direction.
+  - During `ANIM_PHASE_WIN_GATE`: trigger exit door locking-gate animation (reuse locking-gate visual system).
+  - During `ANIM_PHASE_WIN_CELEBRATE`: loop in-place bounce on virtual tile. If optimal, apply 360° Y-axis spin per hop cycle and increased emissive intensity.
+  - Show victory overlay once celebrate phase begins. Keep Theseus bouncing behind it.
+  - On results dismiss / next-level trigger: begin camera pan to next diorama. Call `anim_queue_win_stop_celebrate()` once old scene is off-camera and safe to tear down.
 
-**Verification:** Theseus spins, glows, and bounces upon reaching exit. The bounce deformation adds life to the spin. Animation plays fully before results appear. Looks celebratory without being excessive.
+**Verification:** The Minotaur always completes his moves before the win is confirmed — stepping onto the exit tile is not a free escape. The forced exit hop looks like a normal move. The exit door locks behind Theseus with the locking-gate visual. Optimal solution triggers 360° spins on the celebration bounces; non-optimal bounces without spinning. Theseus bounces continuously through the results overlay and camera transition. Old scene teardown happens off-camera — the player never sees geometry pop out of existence.
 
 ---
 
