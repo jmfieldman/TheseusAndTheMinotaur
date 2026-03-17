@@ -38,6 +38,7 @@ typedef enum {
     ANIM_PHASE_MINOTAUR_STEP2,       /* Minotaur step 2 */
     ANIM_PHASE_WIN_EXIT,             /* forced exit hop onto virtual tile */
     ANIM_PHASE_WIN_GATE,             /* exit door locks behind Theseus */
+    ANIM_PHASE_WIN_CELEBRATE,        /* looping in-place celebration bounce */
 } AnimPhase;
 
 /* Theseus sub-phase for multi-part moves */
@@ -84,6 +85,9 @@ typedef enum {
 #define ANIM_ENV_MIN_PAUSE       0.10f
 #define ANIM_WIN_EXIT_DURATION   0.15f  /* forced exit hop (~same as normal hop) */
 #define ANIM_WIN_GATE_DURATION   0.30f  /* exit door lock animation */
+#define ANIM_WIN_CELEBRATE_HOP   0.70f  /* one celebration jump duration (seconds) */
+#define ANIM_WIN_CELEBRATE_REST  0.35f  /* pause at rest between jumps (seconds) */
+#define ANIM_WIN_CELEBRATE_HEIGHT 1.00f /* peak height of celebration hop */
 
 typedef struct {
     AnimPhase        phase;
@@ -154,6 +158,13 @@ typedef struct {
     int              win_gate_col;   /* exit tile col (where gate appears) */
     int              win_gate_row;   /* exit tile row */
     Direction        win_gate_side;  /* which side of the tile the gate is on */
+
+    /* ── Win celebrate loop ────────────────────── */
+    float            win_celebrate_timer;  /* seconds into current jump (0→HOP_DUR) or rest (0→REST_DUR) */
+    bool             win_celebrate_resting; /* true = in rest pause between jumps */
+    bool             win_is_optimal;       /* true if turn_count <= optimal_turns */
+    float            win_celebrate_col;    /* position (virtual tile) */
+    float            win_celebrate_row;
 } AnimQueue;
 
 /* Initialize the animation queue (idle state). */
@@ -298,5 +309,27 @@ void anim_queue_win_exit_pos(const AnimQueue* aq,
 
 /* Get the win gate lock progress (0→1). Returns -1 if not in gate phase. */
 float anim_queue_win_gate_progress(const AnimQueue* aq);
+
+/* Was the win achieved with optimal turn count? */
+bool anim_queue_win_is_optimal(const AnimQueue* aq);
+
+/*
+ * Get the celebration bounce progress (0→1, loops).
+ * Returns -1 if not in celebrate phase.
+ */
+float anim_queue_win_celebrate_progress(const AnimQueue* aq);
+
+/*
+ * Stop the celebration loop (transitions to IDLE).
+ * Called by 6.8c when camera transition completes and old scene can be torn down.
+ */
+void anim_queue_win_stop_celebrate(AnimQueue* aq);
+
+/*
+ * Set the optimal flag for the win celebration.
+ * Call after anim_queue_start() when the result is TURN_RESULT_WIN.
+ * Controls whether the celebrate phase includes a 360° spin.
+ */
+void anim_queue_win_set_optimal(AnimQueue* aq, bool is_optimal);
 
 #endif /* ENGINE_ANIM_QUEUE_H */

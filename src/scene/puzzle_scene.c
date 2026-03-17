@@ -778,6 +778,18 @@ static void render_actors(const PuzzleScene* ps) {
             if (cur_phase == ANIM_PHASE_WIN_EXIT ||
                 cur_phase == ANIM_PHASE_WIN_GATE) {
                 anim_queue_win_exit_pos(&ps->anim, &tcol, &trow, &thop);
+            } else if (cur_phase == ANIM_PHASE_WIN_CELEBRATE) {
+                tcol = ps->anim.win_celebrate_col;
+                trow = ps->anim.win_celebrate_row;
+                thop = 0.0f;
+                if (!ps->anim.win_celebrate_resting) {
+                    float ct = ps->anim.win_celebrate_timer / ANIM_WIN_CELEBRATE_HOP;
+                    /* Airborne during 0.15–0.80 of the jump */
+                    if (ct >= 0.15f && ct < 0.80f) {
+                        float u = (ct - 0.15f) / 0.65f;
+                        thop = 4.0f * u * (1.0f - u) * ANIM_WIN_CELEBRATE_HEIGHT;
+                    }
+                }
             } else {
                 anim_queue_theseus_pos(&ps->anim, &tcol, &trow, &thop);
             }
@@ -2619,6 +2631,18 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                         anim_queue_phase(&ps->anim) == ANIM_PHASE_WIN_GATE)) {
                 /* Win exit/gate phase: use dedicated win position query */
                 anim_queue_win_exit_pos(&ps->anim, &tcol, &trow, &thop);
+            } else if (animating &&
+                       anim_queue_phase(&ps->anim) == ANIM_PHASE_WIN_CELEBRATE) {
+                tcol = ps->anim.win_celebrate_col;
+                trow = ps->anim.win_celebrate_row;
+                thop = 0.0f;
+                if (!ps->anim.win_celebrate_resting) {
+                    float ct = ps->anim.win_celebrate_timer / ANIM_WIN_CELEBRATE_HOP;
+                    if (ct >= 0.15f && ct < 0.80f) {
+                        float u = (ct - 0.15f) / 0.65f;
+                        thop = 4.0f * u * (1.0f - u) * ANIM_WIN_CELEBRATE_HEIGHT;
+                    }
+                }
             } else if (animating) {
                 anim_queue_theseus_pos(&ps->anim, &tcol, &trow, &thop);
             } else {
@@ -2921,6 +2945,56 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                     deform.lean_z = dr * lean_mag;
                 }
             }
+            /* ── Win celebration bounce deformation (Step 6.8b) ──
+             * Discrete jumps with rest pauses. During rest: identity (at rest).
+             * During jump (ct normalized 0–1):
+             *   0.00–0.15: anticipation squat (compress, widen)
+             *   0.15–0.35: launch elongation (stretch tall, narrow)
+             *   0.35–0.65: apex (return to normal cube shape)
+             *   0.65–0.85: descend (slight elongation)
+             *   0.85–1.00: land compress (settle back to rest) */
+            else if (animating &&
+                     anim_queue_phase(&ps->anim) == ANIM_PHASE_WIN_CELEBRATE &&
+                     !ps->anim.win_celebrate_resting) {
+                float ct = ps->anim.win_celebrate_timer / ANIM_WIN_CELEBRATE_HOP;
+                if (ct < 0.15f) {
+                    /* Anticipation squat: compress down, widen */
+                    float u = ct / 0.15f;
+                    float s = u * u * (3.0f - 2.0f * u);
+                    deform.squash = 1.0f - 0.18f * s;   /* → 0.82 */
+                    deform.flare  = 0.12f * s;
+                } else if (ct < 0.35f) {
+                    /* Launch: stretch tall from squat, narrow */
+                    float u = (ct - 0.15f) / 0.20f;
+                    float s = u * u * (3.0f - 2.0f * u);
+                    deform.squash = 0.82f + 0.30f * s;   /* 0.82 → 1.12 */
+                    deform.flare  = 0.12f * (1.0f - s);
+                } else if (ct < 0.65f) {
+                    /* Apex: ease back to normal cube shape */
+                    float u = (ct - 0.35f) / 0.30f;
+                    float s = u * u * (3.0f - 2.0f * u);
+                    deform.squash = 1.12f - 0.12f * s;   /* 1.12 → 1.0 */
+                    deform.flare  = 0.0f;
+                } else if (ct < 0.80f) {
+                    /* Descend: elongation as gravity takes hold */
+                    float u = (ct - 0.65f) / 0.15f;
+                    float s = u * u * (3.0f - 2.0f * u);
+                    deform.squash = 1.0f + 0.08f * s;    /* 1.0 → 1.08 */
+                    deform.flare  = 0.0f;
+                } else if (ct < 0.90f) {
+                    /* Land impact: compression squash */
+                    float u = (ct - 0.80f) / 0.10f;
+                    float s = u * u * (3.0f - 2.0f * u);
+                    deform.squash = 1.08f - 0.20f * s;   /* 1.08 → 0.88 */
+                    deform.flare  = 0.10f * s;
+                } else {
+                    /* Settle: decompress back to rest */
+                    float u = (ct - 0.90f) / 0.10f;
+                    float s = u * u * (3.0f - 2.0f * u);
+                    deform.squash = 0.88f + 0.12f * s;   /* 0.88 → 1.0 */
+                    deform.flare  = 0.10f * (1.0f - s);
+                }
+            }
             /* Post-hop damped wobble — subtle settle, not jelly */
             else if (ps->wobble_active) {
                 float wt = ps->wobble_timer;
@@ -3061,7 +3135,28 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             shader_set_float(shader, "u_ao_intensity", ao_intensity);
 
             float model[16];
-            if (fabsf(thes_turnstile_yaw) > 0.001f) {
+            bool in_celebrate = animating &&
+                anim_queue_phase(&ps->anim) == ANIM_PHASE_WIN_CELEBRATE;
+            if (in_celebrate && !ps->anim.win_celebrate_resting &&
+                anim_queue_win_is_optimal(&ps->anim)) {
+                /* Optimal win: 360° Y-spin concentrated at apex (ct 0.25–0.75).
+                 * No spin during rest pause. */
+                float ct = ps->anim.win_celebrate_timer / ANIM_WIN_CELEBRATE_HOP;
+                float spin_t;
+                if (ct < 0.25f) {
+                    spin_t = 0.0f;
+                } else if (ct > 0.75f) {
+                    spin_t = 1.0f;
+                } else {
+                    float u = (ct - 0.25f) / 0.50f;
+                    spin_t = u * u * (3.0f - 2.0f * u);
+                }
+                float spin = spin_t * (float)M_PI;
+                float t_pos[16], ry_mat[16];
+                mat4_translate(t_pos, tcol + 0.5f, thes_gy + hop_y, trow + 0.5f);
+                mat4_rot_y(ry_mat, spin);
+                mat4_mul(model, t_pos, ry_mat);
+            } else if (fabsf(thes_turnstile_yaw) > 0.001f) {
                 /* Rotating with turnstile platform */
                 float t_pos[16], ry_mat[16];
                 mat4_translate(t_pos, tcol + 0.5f, thes_gy + hop_y, trow + 0.5f);
@@ -3408,6 +3503,8 @@ static void puzzle_update(State* self, float dt) {
                 if (win_result == TURN_RESULT_WIN) {
                     input_buffer_init(&ps->input_buf);
                     anim_queue_start(&ps->anim, &win_record);
+                    anim_queue_win_set_optimal(&ps->anim,
+                        ps->grid->turn_count <= ps->grid->optimal_turns);
                     ps->anim_result_pending = true;
                     ps->pending_result = TURN_RESULT_WIN;
                 } else {

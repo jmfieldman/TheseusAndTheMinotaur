@@ -381,6 +381,14 @@ static void start_win_gate_phase(AnimQueue* aq) {
                ANIM_WIN_GATE_DURATION, ease_out_quad);
 }
 
+static void start_win_celebrate_phase(AnimQueue* aq) {
+    aq->phase = ANIM_PHASE_WIN_CELEBRATE;
+    aq->win_celebrate_timer = 0.0f;
+    aq->win_celebrate_resting = false;  /* first jump plays immediately (gate just closed) */
+    aq->win_celebrate_col = (float)aq->record.theseus_to_col;
+    aq->win_celebrate_row = (float)aq->record.theseus_to_row;
+}
+
 /*
  * Update env_theseus/minotaur tracking positions after the current
  * env event finishes animating.  This prevents actors from snapping
@@ -1290,6 +1298,7 @@ static void anim_queue_update_reverse(AnimQueue* aq, float dt) {
     case ANIM_PHASE_IDLE:
     case ANIM_PHASE_WIN_EXIT:
     case ANIM_PHASE_WIN_GATE:
+    case ANIM_PHASE_WIN_CELEBRATE:
         /* Win phases are never reversed (no undo from win state) */
         break;
     }
@@ -1588,9 +1597,24 @@ void anim_queue_update(AnimQueue* aq, float dt) {
     case ANIM_PHASE_WIN_GATE:
         tween_update(&aq->win_gate, dt);
         if (aq->win_gate.finished) {
-            /* Win animation complete (6.8a stops here — 6.8b adds celebrate) */
-            aq->playing = false;
-            aq->phase = ANIM_PHASE_IDLE;
+            start_win_celebrate_phase(aq);
+        }
+        break;
+
+    case ANIM_PHASE_WIN_CELEBRATE:
+        aq->win_celebrate_timer += dt;
+        if (aq->win_celebrate_resting) {
+            /* Rest pause between jumps */
+            if (aq->win_celebrate_timer >= ANIM_WIN_CELEBRATE_REST) {
+                aq->win_celebrate_timer = 0.0f;
+                aq->win_celebrate_resting = false;
+            }
+        } else {
+            /* Active jump */
+            if (aq->win_celebrate_timer >= ANIM_WIN_CELEBRATE_HOP) {
+                aq->win_celebrate_timer = 0.0f;
+                aq->win_celebrate_resting = true;
+            }
         }
         break;
 
@@ -1612,7 +1636,8 @@ bool anim_queue_in_buffer_window(const AnimQueue* aq) {
      * EXCEPT win phases — input is blocked during the win animation. */
     if (!aq->playing) return false;
     if (aq->phase == ANIM_PHASE_WIN_EXIT ||
-        aq->phase == ANIM_PHASE_WIN_GATE) {
+        aq->phase == ANIM_PHASE_WIN_GATE ||
+        aq->phase == ANIM_PHASE_WIN_CELEBRATE) {
         return false;
     }
     return true;
@@ -1781,6 +1806,7 @@ void anim_queue_minotaur_pos(const AnimQueue* aq,
     case ANIM_PHASE_IDLE:
     case ANIM_PHASE_WIN_EXIT:
     case ANIM_PHASE_WIN_GATE:
+    case ANIM_PHASE_WIN_CELEBRATE:
         /* During win phases, Minotaur stays at final position */
         *out_col = (float)aq->record.minotaur_after2_col;
         *out_row = (float)aq->record.minotaur_after2_row;
@@ -1899,7 +1925,8 @@ float anim_queue_minotaur_teleport_progress(const AnimQueue* aq, int* out_phase)
 
 AnimPhase anim_queue_win_phase(const AnimQueue* aq) {
     if (aq->phase == ANIM_PHASE_WIN_EXIT ||
-        aq->phase == ANIM_PHASE_WIN_GATE) {
+        aq->phase == ANIM_PHASE_WIN_GATE ||
+        aq->phase == ANIM_PHASE_WIN_CELEBRATE) {
         return aq->phase;
     }
     return ANIM_PHASE_IDLE;
@@ -1929,4 +1956,26 @@ float anim_queue_win_gate_progress(const AnimQueue* aq) {
         return tween_value(&aq->win_gate);
     }
     return -1.0f;
+}
+
+bool anim_queue_win_is_optimal(const AnimQueue* aq) {
+    return aq->win_is_optimal;
+}
+
+float anim_queue_win_celebrate_progress(const AnimQueue* aq) {
+    if (aq->phase == ANIM_PHASE_WIN_CELEBRATE) {
+        return aq->win_celebrate_timer;
+    }
+    return -1.0f;
+}
+
+void anim_queue_win_stop_celebrate(AnimQueue* aq) {
+    if (aq->phase == ANIM_PHASE_WIN_CELEBRATE) {
+        aq->playing = false;
+        aq->phase = ANIM_PHASE_IDLE;
+    }
+}
+
+void anim_queue_win_set_optimal(AnimQueue* aq, bool is_optimal) {
+    aq->win_is_optimal = is_optimal;
 }
