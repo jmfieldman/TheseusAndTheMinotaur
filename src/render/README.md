@@ -53,6 +53,12 @@ AO uses three techniques matched to geometry predictability:
 
 4. **Dust puff shader** — Instanced billboard particles. Vertex shader expands a 6-vertex quad per instance using camera right/up vectors for billboarding, with per-particle rotation. Fragment shader draws a procedural SDF filled circle with a thick dark outline. Used for minotaur landing impact effects.
 
+Additional material modes:
+- **AO_MODE_CONVEYOR_BELT (4)** — Scrolling belt surface with cross-ridges
+- **AO_MODE_CONVEYOR_STRIPE (5)** — Hazard stripe side walls (diagonal yellow/gray bands)
+- **AO_MODE_CONVEYOR_RAIL (6)** — Metallic rail with vertex color + lightmap AO
+- **AO_MODE_TURNSTILE_PLATE (7)** — Diamond-plate metal surface for turnstile platforms (procedural bump pattern + cross-hatch grain)
+
 The fragment shader branches on a per-vertex `ao_mode` float to select the correct AO source.
 
 Actor AO is faded out during hops via `u_ao_intensity = 1.0 - thop` so the precomputed ground-contact darkening disappears while airborne.

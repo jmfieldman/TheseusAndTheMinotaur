@@ -1340,11 +1340,11 @@ static void gen_turnstile_platform(VoxelMesh* mesh,
                    biome->palette.platform_side[2],
                    1.0f, false, AO_MODE_NONE);
 
-        /* Metallic top plate */
+        /* Metallic top plate — diamond-plate surface */
         add_box_ao(mesh, fx, TURNSTILE_HEIGHT, fz,
                    1.0f, TURNSTILE_PLATE_H, 1.0f,
                    0.52f, 0.52f, 0.56f,
-                   1.0f, false, AO_MODE_LIGHTMAP);
+                   1.0f, false, AO_MODE_TURNSTILE_PLATE);
     }
 
     /* Hazard stripes on outer perimeter edges only.
@@ -1398,18 +1398,34 @@ static void gen_gear_mesh(VoxelMesh* mesh,
     float gear_h = TURNSTILE_GEAR_Y1 - TURNSTILE_GEAR_Y0;
     float hub_r = radius * 0.45f;
 
-    /* Central hub — octagonal approximation via overlapping boxes */
-    float hub_col_r = 0.30f, hub_col_g = 0.30f, hub_col_b = 0.33f;
+    /* Central hub — multi-box circular approximation for rounder look */
+    float hub_col_r = 0.35f, hub_col_g = 0.35f, hub_col_b = 0.38f;
+    /* Main square */
     add_box_ao(mesh,
                cx - hub_r, TURNSTILE_GEAR_Y0, cz - hub_r,
                hub_r * 2.0f, gear_h, hub_r * 2.0f,
                hub_col_r, hub_col_g, hub_col_b,
                1.0f, true, AO_MODE_NONE);
-    /* Rotated 45° approximation (diamond box) */
+    /* 45° rotated diamond */
     float d = hub_r * 0.707f;
     add_box_ao(mesh,
                cx - d, TURNSTILE_GEAR_Y0, cz - d,
                d * 2.0f, gear_h, d * 2.0f,
+               hub_col_r, hub_col_g, hub_col_b,
+               1.0f, true, AO_MODE_NONE);
+    /* Additional 22.5° and 67.5° rotated boxes for smoother circle */
+    float d2 = hub_r * 0.924f; /* cos(22.5°) */
+    float d2s = hub_r * 0.383f; /* sin(22.5°) */
+    /* 22.5° rotated box */
+    add_box_ao(mesh,
+               cx - d2, TURNSTILE_GEAR_Y0, cz - d2s,
+               d2 * 2.0f, gear_h, d2s * 2.0f,
+               hub_col_r, hub_col_g, hub_col_b,
+               1.0f, true, AO_MODE_NONE);
+    /* 67.5° rotated box */
+    add_box_ao(mesh,
+               cx - d2s, TURNSTILE_GEAR_Y0, cz - d2,
+               d2s * 2.0f, gear_h, d2 * 2.0f,
                hub_col_r, hub_col_g, hub_col_b,
                1.0f, true, AO_MODE_NONE);
 
@@ -1487,6 +1503,19 @@ void diorama_generate_ex(VoxelMesh* mesh, const Grid* grid,
                            1, (const int (*)[2])exclude->cells, exclude->count);
     } else {
         gen_walls(mesh, grid, biome, &rng);
+    }
+
+    /* Add a dark sub-floor beneath excluded (turnstile) cells so the
+     * gear mechanism has a visible background instead of void/black. */
+    if (exclude && exclude->count > 0) {
+        for (int i = 0; i < exclude->count; i++) {
+            float fx = (float)exclude->cells[i][0];
+            float fz = (float)exclude->cells[i][1];
+            add_box_ao(mesh, fx, 0.0f, fz,
+                       1.0f, 0.005f, 1.0f,
+                       0.22f, 0.22f, 0.24f,
+                       1.0f, false, AO_MODE_NONE);
+        }
     }
 
     gen_doors(mesh, grid, biome);

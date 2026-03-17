@@ -214,6 +214,9 @@ typedef struct {
     float           mino_wobble_timer;
     bool            was_mino_rolling;  /* true if previous frame was in Minotaur step phase */
 
+    /* Minotaur facing direction (radians, 0 = facing -Z/north) */
+    float           mino_facing_angle;
+
     /* Camera shake (triggered on minotaur stomp) */
     float           shake_timer;       /* seconds remaining (0 = inactive) */
     float           shake_offset_x;    /* current random X offset (world units) */
@@ -1468,10 +1471,10 @@ static void regenerate_turnstile_mesh(PuzzleScene* ps, int idx) {
     voxel_mesh_build(&ps->turnstile_meshes[idx].gears[gc], 0.0625f);
     gc++;
 
-    /* 4 satellite gears at diagonal offsets from center */
-    float sat_dist = 0.55f;   /* distance from junction to satellite center */
-    float sat_radius = 0.14f; /* smaller gears */
-    float sat_speed = -2.5f;  /* opposite direction, faster */
+    /* 4 satellite gears at tile corners (far enough out to be visible) */
+    float sat_dist = 0.82f;   /* distance from junction to satellite center (near corners) */
+    float sat_radius = 0.18f; /* slightly smaller than central gear */
+    float sat_speed = -1.8f;  /* opposite direction, faster */
     float diag[][2] = {
         { -sat_dist, -sat_dist },
         {  sat_dist, -sat_dist },
@@ -2107,11 +2110,13 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                     mino_deform.squash = 1.0f - 0.08f * s;  /* → 0.92 */
                     mino_deform.flare  = 0.04f * s;
 
-                    /* Stay at start position during squat */
-                    mat4_translate(model,
-                                   start_col + 0.5f,
-                                   mino_gy,
-                                   start_row + 0.5f);
+                    /* Stay at start position during squat, with facing rotation */
+                    {
+                        float t_pos[16], ry_mat[16];
+                        mat4_translate(t_pos, start_col + 0.5f, mino_gy, start_row + 0.5f);
+                        mat4_rot_y(ry_mat, ps->mino_facing_angle);
+                        mat4_mul(model, t_pos, ry_mat);
+                    }
 
                 } else {
                     /* ── Roll phase: 90° rotation around leading bottom edge ── */
@@ -2168,11 +2173,37 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                     mat4_mul(model, tmp, t2);
                 }
             } else {
-                /* ── Idle or non-moving step: simple translation ── */
-                mat4_translate(model,
-                               mcol + 0.5f,
-                               mino_gy,
-                               mrow + 0.5f);
+                /* ── Idle or non-moving step: translation + facing rotation ── */
+
+                /* Check if minotaur is riding an auto-turnstile (environment phase) */
+                float turnstile_yaw = 0.0f;
+                if (animating && anim_queue_phase(&ps->anim) == ANIM_PHASE_ENVIRONMENT) {
+                    const AnimEvent* env_cur = anim_queue_current_event(&ps->anim);
+                    if (env_cur && env_cur->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
+                        env_cur->turnstile.actor_moved[1]) {
+                        /* Compute platform rotation angle (same as turnstile rendering) */
+                        float raw_t = anim_queue_rotation_progress(&ps->anim);
+                        bool cw_dir = env_cur->turnstile.clockwise;
+                        float target = cw_dir ? (float)M_PI_2 : -(float)M_PI_2;
+                        if (raw_t < 0.85f) {
+                            turnstile_yaw = target * (raw_t / 0.85f);
+                        } else {
+                            float u = (raw_t - 0.85f) / 0.15f;
+                            float osc = sinf(u * (float)M_PI * 2.0f)
+                                      * (1.0f - u) * 0.04f;
+                            turnstile_yaw = target * (1.0f + osc);
+                        }
+                    }
+                }
+
+                /* Build model: T(pos) * Ry(facing + turnstile) */
+                float total_yaw = ps->mino_facing_angle + turnstile_yaw;
+                {
+                    float t_pos[16], ry_mat[16], tmp_m[16];
+                    mat4_translate(t_pos, mcol + 0.5f, mino_gy, mrow + 0.5f);
+                    mat4_rot_y(ry_mat, total_yaw);
+                    mat4_mul(model, t_pos, ry_mat);
+                }
 
                 /* Post-roll wobble (heavier than Theseus) */
                 if (ps->mino_wobble_active) {
@@ -2684,15 +2715,43 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             shader_set_int(shader, "u_has_ao",
                            voxel_mesh_has_ao(&ps->theseus_parts.body) ? 1 : 0);
             shader_set_float(shader, "u_ao_intensity", ao_intensity);
+            /* Compute turnstile yaw for Theseus during auto-turnstile rotation */
+            float thes_turnstile_yaw = 0.0f;
+            if (animating && anim_queue_phase(&ps->anim) == ANIM_PHASE_ENVIRONMENT) {
+                const AnimEvent* env_cur = anim_queue_current_event(&ps->anim);
+                if (env_cur && env_cur->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
+                    env_cur->turnstile.actor_moved[0]) {
+                    float raw_t = anim_queue_rotation_progress(&ps->anim);
+                    bool cw_dir = env_cur->turnstile.clockwise;
+                    float target = cw_dir ? (float)M_PI_2 : -(float)M_PI_2;
+                    if (raw_t < 0.85f) {
+                        thes_turnstile_yaw = target * (raw_t / 0.85f);
+                    } else {
+                        float u = (raw_t - 0.85f) / 0.15f;
+                        float osc = sinf(u * (float)M_PI * 2.0f)
+                                  * (1.0f - u) * 0.04f;
+                        thes_turnstile_yaw = target * (1.0f + osc);
+                    }
+                }
+            }
+
             float model[16];
-            memset(model, 0, sizeof(model));
-            model[0]  = 1.0f;
-            model[5]  = 1.0f;
-            model[10] = 1.0f;
-            model[15] = 1.0f;
-            model[12] = tcol + 0.5f;
-            model[13] = thes_gy + hop_y;
-            model[14] = trow + 0.5f;
+            if (fabsf(thes_turnstile_yaw) > 0.001f) {
+                /* Rotating with turnstile platform */
+                float t_pos[16], ry_mat[16];
+                mat4_translate(t_pos, tcol + 0.5f, thes_gy + hop_y, trow + 0.5f);
+                mat4_rot_y(ry_mat, thes_turnstile_yaw);
+                mat4_mul(model, t_pos, ry_mat);
+            } else {
+                memset(model, 0, sizeof(model));
+                model[0]  = 1.0f;
+                model[5]  = 1.0f;
+                model[10] = 1.0f;
+                model[15] = 1.0f;
+                model[12] = tcol + 0.5f;
+                model[13] = thes_gy + hop_y;
+                model[14] = trow + 0.5f;
+            }
             shader_set_mat4(shader, "u_model", model);
             voxel_mesh_draw(&ps->theseus_parts.body);
         }
@@ -2766,6 +2825,7 @@ static void puzzle_on_enter(State* self) {
     ps->mino_wobble_active = false;
     ps->mino_wobble_timer = 0.0f;
     ps->was_mino_rolling = false;
+    ps->mino_facing_angle = 0.0f;
     ps->was_pushing = false;
     ps->was_turnstile_pushing = false;
     ps->push_dir_x = 0.0f;
@@ -3103,6 +3163,24 @@ static void puzzle_update(State* self, float dt) {
             }
         }
         if (ps->turnstile_meshes[ti].was_animating && !is_animating) {
+            /* Update minotaur facing angle if it was on this turnstile */
+            if (anim_queue_is_playing(&ps->anim) || ps->anim.record.event_count > 0) {
+                /* Find the most recent auto-turnstile event for this junction */
+                for (int ei = 0; ei < ps->anim.record.event_count; ei++) {
+                    const AnimEvent* e = &ps->anim.record.events[ei];
+                    if (e->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
+                        e->turnstile.junction_col == ps->turnstile_meshes[ti].jc &&
+                        e->turnstile.junction_row == ps->turnstile_meshes[ti].jr &&
+                        e->turnstile.actor_moved[1]) {
+                        /* Minotaur was on this turnstile — rotate facing angle.
+                         * Sign matches platform rendering: cw → +π/2 */
+                        float rot = ps->turnstile_meshes[ti].clockwise
+                            ? (float)M_PI_2 : -(float)M_PI_2;
+                        ps->mino_facing_angle += rot;
+                        break;
+                    }
+                }
+            }
             regenerate_turnstile_mesh(ps, ti);
         }
         ps->turnstile_meshes[ti].was_animating = is_animating;
@@ -3124,6 +3202,16 @@ static void puzzle_update(State* self, float dt) {
         if (ps->was_mino_rolling && !is_rolling) {
             ps->mino_wobble_active = true;
             ps->mino_wobble_timer = 0.0f;
+
+            /* Update minotaur facing direction based on last movement.
+             * 0 = facing -Z (north), π/2 = facing +X (east), etc. */
+            {
+                float dx = ps->anim.mino_x.end - ps->anim.mino_x.start;
+                float dz = ps->anim.mino_y.end - ps->anim.mino_y.start;
+                if (fabsf(dx) > 0.01f || fabsf(dz) > 0.01f) {
+                    ps->mino_facing_angle = atan2f(dx, -dz);
+                }
+            }
 
             /* Trigger stomp effects (dust puffs + camera shake).
              * Skip during undo — effects are too hard to get right in reverse.

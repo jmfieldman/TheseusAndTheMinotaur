@@ -54,6 +54,7 @@ typedef enum {
     AO_MODE_CONVEYOR_BELT  = 4,  /* Conveyor belt surface: scrolling ridges */
     AO_MODE_CONVEYOR_STRIPE = 5, /* Conveyor side walls: hazard stripes */
     AO_MODE_CONVEYOR_RAIL  = 6,  /* Conveyor metallic rail: vertex color + lightmap AO */
+    AO_MODE_TURNSTILE_PLATE = 7, /* Turnstile platform: diamond-plate metal pattern */
 } AoMode;
 
 /* Wall orientation — controls which axis the slab pattern divides along.
