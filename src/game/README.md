@@ -14,6 +14,7 @@ Pure game logic module. No rendering, no SDL, no platform dependencies. Fully te
 | `minotaur.h / minotaur.c` | Minotaur AI. Greedy 2-step chase with horizontal priority. Cannot exit through exit door. Immune to hazards but blocked by walls/impassable tiles. |
 | `undo.h / undo.c`        | Undo/redo snapshot stack. Captures entity positions, cell state (walls + impassable), feature positions, and all mutable feature state (via vtable snapshot hooks). Stores `TurnRecord` alongside each snapshot for reverse animation playback on undo. Supports unlimited undo depth and full reset to initial state. Rebuilds cell-feature links on restore. |
 | `level_loader.h / level_loader.c` | Level JSON parser. Reads level files (via cJSON), creates Grid with walls/impassable tiles, and instantiates features via a pluggable factory registry. |
+| `tile_physics.h / tile_physics.c` | Tile environment query helper for death voxel physics. Returns physical surface properties (`TileSurface`: floor height, pit status, passability) for each tile, accounting for conveyors, turnstiles, groove trenches, collapsed floors, and moving platform pits. Also provides wall-query wrappers that treat impassable solid blocks as walls. Used by the death animation system for voxel scatter simulation. |
 
 ## Subdirectories
 

@@ -434,7 +434,7 @@ Results UI overlay and camera pan to the next level's diorama. Theseus continues
 
 ---
 
-### Step 6.9a — Death Animation Framework (Core Physics)
+### Step 6.9a — Death Animation Framework (Core Physics) ✅
 
 Tile environment query layer, basic death voxel decomposition, gravity with floor-height awareness, and pit fall-through. Uses simple lerp reversal as a placeholder — enough to visually verify the system before adding wall collisions and keyframe recording. Death voxels are rigid (no deformation shader) — the deformable mesh is only for the intact actor.
 

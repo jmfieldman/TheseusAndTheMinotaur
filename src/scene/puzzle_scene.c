@@ -14,6 +14,7 @@
 #include "render/floor_lightmap.h"
 #include "render/actor_render.h"
 #include "render/dust_puff.h"
+#include "render/death_anim.h"
 #include "data/biome_config.h"
 #include "input/input_manager.h"
 #include "platform/platform.h"
@@ -23,6 +24,7 @@
 #include "game/features/groove_box.h"
 #include "game/features/auto_turnstile.h"
 #include "game/features/conveyor.h"
+#include "game/tile_physics.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -159,6 +161,8 @@ typedef struct {
     float           shadow_extent_gb;    /* world-space half-extent of groove box shadow quad */
     GLuint          shadow_tex_pit;      /* R8 vignette texture for turnstile gear pit shadow */
     float           shadow_extent_pit;   /* world-space half-extent of pit shadow quad */
+    GLuint          shadow_tex_voxel;    /* R8 soft circular shadow for death voxels */
+    float           shadow_extent_voxel; /* world-space half-extent of voxel shadow quad */
     float           shadow_offset_x;     /* world-space shadow offset (simulates light angle) */
     float           shadow_offset_z;
     DioramaCamera   diorama_cam;
@@ -251,6 +255,10 @@ typedef struct {
     /* Crumbling floor pit fall elongation (Step 6.7) */
     bool            pit_fall_active;     /* true while pit fall stretch is playing */
     float           pit_fall_timer;      /* seconds elapsed since effect started */
+
+    /* Death animation (Step 6.9) */
+    DeathAnim       death_anim;
+    bool            death_anim_pending;  /* true: death anim running, result deferred */
 
     /* Debug animation speed (P key cycles through multipliers) */
     float           debug_anim_speed;  /* 0.125, 0.25, 0.5, or 1.0 */
@@ -380,19 +388,37 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
         if (action == ACTION_UNDO) {
             const TurnRecord* rec = undo_peek_turn_record(&ps->undo);
             if (rec) {
-                /* Start reverse animation, defer grid restore */
                 ps->show_result = false;
                 ps->anim_result_pending = false;
-                ps->pit_fall_active = false;
                 input_buffer_init(&ps->input_buf);
-                ps->undo_anim_pending = true;
-                anim_queue_start_reverse(&ps->anim, rec);
+
+                /* If death anim is active, reverse it first.
+                 * When the death anim reverse completes (in update),
+                 * it clears death_anim_pending, then the normal
+                 * undo reverse animation + grid restore will proceed. */
+                if (ps->death_anim_pending &&
+                    death_anim_is_active(&ps->death_anim)) {
+                    death_anim_start_reverse(&ps->death_anim);
+                    /* Defer the turn animation reverse until death anim finishes.
+                     * Store the record so we can start it later. */
+                    ps->undo_anim_pending = true;
+                } else {
+                    ps->pit_fall_active = false;
+                    ps->death_anim_pending = false;
+                    ps->undo_anim_pending = true;
+                    anim_queue_start_reverse(&ps->anim, rec);
+                }
                 set_status(ps, "Undo", COLOR_HUD, 0.8f);
             } else if (undo_pop(&ps->undo, ps->grid)) {
                 /* No TurnRecord — fall back to instant undo */
                 ps->show_result = false;
                 ps->anim_result_pending = false;
                 ps->pit_fall_active = false;
+                ps->death_anim_pending = false;
+                if (death_anim_is_active(&ps->death_anim)) {
+                    ps->death_anim.active = false;
+                    ps->death_anim.finished = true;
+                }
                 anim_queue_init(&ps->anim);
                 if (ps->mino_facing_stack_count > 0)
                     ps->mino_facing_angle = ps->mino_facing_stack[--ps->mino_facing_stack_count].pre_turn;
@@ -405,6 +431,11 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
                 ps->show_result = false;
                 ps->anim_result_pending = false;
                 ps->pit_fall_active = false;
+                ps->death_anim_pending = false;
+                if (death_anim_is_active(&ps->death_anim)) {
+                    ps->death_anim.active = false;
+                    ps->death_anim.finished = true;
+                }
                 anim_queue_init(&ps->anim);
                 ps->mino_facing_angle = 0.0f;
                 ps->mino_facing_stack_count = 0;
@@ -1211,6 +1242,55 @@ static void build_shadow_resources(PuzzleScene* ps, const ActorShadowConfig* cfg
         ps->shadow_extent_pit = extent;
     }
 
+    /* Death voxel shadow: small soft circular shadow for scattered voxel particles.
+     * Radial gradient from center (dark) to edge (transparent). */
+    {
+        int tex_size = 32;  /* small texture, one per voxel is cheap */
+        float extent = 0.08f;  /* world-space half-extent (matches voxel sub-cube size) */
+        float* shadow = (float*)calloc((size_t)tex_size * (size_t)tex_size, sizeof(float));
+
+        for (int ty = 0; ty < tex_size; ty++) {
+            for (int tx = 0; tx < tex_size; tx++) {
+                /* Normalize to [-1, +1] range */
+                float nx = ((float)tx + 0.5f) / (float)tex_size * 2.0f - 1.0f;
+                float nz = ((float)ty + 0.5f) / (float)tex_size * 2.0f - 1.0f;
+                float dist = sqrtf(nx * nx + nz * nz);
+
+                /* Soft radial falloff: dark at center, transparent at edge */
+                float alpha = 1.0f - dist;
+                if (alpha < 0.0f) alpha = 0.0f;
+                /* Smooth the falloff */
+                alpha = alpha * alpha;
+                /* Convert to lit space (1=lit, 0=dark) */
+                shadow[ty * tex_size + tx] = 1.0f - alpha * cfg->shadow_intensity;
+            }
+        }
+
+        uint8_t* texels = (uint8_t*)malloc((size_t)tex_size * (size_t)tex_size);
+        for (int i = 0; i < tex_size * tex_size; i++) {
+            float v = shadow[i];
+            if (v < 0.0f) v = 0.0f;
+            if (v > 1.0f) v = 1.0f;
+            texels[i] = (uint8_t)(v * 255.0f + 0.5f);
+        }
+        free(shadow);
+
+        GLuint tex;
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, tex_size, tex_size, 0,
+                     GL_RED, GL_UNSIGNED_BYTE, texels);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        free(texels);
+
+        ps->shadow_tex_voxel = tex;
+        ps->shadow_extent_voxel = extent;
+    }
+
     /* Cache shadow offsets for draw-time positioning (same as wall shadows) */
     ps->shadow_offset_x = cfg->shadow_offset_x;
     ps->shadow_offset_z = cfg->shadow_offset_z;
@@ -1274,6 +1354,7 @@ static void destroy_shadow_resources(PuzzleScene* ps) {
     if (ps->shadow_tex_minotaur) { glDeleteTextures(1, &ps->shadow_tex_minotaur); ps->shadow_tex_minotaur = 0; }
     if (ps->shadow_tex_groovebox) { glDeleteTextures(1, &ps->shadow_tex_groovebox); ps->shadow_tex_groovebox = 0; }
     if (ps->shadow_tex_pit) { glDeleteTextures(1, &ps->shadow_tex_pit); ps->shadow_tex_pit = 0; }
+    if (ps->shadow_tex_voxel) { glDeleteTextures(1, &ps->shadow_tex_voxel); ps->shadow_tex_voxel = 0; }
     ps->shadow_vertex_count = 0;
 }
 
@@ -2570,7 +2651,9 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
 
         }
 
-        /* Theseus — hops during move animation */
+        /* Theseus — hops during move animation.
+         * Suppressed while death animation is active (voxels replace the actor). */
+        if (!(ps->death_anim_pending && death_anim_is_active(&ps->death_anim)))
         {
             float tcol, trow;
             float thop = 0.0f;
@@ -3194,6 +3277,48 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
         shader_set_mat4(shader, "u_model", identity2);
     }
 
+    /* Death voxel ground shadows — draw before voxel bodies so shadows
+     * appear on the ground plane beneath each scattered particle. */
+    if (ps->death_anim_pending && death_anim_is_active(&ps->death_anim) &&
+        ps->shadow_tex_voxel) {
+        const DeathAnim* da = &ps->death_anim;
+        for (int i = 0; i < da->count; i++) {
+            const DeathVoxel* v = &da->voxels[i];
+            if (v->fallen) continue;
+
+            /* Query floor surface height under this voxel */
+            int col = (int)floorf(v->pos[0]);
+            int row = (int)floorf(v->pos[2]);
+            TileSurface surf = tile_physics_query(da->grid, da->biome, col, row);
+            if (surf.is_pit) continue;  /* no shadow over bottomless pits */
+
+            float ground_y = surf.surface_y + 0.01f;  /* slight offset above surface */
+            float height = v->pos[1] - surf.surface_y;
+            if (height < 0.0f) height = 0.0f;
+
+            /* Shadow shrinks with height: full size at ground level,
+             * vanishes beyond ~2 units above the surface. */
+            float fade = 1.0f - height * 0.5f;
+            if (fade <= 0.0f) continue;
+            float scale = 0.5f + 0.5f * fade;  /* shrink from 1.0 to 0.5 */
+
+            draw_shadow_at_y(ps, shader,
+                             v->pos[0], ground_y, v->pos[2],
+                             scale, ps->shadow_tex_voxel, ps->shadow_extent_voxel);
+        }
+    }
+
+    /* Render death voxels (Step 6.9) — after actors, before particles */
+    if (ps->death_anim_pending && death_anim_is_active(&ps->death_anim)) {
+        death_anim_render(&ps->death_anim, shader);
+
+        /* Reset model matrix after death voxel rendering */
+        float identity3[16];
+        memset(identity3, 0, sizeof(identity3));
+        identity3[0] = identity3[5] = identity3[10] = identity3[15] = 1.0f;
+        shader_set_mat4(shader, "u_model", identity3);
+    }
+
     /* Render dust puff particles (after all opaque geometry, with depth read) */
     dust_puff_render(diorama_camera_get_vp(&ps->diorama_cam),
                      diorama_camera_get_view(&ps->diorama_cam));
@@ -3255,6 +3380,8 @@ static void puzzle_on_enter(State* self) {
     ps->squish_recovery_timer = 0.0f;
     ps->pit_fall_active = false;
     ps->pit_fall_timer = 0.0f;
+    ps->death_anim_pending = false;
+    memset(&ps->death_anim, 0, sizeof(DeathAnim));
     ps->debug_anim_speed = 1.0f;
 
     /* Build 3D diorama for verification */
@@ -3272,6 +3399,7 @@ static void puzzle_on_enter(State* self) {
 static void puzzle_on_exit(State* self) {
     PuzzleScene* ps = (PuzzleScene*)self;
     undo_clear(&ps->undo);
+    death_anim_destroy(&ps->death_anim);
     if (ps->diorama_built) {
         voxel_mesh_destroy(&ps->diorama_mesh);
         destroy_turnstile_meshes(ps);
@@ -3422,6 +3550,29 @@ static void puzzle_update(State* self, float dt) {
         }
     }
 
+    /* Update death animation (Step 6.9) */
+    if (ps->death_anim_pending && death_anim_is_active(&ps->death_anim)) {
+        death_anim_update(&ps->death_anim, dt * ps->debug_anim_speed);
+
+        if (death_anim_is_finished(&ps->death_anim)) {
+            if (ps->death_anim.reversing) {
+                /* Reverse completed — death anim is done, now start the
+                 * turn animation reverse so the move itself rewinds. */
+                ps->death_anim_pending = false;
+                ps->pit_fall_active = false;
+                const TurnRecord* rec = undo_peek_turn_record(&ps->undo);
+                if (rec) {
+                    anim_queue_start_reverse(&ps->anim, rec);
+                    /* undo_anim_pending already true from resolve_action */
+                }
+            } else {
+                /* Forward completed — now show the result overlay */
+                show_turn_result(ps, ps->pending_result);
+                /* Keep death_anim_pending true so undo knows to reverse it */
+            }
+        }
+    }
+
     /* Update post-hop wobble timer */
     if (ps->wobble_active) {
         #define WOBBLE_MAX_DURATION 0.18f
@@ -3484,16 +3635,31 @@ static void puzzle_update(State* self, float dt) {
                 return;
             }
 
-            /* Show deferred result (loss) */
+            /* Show deferred result (loss) — start death animation first */
             if (ps->anim_result_pending) {
-                /* Trigger pit fall elongation for hazard deaths (Step 6.7) */
-                if (ps->pending_result == TURN_RESULT_LOSS_HAZARD) {
-                    ps->pit_fall_active = true;
-                    ps->pit_fall_timer = 0.0f;
+                if (ps->pending_result == TURN_RESULT_LOSS_COLLISION ||
+                    ps->pending_result == TURN_RESULT_LOSS_HAZARD) {
+                    /* Trigger pit fall elongation for hazard deaths (Step 6.7) */
+                    if (ps->pending_result == TURN_RESULT_LOSS_HAZARD) {
+                        ps->pit_fall_active = true;
+                        ps->pit_fall_timer = 0.0f;
+                    }
+                    /* Start death animation — defer result display until it finishes */
+                    DeathType dtype = (ps->pending_result == TURN_RESULT_LOSS_COLLISION)
+                                    ? DEATH_SQUISH : DEATH_GENERIC;
+                    death_anim_init(&ps->death_anim, dtype,
+                                    &ps->theseus_parts,
+                                    (float)ps->grid->theseus_col,
+                                    (float)ps->grid->theseus_row,
+                                    ps->grid, &ps->cached_biome);
+                    ps->death_anim_pending = true;
+                    ps->anim_result_pending = false;
+                } else {
+                    /* Non-death result (shouldn't happen for loss, but handle anyway) */
+                    show_turn_result(ps, ps->pending_result);
+                    ps->anim_result_pending = false;
                 }
-                show_turn_result(ps, ps->pending_result);
-                ps->anim_result_pending = false;
-                /* Don't process buffered actions after showing a result */
+                /* Don't process buffered actions after triggering death */
             } else {
                 /* Check for deferred win (Theseus on exit tile, survived minotaur).
                  * This generates a synthetic TurnRecord for the forced exit hop
@@ -3856,6 +4022,7 @@ static void puzzle_render(State* self) {
 static void puzzle_destroy(State* self) {
     PuzzleScene* ps = (PuzzleScene*)self;
     undo_clear(&ps->undo);
+    death_anim_destroy(&ps->death_anim);
     if (ps->diorama_built) {
         dust_puff_shutdown();
         voxel_mesh_destroy(&ps->diorama_mesh);
