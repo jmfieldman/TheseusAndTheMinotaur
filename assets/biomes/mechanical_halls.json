@@ -76,7 +76,7 @@
 
     "floor_shadow": {
         "shadow_softness":    0.1,
-        "shadow_scale":       1.25,
+        "shadow_padding":     0.08,
         "shadow_offset_x":    0.02,
         "shadow_offset_z":   -0.02,
         "shadow_blur_radius": 3.5,

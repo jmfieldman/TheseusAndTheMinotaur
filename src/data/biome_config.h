@@ -116,7 +116,7 @@ typedef struct {
  */
 typedef struct {
     float shadow_softness;    /* universal softness 0..1 (0=hard, 1=soft), default 0.4 */
-    float shadow_scale;       /* footprint multiplier (>1 = shadows larger than walls), default 1.3 */
+    float shadow_padding;     /* absolute tile-units added per side of wall footprint, default 0.08 */
     float shadow_offset_x;    /* world offset X (simulates light angle), default 0.05 */
     float shadow_offset_z;    /* world offset Z, default -0.05 */
     float shadow_blur_radius; /* max blur radius in texels (scaled by shadow_softness), default 6.0 */

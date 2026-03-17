@@ -108,16 +108,13 @@ void floor_lightmap_generate(FloorLightmap* out,
         float weight = fminf(box->sy / 0.30f, 1.0f) * cfg->shadow_intensity;
         if (weight < 0.001f) continue;
 
-        /* Compute XZ footprint, scale around center, then offset */
-        float cx = box->x + box->sx * 0.5f;
-        float cz = box->z + box->sz * 0.5f;
-        float half_sx = box->sx * 0.5f * cfg->shadow_scale;
-        float half_sz = box->sz * 0.5f * cfg->shadow_scale;
-
-        float foot_x0 = cx - half_sx + cfg->shadow_offset_x;
-        float foot_z0 = cz - half_sz + cfg->shadow_offset_z;
-        float foot_x1 = cx + half_sx + cfg->shadow_offset_x;
-        float foot_z1 = cz + half_sz + cfg->shadow_offset_z;
+        /* Compute XZ footprint with absolute padding per side, then offset.
+         * Padding is added uniformly so shadows extend the same distance
+         * from any wall edge regardless of wall length. */
+        float foot_x0 = box->x - cfg->shadow_padding + cfg->shadow_offset_x;
+        float foot_z0 = box->z - cfg->shadow_padding + cfg->shadow_offset_z;
+        float foot_x1 = box->x + box->sx + cfg->shadow_padding + cfg->shadow_offset_x;
+        float foot_z1 = box->z + box->sz + cfg->shadow_padding + cfg->shadow_offset_z;
 
         /* Convert to texel coordinates */
         int tx0 = (int)floorf((foot_x0 - origin_x) / extent_x * (float)tex_w);

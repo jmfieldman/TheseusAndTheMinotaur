@@ -222,7 +222,7 @@ void biome_config_defaults(BiomeConfig* cfg) {
 
     /* Floor shadow lightmap */
     cfg->floor_shadow.shadow_softness = 0.4f;
-    cfg->floor_shadow.shadow_scale = 1.3f;
+    cfg->floor_shadow.shadow_padding = 0.08f;
     cfg->floor_shadow.shadow_offset_x = 0.05f;
     cfg->floor_shadow.shadow_offset_z = -0.05f;
     cfg->floor_shadow.shadow_blur_radius = 6.0f;
@@ -326,8 +326,8 @@ bool biome_config_load(BiomeConfig* cfg, const char* json_path) {
     if (fs) {
         cfg->floor_shadow.shadow_softness = parse_float(fs, "shadow_softness",
                                                           cfg->floor_shadow.shadow_softness);
-        cfg->floor_shadow.shadow_scale = parse_float(fs, "shadow_scale",
-                                                      cfg->floor_shadow.shadow_scale);
+        cfg->floor_shadow.shadow_padding = parse_float(fs, "shadow_padding",
+                                                       cfg->floor_shadow.shadow_padding);
         cfg->floor_shadow.shadow_offset_x = parse_float(fs, "shadow_offset_x",
                                                           cfg->floor_shadow.shadow_offset_x);
         cfg->floor_shadow.shadow_offset_z = parse_float(fs, "shadow_offset_z",
