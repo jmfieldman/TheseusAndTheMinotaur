@@ -222,6 +222,10 @@ typedef struct {
     /* Minotaur facing direction (radians, 0 = facing -Z/north) */
     float           mino_facing_angle;
 
+    /* Undo stack for minotaur facing angle (parallel to UndoStack) */
+    float           mino_facing_stack[UNDO_MAX_DEPTH];
+    int             mino_facing_stack_count;
+
     /* Camera shake (triggered on minotaur stomp) */
     float           shake_timer;       /* seconds remaining (0 = inactive) */
     float           shake_offset_x;    /* current random X offset (world units) */
@@ -387,6 +391,8 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
                 ps->anim_result_pending = false;
                 ps->pit_fall_active = false;
                 anim_queue_init(&ps->anim);
+                if (ps->mino_facing_stack_count > 0)
+                    ps->mino_facing_angle = ps->mino_facing_stack[--ps->mino_facing_stack_count];
                 set_status(ps, "Undo", COLOR_HUD, 0.8f);
             }
             return;
@@ -397,6 +403,8 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
                 ps->anim_result_pending = false;
                 ps->pit_fall_active = false;
                 anim_queue_init(&ps->anim);
+                ps->mino_facing_angle = 0.0f;
+                ps->mino_facing_stack_count = 0;
                 set_status(ps, "Reset", COLOR_HUD, 0.8f);
             }
             return;
@@ -426,6 +434,8 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
                 set_status(ps, "Undo", COLOR_HUD, 0.8f);
             } else if (undo_pop(&ps->undo, ps->grid)) {
                 anim_queue_init(&ps->anim);
+                if (ps->mino_facing_stack_count > 0)
+                    ps->mino_facing_angle = ps->mino_facing_stack[--ps->mino_facing_stack_count];
                 set_status(ps, "Undo", COLOR_HUD, 0.8f);
             }
             return;
@@ -433,6 +443,8 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
         case ACTION_RESET:
             if (undo_reset(&ps->undo, ps->grid)) {
                 anim_queue_init(&ps->anim);
+                ps->mino_facing_angle = 0.0f;
+                ps->mino_facing_stack_count = 0;
                 set_status(ps, "Reset", COLOR_HUD, 0.8f);
             }
             return;
@@ -442,6 +454,8 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
 
     /* Push undo snapshot BEFORE resolving */
     undo_push(&ps->undo, ps->grid);
+    if (ps->mino_facing_stack_count < UNDO_MAX_DEPTH)
+        ps->mino_facing_stack[ps->mino_facing_stack_count++] = ps->mino_facing_angle;
 
     /* Resolve the turn with animation recording */
     TurnRecord record;
@@ -455,6 +469,7 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
     if (result == TURN_RESULT_BLOCKED) {
         /* Move was blocked, undo the snapshot we just pushed */
         undo_pop(&ps->undo, ps->grid);
+        if (ps->mino_facing_stack_count > 0) ps->mino_facing_stack_count--;
 
         /* Check if there's a groove box at the target tile — if so,
          * play a "bump" animation (Theseus approaches, pushes briefly,
@@ -3119,6 +3134,7 @@ static void puzzle_on_enter(State* self) {
     ps->mino_wobble_timer = 0.0f;
     ps->was_mino_rolling = false;
     ps->mino_facing_angle = 0.0f;
+    ps->mino_facing_stack_count = 0;
     ps->was_pushing = false;
     ps->was_turnstile_pushing = false;
     ps->push_dir_x = 0.0f;
@@ -3331,6 +3347,8 @@ static void puzzle_update(State* self, float dt) {
             if (ps->undo_anim_pending) {
                 ps->undo_anim_pending = false;
                 undo_pop(&ps->undo, ps->grid);
+                if (ps->mino_facing_stack_count > 0)
+                    ps->mino_facing_angle = ps->mino_facing_stack[--ps->mino_facing_stack_count];
 
                 /* Regenerate all turnstile meshes from the now-correct
                  * grid state.  Without this, meshes built during the
@@ -3511,9 +3529,9 @@ static void puzzle_update(State* self, float dt) {
                         e->turnstile.junction_row == ps->turnstile_meshes[ti].jr &&
                         e->turnstile.actor_moved[1]) {
                         /* Minotaur was on this turnstile — rotate facing angle.
-                         * Sign matches platform rendering: cw → +π/2. */
+                         * CW from above = negative Y rotation. */
                         float rot = ps->turnstile_meshes[ti].clockwise
-                            ? (float)M_PI_2 : -(float)M_PI_2;
+                            ? -(float)M_PI_2 : (float)M_PI_2;
                         ps->mino_facing_angle += rot;
                         break;
                     }
@@ -3542,12 +3560,14 @@ static void puzzle_update(State* self, float dt) {
             ps->mino_wobble_timer = 0.0f;
 
             /* Update minotaur facing direction based on last movement.
-             * 0 = facing -Z (north), π/2 = facing +X (east), etc. */
-            {
+             * Skip during undo — the pre-turn angle is restored from the
+             * facing stack when undo_pop completes.
+             * 0 = facing -Z (north), -π/2 = facing +X (east), etc. */
+            if (!is_reversing) {
                 float dx = ps->anim.mino_x.end - ps->anim.mino_x.start;
                 float dz = ps->anim.mino_y.end - ps->anim.mino_y.start;
                 if (fabsf(dx) > 0.01f || fabsf(dz) > 0.01f) {
-                    ps->mino_facing_angle = atan2f(dx, -dz);
+                    ps->mino_facing_angle = atan2f(-dx, -dz);
                 }
             }
 

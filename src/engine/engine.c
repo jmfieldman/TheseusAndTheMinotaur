@@ -126,6 +126,14 @@ void engine_run(void) {
     extern State* title_scene_create(void);
     engine_push_state(title_scene_create());
 
+    /* Ensure the window has keyboard focus before entering the main loop.
+     * On macOS, window activation is asynchronous — the window may be
+     * visible but not yet receiving keyboard events.  Pumping the event
+     * queue processes pending activation events, and SDL_RaiseWindow
+     * explicitly requests input focus from the window manager. */
+    SDL_PumpEvents();
+    SDL_RaiseWindow(g_engine.window);
+
     /* Reset timing baseline AFTER all initialization is complete.
      * last_tick was set early in engine_init(), but shader compilation,
      * font loading, and scene setup can take hundreds of ms.  Without
