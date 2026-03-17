@@ -46,6 +46,8 @@
 #define WALL_THICKNESS_3D   0.20f
 /* 3D Theseus body size — must match actor_render.c THESEUS_SIZE */
 #define THESEUS_BODY_SIZE   0.45f
+/* Pit fall elongation duration (Step 6.7) */
+#define PIT_FALL_DURATION   0.15f
 /* Exit tile marker inset */
 #define EXIT_MARKER_INSET   0.15f
 /* Entrance marker inset */
@@ -239,6 +241,10 @@ typedef struct {
     float           squish_recovery_dir_x;
     float           squish_recovery_dir_z;
 
+    /* Crumbling floor pit fall elongation (Step 6.7) */
+    bool            pit_fall_active;     /* true while pit fall stretch is playing */
+    float           pit_fall_timer;      /* seconds elapsed since effect started */
+
     /* Debug animation speed (P key cycles through multipliers) */
     float           debug_anim_speed;  /* 0.125, 0.25, 0.5, or 1.0 */
 } PuzzleScene;
@@ -370,6 +376,7 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
                 /* Start reverse animation, defer grid restore */
                 ps->show_result = false;
                 ps->anim_result_pending = false;
+                ps->pit_fall_active = false;
                 input_buffer_init(&ps->input_buf);
                 ps->undo_anim_pending = true;
                 anim_queue_start_reverse(&ps->anim, rec);
@@ -378,6 +385,7 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
                 /* No TurnRecord — fall back to instant undo */
                 ps->show_result = false;
                 ps->anim_result_pending = false;
+                ps->pit_fall_active = false;
                 anim_queue_init(&ps->anim);
                 set_status(ps, "Undo", COLOR_HUD, 0.8f);
             }
@@ -387,6 +395,7 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
             if (undo_reset(&ps->undo, ps->grid)) {
                 ps->show_result = false;
                 ps->anim_result_pending = false;
+                ps->pit_fall_active = false;
                 anim_queue_init(&ps->anim);
                 set_status(ps, "Reset", COLOR_HUD, 0.8f);
             }
@@ -2636,10 +2645,14 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             bool in_turnstile = animating &&
                                 anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
                                 anim_queue_theseus_event_type(&ps->anim) == ANIM_EVT_TURNSTILE_ROTATE;
+            bool in_teleport = animating &&
+                               anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
+                               anim_queue_theseus_event_type(&ps->anim) == ANIM_EVT_THESEUS_TELEPORT;
+            bool in_ice_slide = anim_queue_is_ice_sliding(&ps->anim);
             bool in_hop = animating &&
                           anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
-                          !in_push && !in_turnstile &&
-                          !anim_queue_is_ice_sliding(&ps->anim) &&
+                          !in_push && !in_turnstile && !in_teleport &&
+                          !in_ice_slide &&
                           !anim_queue_is_ice_wall_bumping(&ps->anim);
 
             if (in_push) {
@@ -2720,18 +2733,61 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                     deform.lean_x = tdir_x * 0.02f * (1.0f - s);
                     deform.lean_z = tdir_z * 0.02f * (1.0f - s);
                 }
+            } else if (in_teleport) {
+                /* ── Teleport beam deformation (Step 6.7) ──
+                 * Departure (beam-up): vertical elongation squash 1.0→2.5,
+                 * XZ shrinks via volume preservation (≈ 1/sqrt(squash)).
+                 * Arrival (beam-down): reverse — squash 2.5→1.0, then
+                 * the post-hop wobble from Step 6.3 handles the landing settle. */
+                int tp_phase;
+                float tp_prog = anim_queue_teleport_progress(&ps->anim, &tp_phase);
+                if (tp_prog >= 0.0f) {
+                    if (tp_phase == 0) {
+                        /* Beam-up (departure): stretch tall and thin */
+                        float s = tp_prog * tp_prog * (3.0f - 2.0f * tp_prog);
+                        deform.squash = 1.0f + 1.5f * s;   /* 1.0 → 2.5 */
+                        /* Volume preservation: XZ scale ≈ 1/sqrt(squash) */
+                        float xz = 1.0f / sqrtf(deform.squash);
+                        /* Express XZ shrink as negative flare (inward) */
+                        deform.flare = -(1.0f - xz) * 0.5f;
+                    } else {
+                        /* Beam-down (arrival): thin column reconstitutes */
+                        float s = tp_prog * tp_prog * (3.0f - 2.0f * tp_prog);
+                        deform.squash = 2.5f - 1.5f * s;   /* 2.5 → 1.0 */
+                        float xz = 1.0f / sqrtf(deform.squash);
+                        deform.flare = -(1.0f - xz) * 0.5f;
+                    }
+                }
+            } else if (in_ice_slide) {
+                /* ── Ice slide squat deformation (Step 6.7) ──
+                 * Theseus rides low and compact during the slide.
+                 * Lean is suppressed — no directional tilt while sliding. */
+                deform.squash = 0.90f;
+                deform.flare  = 0.08f;
             } else if (in_hop) {
                 float t = tween_progress(&ps->anim.move_x);
                 /* Movement direction for lean */
                 float dc = ps->hop_dir_col;
                 float dr = ps->hop_dir_row;
 
+                /* Ice exit hop transition (Step 6.7):
+                 * When transitioning from ice slide to normal tile, the hop
+                 * starts from the ice squat values (0.90/0.08) instead of
+                 * identity, creating a smooth squat-to-hop handoff. */
+                bool ice_exit = animating &&
+                    ps->anim.theseus_sub == THESEUS_SUB_ICE_EXIT_HOP;
+                float base_squash = ice_exit ? 0.90f : 1.0f;
+                float base_flare  = ice_exit ? 0.08f : 0.0f;
+
                 /* Anticipation squat (t = 0.0 – 0.1) */
                 if (t < 0.10f) {
                     float u = t / 0.10f;
                     float s = u * u * (3.0f - 2.0f * u); /* smoothstep */
-                    deform.squash = 1.0f - 0.08f * s;    /* → 0.92 */
-                    deform.flare  = 0.06f * s;
+                    /* Blend from base toward squat target (0.92) */
+                    float squat_target = 0.92f;
+                    float flare_target = 0.06f;
+                    deform.squash = base_squash + (squat_target - base_squash) * s;
+                    deform.flare  = base_flare  + (flare_target - base_flare) * s;
                 }
                 /* Jump elongation (t = 0.1 – 0.5) */
                 else if (t < 0.50f) {
@@ -2788,6 +2844,23 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 deform.squash = 1.0f + wobble;
                 deform.flare  = (1.0f - deform.squash) * 0.3f;
                 if (deform.flare < 0.0f) deform.flare = 0.0f;
+            }
+
+            /* ── Crumbling floor pit fall elongation (Step 6.7) ──
+             * Dramatic vertical stretch as Theseus falls into a pit.
+             * Squash ramps 1.0→3.0 (Wile E. Coyote taffy stretch downward).
+             * XZ shrinks via volume preservation. Top of mesh anchored. */
+            if (ps->pit_fall_active) {
+                float u = ps->pit_fall_timer / PIT_FALL_DURATION;
+                float s = u * u; /* accelerating ease-in (gravity feel) */
+                deform.squash = 1.0f + 2.0f * s;   /* 1.0 → 3.0 */
+                /* Volume preservation: XZ ≈ 1/sqrt(squash) */
+                float xz = 1.0f / sqrtf(deform.squash);
+                deform.flare = -(1.0f - xz) * 0.5f;
+                /* Suppress any lean/squish during fall */
+                deform.lean_x = 0.0f;
+                deform.lean_z = 0.0f;
+                deform.squish_amount = 0.0f;
             }
 
             /* ── Failed push (bump) deformation (Step 6.6) ──
@@ -2997,6 +3070,8 @@ static void puzzle_on_enter(State* self) {
     ps->push_dir_z = 0.0f;
     ps->squish_recovery_active = false;
     ps->squish_recovery_timer = 0.0f;
+    ps->pit_fall_active = false;
+    ps->pit_fall_timer = 0.0f;
     ps->debug_anim_speed = 1.0f;
 
     /* Build 3D diorama for verification */
@@ -3154,6 +3229,16 @@ static void puzzle_update(State* self, float dt) {
         }
     }
 
+    /* Update pit fall elongation timer (Step 6.7) */
+    if (ps->pit_fall_active) {
+        ps->pit_fall_timer += dt;
+        if (ps->pit_fall_timer >= PIT_FALL_DURATION) {
+            ps->pit_fall_timer = PIT_FALL_DURATION;
+            /* Keep active — the death framework (Step 6.9) will take over.
+             * For now it just holds the final stretched state. */
+        }
+    }
+
     /* Update post-hop wobble timer */
     if (ps->wobble_active) {
         #define WOBBLE_MAX_DURATION 0.18f
@@ -3216,6 +3301,11 @@ static void puzzle_update(State* self, float dt) {
 
             /* Show deferred result */
             if (ps->anim_result_pending) {
+                /* Trigger pit fall elongation for hazard deaths (Step 6.7) */
+                if (ps->pending_result == TURN_RESULT_LOSS_HAZARD) {
+                    ps->pit_fall_active = true;
+                    ps->pit_fall_timer = 0.0f;
+                }
                 show_turn_result(ps, ps->pending_result);
                 ps->anim_result_pending = false;
             }

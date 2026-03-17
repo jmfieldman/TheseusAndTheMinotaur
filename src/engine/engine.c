@@ -126,6 +126,16 @@ void engine_run(void) {
     extern State* title_scene_create(void);
     engine_push_state(title_scene_create());
 
+    /* Reset timing baseline AFTER all initialization is complete.
+     * last_tick was set early in engine_init(), but shader compilation,
+     * font loading, and scene setup can take hundreds of ms.  Without
+     * this reset the first frame sees a huge dt (capped to 0.25 s),
+     * causing ~15 update iterations before a render or event poll,
+     * which on macOS can race with window-activation timing and make
+     * the app appear frozen on rare occasions. */
+    g_engine.last_tick   = SDL_GetPerformanceCounter();
+    g_engine.accumulator = 0.0f;
+
     while (g_engine.running) {
         /* Delta time */
         uint64_t now  = SDL_GetPerformanceCounter();
