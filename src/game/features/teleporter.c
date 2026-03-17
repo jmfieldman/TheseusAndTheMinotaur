@@ -46,6 +46,17 @@ static void tp_on_enter(Feature* self, Grid* grid, EntityID who,
                 .entity   = ENTITY_THESEUS,
             };
             turn_record_push_event(grid->active_record, &evt);
+        } else if (who == ENTITY_MINOTAUR) {
+            AnimEvent evt = {
+                .type     = ANIM_EVT_MINOTAUR_TELEPORT,
+                .phase    = ANIM_EVENT_PHASE_THESEUS,  /* phase field unused for mino; stored for event scanning */
+                .from_col = self->col,
+                .from_row = self->row,
+                .to_col   = other->col,
+                .to_row   = other->row,
+                .entity   = ENTITY_MINOTAUR,
+            };
+            turn_record_push_event(grid->active_record, &evt);
         }
 
         grid_set_entity_pos(grid, who, other->col, other->row);

@@ -11,15 +11,14 @@
   "minotaur": { "col": 7, "row": 7 },
   "walls": [
     { "col": 7, "row": 7, "side": "south" },
-    { "col": 7, "row": 7, "side": "west" },
+    { "col": 7, "row": 7, "side": "east" },
     { "col": 3, "row": 0, "side": "east" },
     { "col": 3, "row": 1, "side": "east" },
     { "col": 3, "row": 2, "side": "east" },
     { "col": 3, "row": 3, "side": "east" },
     { "col": 3, "row": 4, "side": "east" },
     { "col": 3, "row": 5, "side": "east" },
-    { "col": 3, "row": 6, "side": "east" },
-    { "col": 3, "row": 7, "side": "east" }
+    { "col": 3, "row": 6, "side": "east" }    
   ],
   "impassable": [],
   "features": [

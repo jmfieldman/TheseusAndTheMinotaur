@@ -96,16 +96,17 @@ static void start_theseus_phase(AnimQueue* aq) {
     }
 
     if (move_evt && move_evt->type == ANIM_EVT_THESEUS_TELEPORT) {
-        /* Teleport: fade out then fade in */
+        /* Teleport: hop to teleporter tile → beam-up → beam-down at destination */
         aq->theseus_event_type = ANIM_EVT_THESEUS_TELEPORT;
-        aq->theseus_sub = THESEUS_SUB_TELEPORT_OUT;
-        tween_init(&aq->effect, 0.0f, 1.0f, ANIM_TELEPORT_HALF, ease_in_quad);
-        /* Position stays at source during fade out */
-        tween_init(&aq->move_x, (float)move_evt->from_col,
-                   (float)move_evt->from_col, ANIM_TELEPORT_HALF, ease_linear);
-        tween_init(&aq->move_y, (float)move_evt->from_row,
-                   (float)move_evt->from_row, ANIM_TELEPORT_HALF, ease_linear);
-        tween_init(&aq->hop, 0.0f, 0.0f, 0.001f, ease_linear);
+        aq->theseus_sub = THESEUS_SUB_HOP;
+        tween_init(&aq->move_x, (float)r->theseus_from_col,
+                   (float)move_evt->from_col,
+                   ANIM_THESEUS_DURATION, ease_out_cubic);
+        tween_init(&aq->move_y, (float)r->theseus_from_row,
+                   (float)move_evt->from_row,
+                   ANIM_THESEUS_DURATION, ease_out_cubic);
+        tween_init(&aq->hop, 0.0f, 1.0f,
+                   ANIM_THESEUS_DURATION, ease_parabolic_arc);
         return;
     }
 
@@ -257,16 +258,38 @@ static void start_minotaur_step1(AnimQueue* aq) {
     float start_row = aq->env_minotaur_row;
 
     if (r->minotaur_steps >= 1) {
-        tween_init(&aq->mino_x, start_col,
-                   (float)r->minotaur_after1_col,
-                   ANIM_MINOTAUR_DURATION, ease_in_out_quad);
-        tween_init(&aq->mino_y, start_row,
-                   (float)r->minotaur_after1_row,
-                   ANIM_MINOTAUR_DURATION, ease_in_out_quad);
-        /* Track movement direction for roll animation */
-        aq->mino_dir_col = r->minotaur_after1_col - (int)(start_col + 0.5f);
-        aq->mino_dir_row = r->minotaur_after1_row - (int)(start_row + 0.5f);
+        if (r->minotaur_teleported_step1) {
+            /* Teleport: roll to teleporter tile, then beam out/in */
+            aq->mino_teleporting = true;
+            aq->mino_sub = MINO_SUB_ROLL;
+            aq->mino_tp_tile_col = r->mino_step1_tile_col;
+            aq->mino_tp_tile_row = r->mino_step1_tile_row;
+            aq->mino_tp_dest_col = r->minotaur_after1_col;
+            aq->mino_tp_dest_row = r->minotaur_after1_row;
+
+            tween_init(&aq->mino_x, start_col,
+                       (float)r->mino_step1_tile_col,
+                       ANIM_MINOTAUR_DURATION, ease_in_out_quad);
+            tween_init(&aq->mino_y, start_row,
+                       (float)r->mino_step1_tile_row,
+                       ANIM_MINOTAUR_DURATION, ease_in_out_quad);
+            aq->mino_dir_col = r->mino_step1_tile_col - (int)(start_col + 0.5f);
+            aq->mino_dir_row = r->mino_step1_tile_row - (int)(start_row + 0.5f);
+        } else {
+            aq->mino_teleporting = false;
+            aq->mino_sub = MINO_SUB_ROLL;
+            tween_init(&aq->mino_x, start_col,
+                       (float)r->minotaur_after1_col,
+                       ANIM_MINOTAUR_DURATION, ease_in_out_quad);
+            tween_init(&aq->mino_y, start_row,
+                       (float)r->minotaur_after1_row,
+                       ANIM_MINOTAUR_DURATION, ease_in_out_quad);
+            aq->mino_dir_col = r->minotaur_after1_col - (int)(start_col + 0.5f);
+            aq->mino_dir_row = r->minotaur_after1_row - (int)(start_row + 0.5f);
+        }
     } else {
+        aq->mino_teleporting = false;
+        aq->mino_sub = MINO_SUB_ROLL;
         tween_init(&aq->mino_x, start_col,
                    start_col, 0.001f, ease_linear);
         tween_init(&aq->mino_y, start_row,
@@ -281,16 +304,38 @@ static void start_minotaur_step2(AnimQueue* aq) {
     aq->phase = ANIM_PHASE_MINOTAUR_STEP2;
 
     if (r->minotaur_steps >= 2) {
-        tween_init(&aq->mino_x, (float)r->minotaur_after1_col,
-                   (float)r->minotaur_after2_col,
-                   ANIM_MINOTAUR_DURATION, ease_in_out_quad);
-        tween_init(&aq->mino_y, (float)r->minotaur_after1_row,
-                   (float)r->minotaur_after2_row,
-                   ANIM_MINOTAUR_DURATION, ease_in_out_quad);
-        /* Track movement direction for roll animation */
-        aq->mino_dir_col = r->minotaur_after2_col - r->minotaur_after1_col;
-        aq->mino_dir_row = r->minotaur_after2_row - r->minotaur_after1_row;
+        if (r->minotaur_teleported_step2) {
+            /* Teleport: roll to teleporter tile, then beam out/in */
+            aq->mino_teleporting = true;
+            aq->mino_sub = MINO_SUB_ROLL;
+            aq->mino_tp_tile_col = r->mino_step2_tile_col;
+            aq->mino_tp_tile_row = r->mino_step2_tile_row;
+            aq->mino_tp_dest_col = r->minotaur_after2_col;
+            aq->mino_tp_dest_row = r->minotaur_after2_row;
+
+            tween_init(&aq->mino_x, (float)r->minotaur_after1_col,
+                       (float)r->mino_step2_tile_col,
+                       ANIM_MINOTAUR_DURATION, ease_in_out_quad);
+            tween_init(&aq->mino_y, (float)r->minotaur_after1_row,
+                       (float)r->mino_step2_tile_row,
+                       ANIM_MINOTAUR_DURATION, ease_in_out_quad);
+            aq->mino_dir_col = r->mino_step2_tile_col - r->minotaur_after1_col;
+            aq->mino_dir_row = r->mino_step2_tile_row - r->minotaur_after1_row;
+        } else {
+            aq->mino_teleporting = false;
+            aq->mino_sub = MINO_SUB_ROLL;
+            tween_init(&aq->mino_x, (float)r->minotaur_after1_col,
+                       (float)r->minotaur_after2_col,
+                       ANIM_MINOTAUR_DURATION, ease_in_out_quad);
+            tween_init(&aq->mino_y, (float)r->minotaur_after1_row,
+                       (float)r->minotaur_after2_row,
+                       ANIM_MINOTAUR_DURATION, ease_in_out_quad);
+            aq->mino_dir_col = r->minotaur_after2_col - r->minotaur_after1_col;
+            aq->mino_dir_row = r->minotaur_after2_row - r->minotaur_after1_row;
+        }
     } else {
+        aq->mino_teleporting = false;
+        aq->mino_sub = MINO_SUB_ROLL;
         tween_init(&aq->mino_x, (float)r->minotaur_after1_col,
                    (float)r->minotaur_after1_col, 0.001f, ease_linear);
         tween_init(&aq->mino_y, (float)r->minotaur_after1_row,
@@ -465,15 +510,35 @@ static void start_reverse_minotaur_step2(AnimQueue* aq) {
     aq->phase = ANIM_PHASE_MINOTAUR_STEP2;
 
     if (r->minotaur_steps >= 2) {
-        /* Reverse: after2 → after1 */
-        float dur = rev_dur(ANIM_MINOTAUR_DURATION);
-        tween_init(&aq->mino_x, (float)r->minotaur_after2_col,
-                   (float)r->minotaur_after1_col, dur, ease_in_out_quad);
-        tween_init(&aq->mino_y, (float)r->minotaur_after2_row,
-                   (float)r->minotaur_after1_row, dur, ease_in_out_quad);
-        aq->mino_dir_col = r->minotaur_after1_col - r->minotaur_after2_col;
-        aq->mino_dir_row = r->minotaur_after1_row - r->minotaur_after2_row;
+        if (r->minotaur_teleported_step2) {
+            /* Reverse teleport: beam-up at dest → beam-down at teleporter tile → roll back to after1
+             * Swap tile/dest so position logic works: TELEPORT_OUT shows at "tile" (= dest),
+             * TELEPORT_IN shows at "dest" (= teleporter tile). */
+            aq->mino_teleporting = true;
+            aq->mino_sub = MINO_SUB_TELEPORT_OUT;
+            aq->mino_tp_tile_col = r->minotaur_after2_col;  /* beam-up position = destination */
+            aq->mino_tp_tile_row = r->minotaur_after2_row;
+            aq->mino_tp_dest_col = r->mino_step2_tile_col;  /* beam-down position = teleporter tile */
+            aq->mino_tp_dest_row = r->mino_step2_tile_row;
+            float dur = rev_dur(ANIM_TELEPORT_HALF);
+            tween_init(&aq->mino_effect, 0.0f, 1.0f, dur, ease_in_quad);
+            aq->mino_dir_col = 0;
+            aq->mino_dir_row = 0;
+        } else {
+            /* Reverse: after2 → after1 */
+            aq->mino_teleporting = false;
+            aq->mino_sub = MINO_SUB_ROLL;
+            float dur = rev_dur(ANIM_MINOTAUR_DURATION);
+            tween_init(&aq->mino_x, (float)r->minotaur_after2_col,
+                       (float)r->minotaur_after1_col, dur, ease_in_out_quad);
+            tween_init(&aq->mino_y, (float)r->minotaur_after2_row,
+                       (float)r->minotaur_after1_row, dur, ease_in_out_quad);
+            aq->mino_dir_col = r->minotaur_after1_col - r->minotaur_after2_col;
+            aq->mino_dir_row = r->minotaur_after1_row - r->minotaur_after2_row;
+        }
     } else {
+        aq->mino_teleporting = false;
+        aq->mino_sub = MINO_SUB_ROLL;
         tween_init(&aq->mino_x, (float)r->minotaur_after2_col,
                    (float)r->minotaur_after2_col, 0.001f, ease_linear);
         tween_init(&aq->mino_y, (float)r->minotaur_after2_row,
@@ -489,14 +554,33 @@ static void start_reverse_minotaur_step1(AnimQueue* aq) {
     aq->phase = ANIM_PHASE_MINOTAUR_STEP1;
 
     if (r->minotaur_steps >= 1) {
-        float dur = rev_dur(ANIM_MINOTAUR_DURATION);
-        tween_init(&aq->mino_x, (float)r->minotaur_after1_col,
-                   aq->env_minotaur_col, dur, ease_in_out_quad);
-        tween_init(&aq->mino_y, (float)r->minotaur_after1_row,
-                   aq->env_minotaur_row, dur, ease_in_out_quad);
-        aq->mino_dir_col = (int)(aq->env_minotaur_col + 0.5f) - r->minotaur_after1_col;
-        aq->mino_dir_row = (int)(aq->env_minotaur_row + 0.5f) - r->minotaur_after1_row;
+        if (r->minotaur_teleported_step1) {
+            /* Reverse teleport: beam-up at dest → beam-down at teleporter tile → roll back
+             * Swap tile/dest so position logic works correctly. */
+            aq->mino_teleporting = true;
+            aq->mino_sub = MINO_SUB_TELEPORT_OUT;
+            aq->mino_tp_tile_col = r->minotaur_after1_col;  /* beam-up position = destination */
+            aq->mino_tp_tile_row = r->minotaur_after1_row;
+            aq->mino_tp_dest_col = r->mino_step1_tile_col;  /* beam-down position = teleporter tile */
+            aq->mino_tp_dest_row = r->mino_step1_tile_row;
+            float dur = rev_dur(ANIM_TELEPORT_HALF);
+            tween_init(&aq->mino_effect, 0.0f, 1.0f, dur, ease_in_quad);
+            aq->mino_dir_col = 0;
+            aq->mino_dir_row = 0;
+        } else {
+            aq->mino_teleporting = false;
+            aq->mino_sub = MINO_SUB_ROLL;
+            float dur = rev_dur(ANIM_MINOTAUR_DURATION);
+            tween_init(&aq->mino_x, (float)r->minotaur_after1_col,
+                       aq->env_minotaur_col, dur, ease_in_out_quad);
+            tween_init(&aq->mino_y, (float)r->minotaur_after1_row,
+                       aq->env_minotaur_row, dur, ease_in_out_quad);
+            aq->mino_dir_col = (int)(aq->env_minotaur_col + 0.5f) - r->minotaur_after1_col;
+            aq->mino_dir_row = (int)(aq->env_minotaur_row + 0.5f) - r->minotaur_after1_row;
+        }
     } else {
+        aq->mino_teleporting = false;
+        aq->mino_sub = MINO_SUB_ROLL;
         tween_init(&aq->mino_x, (float)r->minotaur_after1_col,
                    (float)r->minotaur_after1_col, 0.001f, ease_linear);
         tween_init(&aq->mino_y, (float)r->minotaur_after1_row,
@@ -751,7 +835,7 @@ static void start_reverse_theseus_phase(AnimQueue* aq) {
     }
 
     if (move_evt && move_evt->type == ANIM_EVT_THESEUS_TELEPORT) {
-        /* Reverse teleport: fade out at destination, fade in at source */
+        /* Reverse teleport: beam-up at dest → beam-down at teleporter tile → hop back to start */
         aq->theseus_event_type = ANIM_EVT_THESEUS_TELEPORT;
         aq->theseus_sub = THESEUS_SUB_TELEPORT_OUT;
         float dur = rev_dur(ANIM_TELEPORT_HALF);
@@ -897,22 +981,72 @@ void anim_queue_start_reverse(AnimQueue* aq, const TurnRecord* record) {
 static void anim_queue_update_reverse(AnimQueue* aq, float dt) {
     switch (aq->phase) {
     case ANIM_PHASE_MINOTAUR_STEP2:
-        tween_update(&aq->mino_x, dt);
-        tween_update(&aq->mino_y, dt);
-        if (aq->mino_x.finished && aq->mino_y.finished) {
-            if (aq->record.minotaur_steps >= 1) {
-                start_reverse_minotaur_step1(aq);
-            } else {
-                start_reverse_environment_phase(aq);
+        if (aq->mino_teleporting && aq->mino_sub != MINO_SUB_ROLL) {
+            tween_update(&aq->mino_effect, dt);
+            if (aq->mino_effect.finished) {
+                if (aq->mino_sub == MINO_SUB_TELEPORT_OUT) {
+                    /* Beam-up done → beam-down at teleporter tile */
+                    aq->mino_sub = MINO_SUB_TELEPORT_IN;
+                    float dur = rev_dur(ANIM_TELEPORT_HALF);
+                    tween_init(&aq->mino_effect, 0.0f, 1.0f, dur, ease_out_quad);
+                } else {
+                    /* TELEPORT_IN done → reverse roll from teleporter tile back to after1.
+                     * mino_tp_dest holds the teleporter tile in reverse (swapped). */
+                    aq->mino_sub = MINO_SUB_ROLL;
+                    float dur = rev_dur(ANIM_MINOTAUR_DURATION);
+                    tween_init(&aq->mino_x, (float)aq->mino_tp_dest_col,
+                               (float)aq->record.minotaur_after1_col,
+                               dur, ease_in_out_quad);
+                    tween_init(&aq->mino_y, (float)aq->mino_tp_dest_row,
+                               (float)aq->record.minotaur_after1_row,
+                               dur, ease_in_out_quad);
+                    aq->mino_dir_col = aq->record.minotaur_after1_col - aq->mino_tp_dest_col;
+                    aq->mino_dir_row = aq->record.minotaur_after1_row - aq->mino_tp_dest_row;
+                }
+            }
+        } else {
+            tween_update(&aq->mino_x, dt);
+            tween_update(&aq->mino_y, dt);
+            if (aq->mino_x.finished && aq->mino_y.finished) {
+                if (aq->record.minotaur_steps >= 1) {
+                    start_reverse_minotaur_step1(aq);
+                } else {
+                    start_reverse_environment_phase(aq);
+                }
             }
         }
         break;
 
     case ANIM_PHASE_MINOTAUR_STEP1:
-        tween_update(&aq->mino_x, dt);
-        tween_update(&aq->mino_y, dt);
-        if (aq->mino_x.finished && aq->mino_y.finished) {
-            start_reverse_environment_phase(aq);
+        if (aq->mino_teleporting && aq->mino_sub != MINO_SUB_ROLL) {
+            tween_update(&aq->mino_effect, dt);
+            if (aq->mino_effect.finished) {
+                if (aq->mino_sub == MINO_SUB_TELEPORT_OUT) {
+                    /* Beam-up done → beam-down at teleporter tile */
+                    aq->mino_sub = MINO_SUB_TELEPORT_IN;
+                    float dur = rev_dur(ANIM_TELEPORT_HALF);
+                    tween_init(&aq->mino_effect, 0.0f, 1.0f, dur, ease_out_quad);
+                } else {
+                    /* TELEPORT_IN done → reverse roll from teleporter tile back to env start.
+                     * mino_tp_dest holds the teleporter tile in reverse (swapped). */
+                    aq->mino_sub = MINO_SUB_ROLL;
+                    float dur = rev_dur(ANIM_MINOTAUR_DURATION);
+                    tween_init(&aq->mino_x, (float)aq->mino_tp_dest_col,
+                               aq->env_minotaur_col,
+                               dur, ease_in_out_quad);
+                    tween_init(&aq->mino_y, (float)aq->mino_tp_dest_row,
+                               aq->env_minotaur_row,
+                               dur, ease_in_out_quad);
+                    aq->mino_dir_col = (int)(aq->env_minotaur_col + 0.5f) - aq->mino_tp_dest_col;
+                    aq->mino_dir_row = (int)(aq->env_minotaur_row + 0.5f) - aq->mino_tp_dest_row;
+                }
+            }
+        } else {
+            tween_update(&aq->mino_x, dt);
+            tween_update(&aq->mino_y, dt);
+            if (aq->mino_x.finished && aq->mino_y.finished) {
+                start_reverse_environment_phase(aq);
+            }
         }
         break;
 
@@ -1030,25 +1164,48 @@ static void anim_queue_update_reverse(AnimQueue* aq, float dt) {
         }
 
         if (aq->theseus_event_type == ANIM_EVT_THESEUS_TELEPORT) {
-            tween_update(&aq->effect, dt);
-            tween_update(&aq->move_x, dt);
-            tween_update(&aq->move_y, dt);
-            if (aq->effect.finished) {
-                if (aq->theseus_sub == THESEUS_SUB_TELEPORT_OUT) {
-                    const AnimEvent* tp = find_event_of_type(&aq->record,
-                                                             ANIM_EVT_THESEUS_TELEPORT);
-                    aq->theseus_sub = THESEUS_SUB_TELEPORT_IN;
-                    float dur = rev_dur(ANIM_TELEPORT_HALF);
-                    tween_init(&aq->effect, 0.0f, 1.0f, dur, ease_out_quad);
-                    if (tp) {
-                        /* Reverse: fade in at source */
-                        tween_init(&aq->move_x, (float)tp->from_col,
-                                   (float)tp->from_col, dur, ease_linear);
-                        tween_init(&aq->move_y, (float)tp->from_row,
-                                   (float)tp->from_row, dur, ease_linear);
-                    }
-                } else {
+            if (aq->theseus_sub == THESEUS_SUB_HOP) {
+                /* Reverse hop from teleporter tile back to start */
+                tween_update(&aq->move_x, dt);
+                tween_update(&aq->move_y, dt);
+                tween_update(&aq->hop, dt);
+                if (aq->move_x.finished && aq->move_y.finished) {
                     goto reverse_theseus_done;
+                }
+            } else {
+                tween_update(&aq->effect, dt);
+                tween_update(&aq->move_x, dt);
+                tween_update(&aq->move_y, dt);
+                if (aq->effect.finished) {
+                    if (aq->theseus_sub == THESEUS_SUB_TELEPORT_OUT) {
+                        /* Beam-up done → beam-down at teleporter tile */
+                        const AnimEvent* tp = find_event_of_type(&aq->record,
+                                                                 ANIM_EVT_THESEUS_TELEPORT);
+                        aq->theseus_sub = THESEUS_SUB_TELEPORT_IN;
+                        float dur = rev_dur(ANIM_TELEPORT_HALF);
+                        tween_init(&aq->effect, 0.0f, 1.0f, dur, ease_out_quad);
+                        if (tp) {
+                            tween_init(&aq->move_x, (float)tp->from_col,
+                                       (float)tp->from_col, dur, ease_linear);
+                            tween_init(&aq->move_y, (float)tp->from_row,
+                                       (float)tp->from_row, dur, ease_linear);
+                        }
+                    } else {
+                        /* TELEPORT_IN done → reverse hop from teleporter tile back to start */
+                        const AnimEvent* tp = find_event_of_type(&aq->record,
+                                                                 ANIM_EVT_THESEUS_TELEPORT);
+                        aq->theseus_sub = THESEUS_SUB_HOP;
+                        float dur = rev_dur(ANIM_THESEUS_DURATION);
+                        if (tp) {
+                            tween_init(&aq->move_x, (float)tp->from_col,
+                                       (float)aq->record.theseus_from_col,
+                                       dur, ease_out_cubic);
+                            tween_init(&aq->move_y, (float)tp->from_row,
+                                       (float)aq->record.theseus_from_row,
+                                       dur, ease_out_cubic);
+                        }
+                        tween_init(&aq->hop, 0.0f, 1.0f, dur, ease_parabolic_arc);
+                    }
                 }
             }
             break;
@@ -1164,24 +1321,45 @@ void anim_queue_update(AnimQueue* aq, float dt) {
         }
 
         if (aq->theseus_event_type == ANIM_EVT_THESEUS_TELEPORT) {
-            tween_update(&aq->effect, dt);
-            tween_update(&aq->move_x, dt);
-            tween_update(&aq->move_y, dt);
-            if (aq->effect.finished) {
-                if (aq->theseus_sub == THESEUS_SUB_TELEPORT_OUT) {
+            if (aq->theseus_sub == THESEUS_SUB_HOP) {
+                /* Hop to teleporter tile */
+                tween_update(&aq->move_x, dt);
+                tween_update(&aq->move_y, dt);
+                tween_update(&aq->hop, dt);
+                if (aq->move_x.finished && aq->move_y.finished) {
+                    /* Hop done — start beam-up at teleporter tile */
                     const AnimEvent* tp = find_event_of_type(&aq->record,
                                                              ANIM_EVT_THESEUS_TELEPORT);
-                    aq->theseus_sub = THESEUS_SUB_TELEPORT_IN;
-                    tween_init(&aq->effect, 0.0f, 1.0f,
-                               ANIM_TELEPORT_HALF, ease_out_quad);
+                    aq->theseus_sub = THESEUS_SUB_TELEPORT_OUT;
+                    tween_init(&aq->effect, 0.0f, 1.0f, ANIM_TELEPORT_HALF, ease_in_quad);
                     if (tp) {
-                        tween_init(&aq->move_x, (float)tp->to_col,
-                                   (float)tp->to_col, ANIM_TELEPORT_HALF, ease_linear);
-                        tween_init(&aq->move_y, (float)tp->to_row,
-                                   (float)tp->to_row, ANIM_TELEPORT_HALF, ease_linear);
+                        tween_init(&aq->move_x, (float)tp->from_col,
+                                   (float)tp->from_col, ANIM_TELEPORT_HALF, ease_linear);
+                        tween_init(&aq->move_y, (float)tp->from_row,
+                                   (float)tp->from_row, ANIM_TELEPORT_HALF, ease_linear);
                     }
-                } else {
-                    goto theseus_done;
+                }
+            } else {
+                /* TELEPORT_OUT or TELEPORT_IN */
+                tween_update(&aq->effect, dt);
+                tween_update(&aq->move_x, dt);
+                tween_update(&aq->move_y, dt);
+                if (aq->effect.finished) {
+                    if (aq->theseus_sub == THESEUS_SUB_TELEPORT_OUT) {
+                        const AnimEvent* tp = find_event_of_type(&aq->record,
+                                                                 ANIM_EVT_THESEUS_TELEPORT);
+                        aq->theseus_sub = THESEUS_SUB_TELEPORT_IN;
+                        tween_init(&aq->effect, 0.0f, 1.0f,
+                                   ANIM_TELEPORT_HALF, ease_out_quad);
+                        if (tp) {
+                            tween_init(&aq->move_x, (float)tp->to_col,
+                                       (float)tp->to_col, ANIM_TELEPORT_HALF, ease_linear);
+                            tween_init(&aq->move_y, (float)tp->to_row,
+                                       (float)tp->to_row, ANIM_TELEPORT_HALF, ease_linear);
+                        }
+                    } else {
+                        goto theseus_done;
+                    }
                 }
             }
             break;
@@ -1275,25 +1453,79 @@ void anim_queue_update(AnimQueue* aq, float dt) {
         break;
 
     case ANIM_PHASE_MINOTAUR_STEP1:
-        tween_update(&aq->mino_x, dt);
-        tween_update(&aq->mino_y, dt);
-        if (aq->mino_x.finished && aq->mino_y.finished) {
-            if (aq->record.minotaur_steps <= 1 &&
-                aq->record.result == TURN_RESULT_LOSS_COLLISION) {
-                aq->playing = false;
-                aq->phase = ANIM_PHASE_IDLE;
-                return;
+        if (aq->mino_teleporting && aq->mino_sub != MINO_SUB_ROLL) {
+            /* Teleport sub-phases */
+            tween_update(&aq->mino_effect, dt);
+            if (aq->mino_effect.finished) {
+                if (aq->mino_sub == MINO_SUB_TELEPORT_OUT) {
+                    /* Beam-up done → beam-down at destination */
+                    aq->mino_sub = MINO_SUB_TELEPORT_IN;
+                    tween_init(&aq->mino_effect, 0.0f, 1.0f,
+                               ANIM_TELEPORT_HALF, ease_out_quad);
+                } else {
+                    /* TELEPORT_IN done → step 1 complete */
+                    if (aq->record.minotaur_steps <= 1 &&
+                        aq->record.result == TURN_RESULT_LOSS_COLLISION) {
+                        aq->playing = false;
+                        aq->phase = ANIM_PHASE_IDLE;
+                        return;
+                    }
+                    start_minotaur_step2(aq);
+                }
             }
-            start_minotaur_step2(aq);
+        } else {
+            tween_update(&aq->mino_x, dt);
+            tween_update(&aq->mino_y, dt);
+            if (aq->mino_x.finished && aq->mino_y.finished) {
+                if (aq->mino_teleporting) {
+                    /* Roll done → start beam-up at teleporter tile */
+                    aq->mino_sub = MINO_SUB_TELEPORT_OUT;
+                    aq->mino_dir_col = 0;
+                    aq->mino_dir_row = 0;
+                    tween_init(&aq->mino_effect, 0.0f, 1.0f,
+                               ANIM_TELEPORT_HALF, ease_in_quad);
+                } else {
+                    if (aq->record.minotaur_steps <= 1 &&
+                        aq->record.result == TURN_RESULT_LOSS_COLLISION) {
+                        aq->playing = false;
+                        aq->phase = ANIM_PHASE_IDLE;
+                        return;
+                    }
+                    start_minotaur_step2(aq);
+                }
+            }
         }
         break;
 
     case ANIM_PHASE_MINOTAUR_STEP2:
-        tween_update(&aq->mino_x, dt);
-        tween_update(&aq->mino_y, dt);
-        if (aq->mino_x.finished && aq->mino_y.finished) {
-            aq->playing = false;
-            aq->phase = ANIM_PHASE_IDLE;
+        if (aq->mino_teleporting && aq->mino_sub != MINO_SUB_ROLL) {
+            /* Teleport sub-phases */
+            tween_update(&aq->mino_effect, dt);
+            if (aq->mino_effect.finished) {
+                if (aq->mino_sub == MINO_SUB_TELEPORT_OUT) {
+                    aq->mino_sub = MINO_SUB_TELEPORT_IN;
+                    tween_init(&aq->mino_effect, 0.0f, 1.0f,
+                               ANIM_TELEPORT_HALF, ease_out_quad);
+                } else {
+                    aq->playing = false;
+                    aq->phase = ANIM_PHASE_IDLE;
+                }
+            }
+        } else {
+            tween_update(&aq->mino_x, dt);
+            tween_update(&aq->mino_y, dt);
+            if (aq->mino_x.finished && aq->mino_y.finished) {
+                if (aq->mino_teleporting) {
+                    aq->mino_sub = MINO_SUB_TELEPORT_OUT;
+                    aq->mino_dir_col = 0;
+                    aq->mino_dir_row = 0;
+                    tween_init(&aq->mino_effect, 0.0f, 1.0f,
+                               ANIM_TELEPORT_HALF, ease_in_quad);
+                } else {
+                    aq->playing = false;
+                    aq->phase = ANIM_PHASE_IDLE;
+                }
+            }
         }
         break;
 
@@ -1327,7 +1559,8 @@ void anim_queue_theseus_pos(const AnimQueue* aq,
 
         if (aq->theseus_sub == THESEUS_SUB_ICE_SLIDE ||
             aq->theseus_sub == THESEUS_SUB_ICE_WALL_BUMP ||
-            aq->theseus_event_type == ANIM_EVT_THESEUS_TELEPORT ||
+            aq->theseus_sub == THESEUS_SUB_TELEPORT_OUT ||
+            aq->theseus_sub == THESEUS_SUB_TELEPORT_IN ||
             aq->theseus_sub == THESEUS_SUB_PUSH) {
             *out_hop = 0.0f;
         } else {
@@ -1465,8 +1698,16 @@ void anim_queue_minotaur_pos(const AnimQueue* aq,
 
     case ANIM_PHASE_MINOTAUR_STEP1:
     case ANIM_PHASE_MINOTAUR_STEP2:
-        *out_col = tween_value(&aq->mino_x);
-        *out_row = tween_value(&aq->mino_y);
+        if (aq->mino_teleporting && aq->mino_sub == MINO_SUB_TELEPORT_OUT) {
+            *out_col = (float)aq->mino_tp_tile_col;
+            *out_row = (float)aq->mino_tp_tile_row;
+        } else if (aq->mino_teleporting && aq->mino_sub == MINO_SUB_TELEPORT_IN) {
+            *out_col = (float)aq->mino_tp_dest_col;
+            *out_row = (float)aq->mino_tp_dest_row;
+        } else {
+            *out_col = tween_value(&aq->mino_x);
+            *out_row = tween_value(&aq->mino_y);
+        }
         break;
 
     case ANIM_PHASE_IDLE:
@@ -1555,7 +1796,30 @@ void anim_queue_minotaur_dir(const AnimQueue* aq,
 float anim_queue_minotaur_progress(const AnimQueue* aq) {
     if (aq->phase == ANIM_PHASE_MINOTAUR_STEP1 ||
         aq->phase == ANIM_PHASE_MINOTAUR_STEP2) {
+        /* During teleport sub-phases, return 0 (no roll progress) */
+        if (aq->mino_teleporting && aq->mino_sub != MINO_SUB_ROLL) {
+            return 0.0f;
+        }
         return tween_progress(&aq->mino_x);
     }
     return 0.0f;
+}
+
+bool anim_queue_is_minotaur_teleporting(const AnimQueue* aq) {
+    return aq->playing &&
+           (aq->phase == ANIM_PHASE_MINOTAUR_STEP1 ||
+            aq->phase == ANIM_PHASE_MINOTAUR_STEP2) &&
+           aq->mino_teleporting &&
+           aq->mino_sub != MINO_SUB_ROLL;
+}
+
+float anim_queue_minotaur_teleport_progress(const AnimQueue* aq, int* out_phase) {
+    if (!anim_queue_is_minotaur_teleporting(aq)) {
+        if (out_phase) *out_phase = -1;
+        return -1.0f;
+    }
+    if (out_phase) {
+        *out_phase = (aq->mino_sub == MINO_SUB_TELEPORT_OUT) ? 0 : 1;
+    }
+    return tween_value(&aq->mino_effect);
 }

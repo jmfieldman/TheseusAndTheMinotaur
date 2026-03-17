@@ -49,6 +49,13 @@ typedef enum {
     THESEUS_SUB_PUSH,             /* push move (box slides, Theseus steps) */
 } TheseusSubPhase;
 
+/* Minotaur sub-phase for teleport moves */
+typedef enum {
+    MINO_SUB_ROLL,                /* normal roll/stomp to destination */
+    MINO_SUB_TELEPORT_OUT,        /* beam-up at teleporter tile */
+    MINO_SUB_TELEPORT_IN,         /* beam-down at destination */
+} MinoSubPhase;
+
 /* Animation timing constants (seconds) */
 #define ANIM_THESEUS_DURATION    0.15f
 #define ANIM_ENVIRONMENT_DURATION 0.10f
@@ -121,6 +128,13 @@ typedef struct {
     Tween            mino_y;
     int              mino_dir_col;    /* movement direction for current step (-1/0/+1) */
     int              mino_dir_row;    /* movement direction for current step (-1/0/+1) */
+
+    /* Minotaur teleport sub-phases */
+    MinoSubPhase     mino_sub;
+    Tween            mino_effect;         /* beam progress 0→1 */
+    bool             mino_teleporting;    /* is current step a teleport? */
+    int              mino_tp_tile_col, mino_tp_tile_row;   /* teleporter tile pos */
+    int              mino_tp_dest_col, mino_tp_dest_row;   /* teleport destination */
 
     /* ── Fast-forward ─────────────────────────── */
     bool             fast_forward;    /* true when buffered input is pending */
@@ -227,6 +241,14 @@ void anim_queue_minotaur_dir(const AnimQueue* aq,
 /* Get the raw tween progress (0→1) for the current minotaur step.
  * Returns 0 if not in a minotaur phase. */
 float anim_queue_minotaur_progress(const AnimQueue* aq);
+
+/* Is the minotaur currently in a teleport sub-phase? */
+bool anim_queue_is_minotaur_teleporting(const AnimQueue* aq);
+
+/* Minotaur teleport effect progress (0→1 for each half).
+ * Returns -1 if not in minotaur teleport.
+ * out_phase: 0 = beaming out, 1 = beaming in */
+float anim_queue_minotaur_teleport_progress(const AnimQueue* aq, int* out_phase);
 
 /*
  * Enable/disable fast-forward mode.

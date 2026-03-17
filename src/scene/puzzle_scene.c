@@ -710,15 +710,40 @@ static void render_actors(const PuzzleScene* ps) {
             grid_to_screen(ps, ps->grid->minotaur_col, ps->grid->minotaur_row, &sx, &sy);
         }
 
-        float offset = (ts - msize) * 0.5f;
-        ui_draw_rect(sx + offset, sy + offset, msize, msize, COLOR_MINOTAUR);
+        /* Minotaur teleport effect: scale and fade */
+        int mtp_phase;
+        float mtp_prog = anim_queue_minotaur_teleport_progress(&ps->anim, &mtp_phase);
+        if (mtp_prog >= 0.0f) {
+            float scale;
+            if (mtp_phase == 0) {
+                scale = 1.0f - mtp_prog;  /* fading out */
+            } else {
+                scale = mtp_prog;          /* fading in */
+            }
+            float scaled_size = msize * scale;
+            float adj = (ts - scaled_size) * 0.5f;
+            Color mc = COLOR_MINOTAUR;
+            mc.a = scale;
+            ui_draw_rect(sx + adj, sy + adj, scaled_size, scaled_size, mc);
 
-        /* Small horn indicators (white dots at top corners) */
-        float horn_sz = msize * 0.15f;
-        ui_draw_rect(sx + offset, sy + offset - horn_sz,
-                     horn_sz, horn_sz, COLOR_WHITE);
-        ui_draw_rect(sx + offset + msize - horn_sz, sy + offset - horn_sz,
-                     horn_sz, horn_sz, COLOR_WHITE);
+            float horn_sz = scaled_size * 0.15f;
+            Color hc = COLOR_WHITE;
+            hc.a = scale;
+            ui_draw_rect(sx + adj, sy + adj - horn_sz,
+                         horn_sz, horn_sz, hc);
+            ui_draw_rect(sx + adj + scaled_size - horn_sz, sy + adj - horn_sz,
+                         horn_sz, horn_sz, hc);
+        } else {
+            float offset = (ts - msize) * 0.5f;
+            ui_draw_rect(sx + offset, sy + offset, msize, msize, COLOR_MINOTAUR);
+
+            /* Small horn indicators (white dots at top corners) */
+            float horn_sz = msize * 0.15f;
+            ui_draw_rect(sx + offset, sy + offset - horn_sz,
+                         horn_sz, horn_sz, COLOR_WHITE);
+            ui_draw_rect(sx + offset + msize - horn_sz, sy + offset - horn_sz,
+                         horn_sz, horn_sz, COLOR_WHITE);
+        }
     }
 
     /* Theseus */
@@ -2282,6 +2307,9 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             DeformState mino_deform;
             deform_state_identity(&mino_deform);
 
+            /* Minotaur teleport beam deformation */
+            bool mino_in_teleport = anim_queue_is_minotaur_teleporting(&ps->anim);
+
             /* ── Build model matrix ── */
             float model[16];
 
@@ -2374,8 +2402,28 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                     mat4_mul(model, t_pos, ry_mat);
                 }
 
+                /* Minotaur teleport beam deformation */
+                if (mino_in_teleport) {
+                    int mtp_phase;
+                    float mtp_prog = anim_queue_minotaur_teleport_progress(&ps->anim, &mtp_phase);
+                    if (mtp_prog >= 0.0f) {
+                        if (mtp_phase == 0) {
+                            /* Beam-up: stretch tall, narrow */
+                            float s = mtp_prog * mtp_prog * (3.0f - 2.0f * mtp_prog);
+                            mino_deform.squash = 1.0f + 1.5f * s;
+                            float xz = 1.0f / sqrtf(mino_deform.squash);
+                            mino_deform.flare = -(1.0f - xz) * 0.5f;
+                        } else {
+                            /* Beam-down: un-stretch */
+                            float s = mtp_prog * mtp_prog * (3.0f - 2.0f * mtp_prog);
+                            mino_deform.squash = 2.5f - 1.5f * s;
+                            float xz = 1.0f / sqrtf(mino_deform.squash);
+                            mino_deform.flare = -(1.0f - xz) * 0.5f;
+                        }
+                    }
+                }
                 /* Post-roll wobble (heavier than Theseus) */
-                if (ps->mino_wobble_active) {
+                else if (ps->mino_wobble_active) {
                     float wt = ps->mino_wobble_timer;
                     float amplitude = 0.06f;
                     float freq = 20.0f;
@@ -2453,8 +2501,13 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                     } else {
                         /* Placeholder step with no actual movement.
                          * Forward: placeholder is step2 (after retraction) → hidden.
-                         * Reverse: placeholder is step2 (before real step1) → visible. */
-                        horn_scale = reversing ? 1.0f : 0.0f;
+                         * Reverse: placeholder is step2 (before real step1) → visible.
+                         * During teleport beam sub-phases: always hidden. */
+                        if (mino_in_teleport) {
+                            horn_scale = 0.0f;
+                        } else {
+                            horn_scale = reversing ? 1.0f : 0.0f;
+                        }
                     }
                 } else if (ps->mino_wobble_active &&
                            ps->mino_wobble_timer < HORN_EXTEND_DURATION) {
@@ -2647,7 +2700,9 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                                 anim_queue_theseus_event_type(&ps->anim) == ANIM_EVT_TURNSTILE_ROTATE;
             bool in_teleport = animating &&
                                anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
-                               anim_queue_theseus_event_type(&ps->anim) == ANIM_EVT_THESEUS_TELEPORT;
+                               anim_queue_theseus_event_type(&ps->anim) == ANIM_EVT_THESEUS_TELEPORT &&
+                               (ps->anim.theseus_sub == THESEUS_SUB_TELEPORT_OUT ||
+                                ps->anim.theseus_sub == THESEUS_SUB_TELEPORT_IN);
             bool in_ice_slide = anim_queue_is_ice_sliding(&ps->anim);
             bool in_hop = animating &&
                           anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&

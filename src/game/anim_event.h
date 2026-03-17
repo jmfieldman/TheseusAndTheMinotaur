@@ -24,6 +24,7 @@ typedef enum {
     ANIM_EVT_THESEUS_HOP,          /* normal move: hop A→B */
     ANIM_EVT_THESEUS_ICE_SLIDE,    /* hop to first ice tile, then slide through waypoints */
     ANIM_EVT_THESEUS_TELEPORT,     /* disappear at A, reappear at B */
+    ANIM_EVT_MINOTAUR_TELEPORT,    /* minotaur teleport: disappear at A, reappear at B */
     ANIM_EVT_THESEUS_PUSH_MOVE,    /* Theseus steps into vacated tile (groove box) */
 
     /* Push effects (concurrent with Theseus phase) */

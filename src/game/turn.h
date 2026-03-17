@@ -55,6 +55,12 @@ typedef struct TurnRecord {
     int  minotaur_after2_col, minotaur_after2_row;  /* after step 2 */
     int  minotaur_steps;                             /* 0, 1, or 2 */
 
+    /* Minotaur teleport tracking per step */
+    bool minotaur_teleported_step1;
+    bool minotaur_teleported_step2;
+    int  mino_step1_tile_col, mino_step1_tile_row;  /* teleporter tile (pre-teleport) */
+    int  mino_step2_tile_col, mino_step2_tile_row;
+
     /* Result */
     TurnResult result;
 

@@ -341,6 +341,7 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
     int mino_steps = 0;
 
     /* Step 1 */
+    int evt_before_step1 = record ? record->event_count : 0;
     if (minotaur_step(grid)) {
         mino_steps = 1;
     }
@@ -348,6 +349,16 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
     if (record) {
         record->minotaur_after1_col = grid->minotaur_col;
         record->minotaur_after1_row = grid->minotaur_row;
+
+        /* Check if step 1 triggered a teleport */
+        for (int i = evt_before_step1; i < record->event_count; i++) {
+            if (record->events[i].type == ANIM_EVT_MINOTAUR_TELEPORT) {
+                record->minotaur_teleported_step1 = true;
+                record->mino_step1_tile_col = record->events[i].from_col;
+                record->mino_step1_tile_row = record->events[i].from_row;
+                break;
+            }
+        }
     }
 
     if (grid_entities_collide(grid)) {
@@ -364,6 +375,7 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
     }
 
     /* Step 2 */
+    int evt_before_step2 = record ? record->event_count : 0;
     if (minotaur_step(grid)) {
         mino_steps = 2;
     }
@@ -372,6 +384,16 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
         record->minotaur_after2_col = grid->minotaur_col;
         record->minotaur_after2_row = grid->minotaur_row;
         record->minotaur_steps = mino_steps;
+
+        /* Check if step 2 triggered a teleport */
+        for (int i = evt_before_step2; i < record->event_count; i++) {
+            if (record->events[i].type == ANIM_EVT_MINOTAUR_TELEPORT) {
+                record->minotaur_teleported_step2 = true;
+                record->mino_step2_tile_col = record->events[i].from_col;
+                record->mino_step2_tile_row = record->events[i].from_row;
+                break;
+            }
+        }
     }
 
     if (grid_entities_collide(grid)) {
