@@ -349,9 +349,43 @@ static void apply_wall_heuristic(float color[4], float vertex_y,
 }
 
 void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
-    if (mesh->box_count == 0) {
+    if (mesh->box_count == 0 && mesh->raw_vert_count == 0) {
         mesh->built = true;
         mesh->vertex_count = 0;
+        return;
+    }
+
+    /* Raw-only mesh: no boxes to rasterize, just upload raw polygon verts */
+    if (mesh->box_count == 0) {
+        glGenVertexArrays(1, &mesh->vao);
+        glGenBuffers(1, &mesh->vbo);
+        glBindVertexArray(mesh->vao);
+        glBindBuffer(GL_ARRAY_BUFFER, mesh->vbo);
+        glBufferData(GL_ARRAY_BUFFER,
+                     (GLsizeiptr)((size_t)mesh->raw_vert_count * FLOATS_PER_VERTEX * sizeof(float)),
+                     mesh->raw_verts, GL_STATIC_DRAW);
+        /* position (vec3) */
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, FLOATS_PER_VERTEX * sizeof(float), (void*)0);
+        /* normal (vec3) */
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, FLOATS_PER_VERTEX * sizeof(float), (void*)(3 * sizeof(float)));
+        /* color (vec4) */
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, FLOATS_PER_VERTEX * sizeof(float), (void*)(6 * sizeof(float)));
+        /* uv (vec2) */
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, FLOATS_PER_VERTEX * sizeof(float), (void*)(10 * sizeof(float)));
+        /* ao_mode (float) */
+        glEnableVertexAttribArray(4);
+        glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, FLOATS_PER_VERTEX * sizeof(float), (void*)(12 * sizeof(float)));
+        glBindVertexArray(0);
+        mesh->vertex_count = mesh->raw_vert_count;
+        mesh->built = true;
+        free(mesh->raw_verts);
+        mesh->raw_verts = NULL;
+        mesh->raw_vert_count = 0;
+        mesh->raw_vert_cap = 0;
         return;
     }
 

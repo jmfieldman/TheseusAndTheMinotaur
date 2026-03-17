@@ -155,6 +155,8 @@ typedef struct {
     float           shadow_extent_t;     /* world-space half-extent of Theseus shadow quad */
     float           shadow_extent_m;     /* world-space half-extent of Minotaur shadow quad */
     float           shadow_extent_gb;    /* world-space half-extent of groove box shadow quad */
+    GLuint          shadow_tex_pit;      /* R8 vignette texture for turnstile gear pit shadow */
+    float           shadow_extent_pit;   /* world-space half-extent of pit shadow quad */
     float           shadow_offset_x;     /* world-space shadow offset (simulates light angle) */
     float           shadow_offset_z;
     DioramaCamera   diorama_cam;
@@ -163,7 +165,7 @@ typedef struct {
 
     /* Auto-turnstile meshes (separated from diorama for rotation animation) */
     #define MAX_AUTO_TURNSTILES 8
-    #define TURNSTILE_GEAR_COUNT 5  /* 1 central + 4 satellite */
+    #define TURNSTILE_GEAR_COUNT 12 /* 1 central + up to 11 satellites */
     struct {
         VoxelMesh mesh;           /* walls + raised platform (rotates together) */
         VoxelMesh gears[TURNSTILE_GEAR_COUNT];
@@ -1074,6 +1076,69 @@ static void build_shadow_resources(PuzzleScene* ps, const ActorShadowConfig* cfg
     generate_actor_shadow_texture(gb_footprint, 0.45f, cfg,
                                    &ps->shadow_tex_groovebox, &ps->shadow_extent_gb);
 
+    /* Turnstile gear pit vignette shadow: dark around the 2×2 perimeter,
+     * transparent in the center so gears remain visible through the shadow.
+     * The pit covers a 2×2 tile area (extent = 1.0 from center). */
+    {
+        int tex_size = SHADOW_TEX_SIZE;
+        float extent = 1.05f;  /* slight oversize to cover floor edges */
+        float* shadow = (float*)calloc((size_t)tex_size * (size_t)tex_size, sizeof(float));
+        float inset = 0.25f;   /* shadow width in world units from edge inward */
+        float intensity = 0.55f;
+
+        for (int ty = 0; ty < tex_size; ty++) {
+            for (int tx = 0; tx < tex_size; tx++) {
+                /* Map texel to [-extent, +extent] world space */
+                float wx = ((float)tx + 0.5f) / (float)tex_size * 2.0f * extent - extent;
+                float wz = ((float)ty + 0.5f) / (float)tex_size * 2.0f * extent - extent;
+
+                /* Distance from nearest edge of the 1.0-radius square */
+                float dx = 1.0f - fabsf(wx);  /* distance from left/right edge */
+                float dz = 1.0f - fabsf(wz);  /* distance from top/bottom edge */
+                float d = fminf(dx, dz);       /* distance from nearest edge */
+
+                /* Outside the pit area: no shadow */
+                if (d < 0.0f) continue;
+
+                /* Smooth gradient from edge (d=0) to inset depth */
+                if (d < inset) {
+                    float t = d / inset;               /* 0 at edge → 1 at inset */
+                    float smooth = t * t * (3.0f - 2.0f * t);  /* smoothstep */
+                    shadow[ty * tex_size + tx] = intensity * (1.0f - smooth);
+                }
+                /* d >= inset: shadow stays 0 (fully lit center) */
+            }
+        }
+
+        /* Light Gaussian blur for smoother edges */
+        shadow_gaussian_blur(shadow, tex_size, tex_size, 2.0f);
+
+        /* Convert to "lit" space: 255=lit, 0=dark */
+        uint8_t* texels = (uint8_t*)malloc((size_t)tex_size * (size_t)tex_size);
+        for (int i = 0; i < tex_size * tex_size; i++) {
+            float v = 1.0f - shadow[i];
+            if (v < 0.0f) v = 0.0f;
+            if (v > 1.0f) v = 1.0f;
+            texels[i] = (uint8_t)(v * 255.0f + 0.5f);
+        }
+        free(shadow);
+
+        GLuint tex;
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, tex_size, tex_size, 0,
+                     GL_RED, GL_UNSIGNED_BYTE, texels);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        free(texels);
+
+        ps->shadow_tex_pit = tex;
+        ps->shadow_extent_pit = extent;
+    }
+
     /* Cache shadow offsets for draw-time positioning (same as wall shadows) */
     ps->shadow_offset_x = cfg->shadow_offset_x;
     ps->shadow_offset_z = cfg->shadow_offset_z;
@@ -1136,6 +1201,7 @@ static void destroy_shadow_resources(PuzzleScene* ps) {
     if (ps->shadow_tex_theseus) { glDeleteTextures(1, &ps->shadow_tex_theseus); ps->shadow_tex_theseus = 0; }
     if (ps->shadow_tex_minotaur) { glDeleteTextures(1, &ps->shadow_tex_minotaur); ps->shadow_tex_minotaur = 0; }
     if (ps->shadow_tex_groovebox) { glDeleteTextures(1, &ps->shadow_tex_groovebox); ps->shadow_tex_groovebox = 0; }
+    if (ps->shadow_tex_pit) { glDeleteTextures(1, &ps->shadow_tex_pit); ps->shadow_tex_pit = 0; }
     ps->shadow_vertex_count = 0;
 }
 
@@ -1510,28 +1576,44 @@ static void regenerate_turnstile_mesh(PuzzleScene* ps, int idx) {
     voxel_mesh_build(&ps->turnstile_meshes[idx].gears[gc], 0.0625f);
     gc++;
 
-    /* 4 satellite gears positioned under the exposed corners of the 12-gon.
-     * The 12-gon has radius 1.0 inscribed in the 2×2 square.  At each
-     * diagonal (45°), the polygon edge is at ~cos(15°) ≈ 0.966 distance,
-     * but the square corner extends to √2 ≈ 1.414.  The gear center at
-     * ~(0.82, 0.82) = diagonal dist ~1.16 is visible through the gap. */
-    float sat_axis = 0.82f;   /* per-axis offset from junction (under corner gap) */
-    float sat_radius = 0.18f; /* slightly smaller than central gear */
-    float sat_speed = -1.8f;  /* opposite direction, faster */
-    float diag[][2] = {
-        { -sat_axis, -sat_axis },
-        {  sat_axis, -sat_axis },
-        {  sat_axis,  sat_axis },
-        { -sat_axis,  sat_axis },
+    /* Satellite gears under the exposed corners of the 12-gon.
+     * Randomly sized and positioned like watch clockwork.  A simple
+     * deterministic hash from (jc, jr, index) seeds the variation so
+     * each turnstile looks unique but consistent across rebuilds. */
+    struct {
+        float dx, dz;       /* offset from junction */
+        float radius;       /* gear radius */
+        int   teeth;        /* tooth count */
+        float speed;        /* rotation speed multiplier */
+    } sats[] = {
+        /* Primary gear in each corner (larger) */
+        { -0.80f, -0.80f,  0.22f, 10, -1.4f },
+        {  0.80f, -0.80f,  0.19f,  8, -1.8f },
+        {  0.80f,  0.80f,  0.24f, 11, -1.2f },
+        { -0.80f,  0.80f,  0.17f,  7, -2.0f },
+        /* Smaller secondary gears clustered near primaries */
+        { -0.55f, -0.95f,  0.12f,  6,  2.5f },
+        {  0.95f, -0.55f,  0.10f,  5,  3.0f },
+        {  0.55f,  0.95f,  0.13f,  6,  2.2f },
+        { -0.95f,  0.55f,  0.11f,  5,  2.8f },
+        /* Tiny accent gears */
+        { -0.60f, -0.60f,  0.08f,  5,  3.5f },
+        {  0.62f, -0.62f,  0.07f,  4, -4.0f },
+        {  0.58f,  0.63f,  0.09f,  5,  3.2f },
     };
-    for (int s = 0; s < 4; s++) {
-        ps->turnstile_meshes[idx].gear_cx[gc] = cx + diag[s][0];
-        ps->turnstile_meshes[idx].gear_cz[gc] = cz + diag[s][1];
-        ps->turnstile_meshes[idx].gear_speed[gc] = sat_speed;
+    int sat_count = (int)(sizeof(sats) / sizeof(sats[0]));
+    if (gc + sat_count > TURNSTILE_GEAR_COUNT)
+        sat_count = TURNSTILE_GEAR_COUNT - gc;
+
+    for (int s = 0; s < sat_count; s++) {
+        float gx = cx + sats[s].dx;
+        float gz = cz + sats[s].dz;
+        ps->turnstile_meshes[idx].gear_cx[gc] = gx;
+        ps->turnstile_meshes[idx].gear_cz[gc] = gz;
+        ps->turnstile_meshes[idx].gear_speed[gc] = sats[s].speed;
         voxel_mesh_begin(&ps->turnstile_meshes[idx].gears[gc]);
         diorama_generate_gear(&ps->turnstile_meshes[idx].gears[gc],
-                               cx + diag[s][0], cz + diag[s][1],
-                               6, sat_radius);
+                               gx, gz, sats[s].teeth, sats[s].radius);
         voxel_mesh_build(&ps->turnstile_meshes[idx].gears[gc], 0.0625f);
         gc++;
     }
@@ -1875,9 +1957,12 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
     /* Draw static geometry (floor, walls, exit marker) */
     voxel_mesh_draw(&ps->diorama_mesh);
 
-    /* Draw auto-turnstile platform + walls (rotated around junction during animation) */
+    /* Draw auto-turnstile: gears first, then pit shadow, then plate+walls.
+     * Order matters because the plate (Y=0.10) would block the pit shadow
+     * (Y=-0.004) in the depth buffer if drawn first. */
+    float turnstile_angles[MAX_AUTO_TURNSTILES];
     for (int ti = 0; ti < ps->turnstile_mesh_count; ti++) {
-        if (!ps->turnstile_meshes[ti].valid) continue;
+        if (!ps->turnstile_meshes[ti].valid) { turnstile_angles[ti] = 0; continue; }
 
         int jc = ps->turnstile_meshes[ti].jc;
         int jr = ps->turnstile_meshes[ti].jr;
@@ -1896,19 +1981,12 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 float target = cw ? (float)M_PI_2 : -(float)M_PI_2;
 
                 if (anim_queue_is_reversing(&ps->anim)) {
-                    /* Reverse: the mesh has POST-turn walls (rebuilt after
-                     * the forward turn completed).  Post-turn walls at 0°
-                     * already look like the forward end-state, so we need
-                     * to rotate from 0 → −target to undo the visual turn.
-                     * raw_t goes 1→0, so (raw_t − 1) goes 0→−1. */
                     platform_angle = target * (raw_t - 1.0f);
                 } else {
-                    /* Forward: linear rotation with snap-oscillation at
-                     * the end.  raw_t goes 0→1. */
                     if (raw_t < 0.85f) {
                         platform_angle = target * (raw_t / 0.85f);
                     } else {
-                        float u = (raw_t - 0.85f) / 0.15f; /* 0→1 in last 15% */
+                        float u = (raw_t - 0.85f) / 0.15f;
                         float osc = sinf(u * (float)M_PI * 2.0f)
                                   * (1.0f - u) * 0.04f;
                         platform_angle = target * (1.0f + osc);
@@ -1916,19 +1994,7 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 }
             }
         }
-
-        /* Build model matrix: T(jc,0,jr) * Ry(angle) * T(-jc,0,-jr) */
-        {
-            float t1[16], ry[16], t2[16], tmp[16], model[16];
-            mat4_translate(t1, (float)jc, 0.0f, (float)jr);
-            mat4_rot_y(ry, platform_angle);
-            mat4_translate(t2, -(float)jc, 0.0f, -(float)jr);
-            mat4_mul(tmp, t1, ry);
-            mat4_mul(model, tmp, t2);
-
-            shader_set_mat4(shader, "u_model", model);
-            voxel_mesh_draw(&ps->turnstile_meshes[ti].mesh);
-        }
+        turnstile_angles[ti] = platform_angle;
 
         /* Draw gears — each rotates around its own center axis */
         for (int g = 0; g < ps->turnstile_meshes[ti].gear_count; g++) {
@@ -1946,6 +2012,46 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             shader_set_mat4(shader, "u_model", model);
             voxel_mesh_draw(&ps->turnstile_meshes[ti].gears[g]);
         }
+    }
+
+    /* Draw vignette shadow over each turnstile gear pit.
+     * Rendered AFTER gears (so shadow darkens them) but BEFORE the
+     * turnstile plate+walls (so the plate at Y=0.10 draws on top). */
+    if (ps->turnstile_mesh_count > 0) {
+        shader_set_mat4(shader, "u_model", identity);
+    }
+    if (ps->turnstile_mesh_count > 0 && ps->shadow_tex_pit) {
+        float saved_ox = ps->shadow_offset_x;
+        float saved_oz = ps->shadow_offset_z;
+        ((PuzzleScene*)ps)->shadow_offset_x = 0.0f;
+        ((PuzzleScene*)ps)->shadow_offset_z = 0.0f;
+        for (int ti = 0; ti < ps->turnstile_mesh_count; ti++) {
+            if (!ps->turnstile_meshes[ti].valid) continue;
+            int jc = ps->turnstile_meshes[ti].jc;
+            int jr = ps->turnstile_meshes[ti].jr;
+            draw_shadow_at_y(ps, shader,
+                             (float)jc, -0.004f, (float)jr,
+                             1.0f, ps->shadow_tex_pit, ps->shadow_extent_pit);
+        }
+        ((PuzzleScene*)ps)->shadow_offset_x = saved_ox;
+        ((PuzzleScene*)ps)->shadow_offset_z = saved_oz;
+    }
+
+    /* Draw turnstile platform + walls on top of shadows */
+    for (int ti = 0; ti < ps->turnstile_mesh_count; ti++) {
+        if (!ps->turnstile_meshes[ti].valid) continue;
+        int jc = ps->turnstile_meshes[ti].jc;
+        int jr = ps->turnstile_meshes[ti].jr;
+
+        float t1[16], ry[16], t2[16], tmp[16], model[16];
+        mat4_translate(t1, (float)jc, 0.0f, (float)jr);
+        mat4_rot_y(ry, turnstile_angles[ti]);
+        mat4_translate(t2, -(float)jc, 0.0f, -(float)jr);
+        mat4_mul(tmp, t1, ry);
+        mat4_mul(model, tmp, t2);
+
+        shader_set_mat4(shader, "u_model", model);
+        voxel_mesh_draw(&ps->turnstile_meshes[ti].mesh);
     }
 
     /* Reset model matrix back to identity */

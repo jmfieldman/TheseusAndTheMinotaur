@@ -1317,8 +1317,8 @@ static void gen_edge_border(VoxelMesh* mesh, const Grid* grid,
 
 #define TURNSTILE_HEIGHT       CONVEYOR_HEIGHT   /* 0.10 — same elevation as conveyors */
 #define TURNSTILE_PLATE_H      0.006f            /* thin metal cap */
-#define TURNSTILE_GEAR_Y0      0.02f             /* gear bottom */
-#define TURNSTILE_GEAR_Y1      0.08f             /* gear top (below platform) */
+#define TURNSTILE_GEAR_Y0     -0.08f             /* gear bottom (below floor) */
+#define TURNSTILE_GEAR_Y1     -0.015f            /* gear top (below floor surface) */
 
 /* Number of vertices in the turnstile polygon. */
 #define TURNSTILE_POLY_N 12
@@ -1411,85 +1411,67 @@ static void gen_turnstile_platform(VoxelMesh* mesh,
  * tooth_count: number of teeth around the gear.
  * radius: distance from center to tooth tip.
  * The mesh should be initialized with voxel_mesh_begin() before calling. */
+/* Build a sprocket gear using polygon prisms.
+ * The gear profile alternates between inner radius (valleys) and outer
+ * radius (tooth tips), creating a proper sprocket silhouette.
+ * tooth_count: number of teeth (profile has 2*tooth_count vertices).
+ * radius: outer radius (tooth tip).  Inner radius is 65% of outer. */
 static void gen_gear_mesh(VoxelMesh* mesh,
                            float cx, float cz,
                            int tooth_count, float radius) {
-    float gear_h = TURNSTILE_GEAR_Y1 - TURNSTILE_GEAR_Y0;
-    float hub_r = radius * 0.45f;
+    float inner_r = radius * 0.65f;
+    float hub_r   = radius * 0.35f;
 
-    /* Central hub — multi-box circular approximation for rounder look */
-    float hub_col_r = 0.35f, hub_col_g = 0.35f, hub_col_b = 0.38f;
-    /* Main square */
-    add_box_ao(mesh,
-               cx - hub_r, TURNSTILE_GEAR_Y0, cz - hub_r,
-               hub_r * 2.0f, gear_h, hub_r * 2.0f,
-               hub_col_r, hub_col_g, hub_col_b,
-               1.0f, true, AO_MODE_NONE);
-    /* 45° rotated diamond */
-    float d = hub_r * 0.707f;
-    add_box_ao(mesh,
-               cx - d, TURNSTILE_GEAR_Y0, cz - d,
-               d * 2.0f, gear_h, d * 2.0f,
-               hub_col_r, hub_col_g, hub_col_b,
-               1.0f, true, AO_MODE_NONE);
-    /* Additional 22.5° and 67.5° rotated boxes for smoother circle */
-    float d2 = hub_r * 0.924f; /* cos(22.5°) */
-    float d2s = hub_r * 0.383f; /* sin(22.5°) */
-    /* 22.5° rotated box */
-    add_box_ao(mesh,
-               cx - d2, TURNSTILE_GEAR_Y0, cz - d2s,
-               d2 * 2.0f, gear_h, d2s * 2.0f,
-               hub_col_r, hub_col_g, hub_col_b,
-               1.0f, true, AO_MODE_NONE);
-    /* 67.5° rotated box */
-    add_box_ao(mesh,
-               cx - d2s, TURNSTILE_GEAR_Y0, cz - d2,
-               d2s * 2.0f, gear_h, d2 * 2.0f,
-               hub_col_r, hub_col_g, hub_col_b,
-               1.0f, true, AO_MODE_NONE);
+    /* Sprocket profile: alternate inner/outer vertices */
+    int profile_n = tooth_count * 2;
+    #define GEAR_MAX_VERTS 64
+    float profile[GEAR_MAX_VERTS][2];
+    if (profile_n > GEAR_MAX_VERTS) profile_n = GEAR_MAX_VERTS;
 
-    /* Cog teeth — rectangular boxes radiating outward */
-    float tooth_w = radius * 0.28f;
-    float tooth_len = radius * 0.35f;
-    float tooth_r = 0.38f, tooth_g = 0.38f, tooth_b = 0.40f;
-
-    for (int t = 0; t < tooth_count; t++) {
-        float angle = (float)t / (float)tooth_count * (float)M_PI * 2.0f;
-        float dx = cosf(angle);
-        float dz = sinf(angle);
-        float start = hub_r * 0.7f;
-
-        /* Tooth center position */
-        float tx = cx + dx * (start + tooth_len * 0.5f);
-        float tz = cz + dz * (start + tooth_len * 0.5f);
-
-        /* Align tooth box along the radial direction.
-         * For simplicity, use axis-aligned boxes with width based on
-         * the dominant axis. */
-        float abs_dx = fabsf(dx);
-        float abs_dz = fabsf(dz);
-
-        float bx, bz, bsx, bsz;
-        if (abs_dx > abs_dz) {
-            /* Predominantly horizontal tooth */
-            bsx = tooth_len;
-            bsz = tooth_w;
-            bx = tx - bsx * 0.5f;
-            bz = tz - bsz * 0.5f;
-        } else {
-            /* Predominantly vertical tooth */
-            bsx = tooth_w;
-            bsz = tooth_len;
-            bx = tx - bsx * 0.5f;
-            bz = tz - bsz * 0.5f;
-        }
-
-        add_box_ao(mesh,
-                   bx, TURNSTILE_GEAR_Y0, bz,
-                   bsx, gear_h, bsz,
-                   tooth_r, tooth_g, tooth_b,
-                   1.0f, true, AO_MODE_NONE);
+    /* Tooth shape: each tooth spans ~40% of its arc slot (sharper teeth).
+     * The remaining 60% is the valley at inner_r. */
+    float tooth_arc_frac = 0.40f;
+    for (int i = 0; i < tooth_count; i++) {
+        float base_angle = (float)i / (float)tooth_count * (float)M_PI * 2.0f;
+        float step = 1.0f / (float)tooth_count * (float)M_PI * 2.0f;
+        /* Tooth tip — centered in slot */
+        float tip_angle = base_angle + step * 0.5f;
+        /* Valley — at slot boundary */
+        float val_angle = base_angle;
+        /* Outer vertex (tooth tip, slightly narrower by offsetting) */
+        float ta = tip_angle;
+        profile[i * 2][0]     = cx + inner_r * cosf(val_angle);
+        profile[i * 2][1]     = cz + inner_r * sinf(val_angle);
+        profile[i * 2 + 1][0] = cx + radius * cosf(ta);
+        profile[i * 2 + 1][1] = cz + radius * sinf(ta);
     }
+
+    float tooth_r = 0.38f, tooth_g = 0.38f, tooth_b = 0.40f;
+    float gear_height = TURNSTILE_GEAR_Y1 - TURNSTILE_GEAR_Y0;
+
+    /* Sprocket body as extruded polygon */
+    voxel_mesh_add_polygon_prism(mesh,
+        (const float (*)[2])profile, profile_n,
+        TURNSTILE_GEAR_Y0, gear_height,
+        tooth_r, tooth_g, tooth_b, 1.0f,
+        AO_MODE_TURNSTILE_PLATE, AO_MODE_TURNSTILE_PLATE);
+
+    /* Central hub disc (circular polygon, darker) */
+    int hub_sides = 16;
+    float hub_verts[16][2];
+    for (int i = 0; i < hub_sides; i++) {
+        float a = (float)i / (float)hub_sides * (float)M_PI * 2.0f;
+        hub_verts[i][0] = cx + hub_r * cosf(a);
+        hub_verts[i][1] = cz + hub_r * sinf(a);
+    }
+    /* Hub slightly taller so it protrudes above sprocket face */
+    voxel_mesh_add_polygon_prism(mesh,
+        (const float (*)[2])hub_verts, hub_sides,
+        TURNSTILE_GEAR_Y0 - 0.005f, gear_height + 0.01f,
+        0.30f, 0.30f, 0.33f, 1.0f,
+        AO_MODE_TURNSTILE_PLATE, AO_MODE_TURNSTILE_PLATE);
+
+    #undef GEAR_MAX_VERTS
 }
 
 /* ---------- Public API ---------- */
@@ -1525,16 +1507,20 @@ void diorama_generate_ex(VoxelMesh* mesh, const Grid* grid,
     }
 
     /* Add a dark sub-floor beneath excluded (turnstile) cells so the
-     * gear mechanism has a visible background instead of void/black. */
+     * gear mechanism has a visible background instead of void/black.
+     * Sits below the gears as a machinery pit floor. */
     if (exclude && exclude->count > 0) {
         for (int i = 0; i < exclude->count; i++) {
             float fx = (float)exclude->cells[i][0];
             float fz = (float)exclude->cells[i][1];
-            add_box_ao(mesh, fx, 0.0f, fz,
+            add_box_ao(mesh, fx, TURNSTILE_GEAR_Y0 - 0.02f, fz,
                        1.0f, 0.005f, 1.0f,
-                       0.18f, 0.18f, 0.20f,
-                       1.0f, false, AO_MODE_NONE);
+                       0.14f, 0.14f, 0.16f,
+                       1.0f, false, AO_MODE_TURNSTILE_PLATE);
         }
+
+        /* Floor-edge shadow over gear pit is rendered as a blended
+         * vignette quad in puzzle_scene.c (not opaque geometry). */
     }
 
     gen_doors(mesh, grid, biome);
