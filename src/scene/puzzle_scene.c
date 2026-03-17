@@ -1197,8 +1197,9 @@ static void mat4_scale_y(float m[16], float sy) {
     m[5] = sy;
 }
 
-static void draw_shadow_at_y(const PuzzleScene* ps, GLuint shader,
+static void draw_shadow_at_y_rot(const PuzzleScene* ps, GLuint shader,
                               float x, float y, float z, float scale,
+                              float rot_y,
                               GLuint shadow_tex, float extent) {
     if (ps->shadow_vertex_count == 0 || !shadow_tex) return;
 
@@ -1228,17 +1229,33 @@ static void draw_shadow_at_y(const PuzzleScene* ps, GLuint shader,
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
                         GL_ZERO, GL_ONE);
 
-    /* Quad spans [-1,+1] in local space; scale to shadow extent */
+    /* Quad spans [-1,+1] in local space; scale to shadow extent.
+     * When rot_y is non-zero, rotate the shadow quad around its center
+     * so it follows the actor on a rotating turnstile platform. */
     float s = extent * scale;
     float model[16];
-    memset(model, 0, sizeof(model));
-    model[0]  = s;
-    model[5]  = 1.0f;
-    model[10] = s;
-    model[15] = 1.0f;
-    model[12] = x + ps->shadow_offset_x;
-    model[13] = y;
-    model[14] = z + ps->shadow_offset_z;
+    if (fabsf(rot_y) > 0.001f) {
+        float c = cosf(rot_y), sn = sinf(rot_y);
+        memset(model, 0, sizeof(model));
+        model[0]  = s * c;
+        model[2]  = -s * sn;
+        model[5]  = 1.0f;
+        model[8]  = s * sn;
+        model[10] = s * c;
+        model[15] = 1.0f;
+        model[12] = x + ps->shadow_offset_x;
+        model[13] = y;
+        model[14] = z + ps->shadow_offset_z;
+    } else {
+        memset(model, 0, sizeof(model));
+        model[0]  = s;
+        model[5]  = 1.0f;
+        model[10] = s;
+        model[15] = 1.0f;
+        model[12] = x + ps->shadow_offset_x;
+        model[13] = y;
+        model[14] = z + ps->shadow_offset_z;
+    }
     shader_set_mat4(shader, "u_model", model);
 
     glBindVertexArray(ps->shadow_vao);
@@ -1260,6 +1277,12 @@ static void draw_shadow_at_y(const PuzzleScene* ps, GLuint shader,
         glBindTexture(GL_TEXTURE_2D, ps->diorama_mesh.floor_lm_texture);
         glActiveTexture(GL_TEXTURE0);
     }
+}
+
+static void draw_shadow_at_y(const PuzzleScene* ps, GLuint shader,
+                              float x, float y, float z, float scale,
+                              GLuint shadow_tex, float extent) {
+    draw_shadow_at_y_rot(ps, shader, x, y, z, scale, 0.0f, shadow_tex, extent);
 }
 
 /* Compute actor Y offset based on current fractional position.
@@ -1406,9 +1429,10 @@ static void draw_shadow(const PuzzleScene* ps, GLuint shader,
  *   2. Conveyor shadow (GL_LESS, Y=belt+eps): only renders where stencil≠1,
  *      i.e. where the floor shadow was blocked by the belt.
  *      Passes on belt, blocked on walls (closer depth). */
-static void draw_actor_shadow_multiplane(const PuzzleScene* ps, GLuint shader,
-                                          float x, float z, float scale,
-                                          GLuint shadow_tex, float extent) {
+static void draw_actor_shadow_multiplane_rot(const PuzzleScene* ps, GLuint shader,
+                                              float x, float z, float scale,
+                                              float rot_y,
+                                              GLuint shadow_tex, float extent) {
     /* --- Floor plane: write stencil=1 wherever the shadow renders --- */
     glEnable(GL_STENCIL_TEST);
     glStencilMask(0xFF);
@@ -1416,20 +1440,27 @@ static void draw_actor_shadow_multiplane(const PuzzleScene* ps, GLuint shader,
     glStencilFunc(GL_ALWAYS, 1, 0xFF);
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
 
-    draw_shadow_at_y(ps, shader, x, 0.01f, z, scale, shadow_tex, extent);
+    draw_shadow_at_y_rot(ps, shader, x, 0.01f, z, scale, rot_y, shadow_tex, extent);
 
     /* --- Conveyor plane: only where floor shadow didn't reach --- */
     if (ps->conveyor_tile_map) {
         glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
         glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
 
-        draw_shadow_at_y(ps, shader,
+        draw_shadow_at_y_rot(ps, shader,
                          x, CONVEYOR_BELT_TOP + 0.005f,
-                         z, scale, shadow_tex, extent);
+                         z, scale, rot_y, shadow_tex, extent);
     }
 
     glDisable(GL_STENCIL_TEST);
     glStencilMask(0xFF);
+}
+
+static void draw_actor_shadow_multiplane(const PuzzleScene* ps, GLuint shader,
+                                          float x, float z, float scale,
+                                          GLuint shadow_tex, float extent) {
+    draw_actor_shadow_multiplane_rot(ps, shader, x, z, scale, 0.0f,
+                                      shadow_tex, extent);
 }
 
 /* Helper: destroy all turnstile meshes (platform + walls + gears) */
@@ -2062,6 +2093,29 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             float mino_gy = actor_groove_y(ps, mcol, mrow)
                           + actor_conveyor_y(ps, mcol, mrow);
 
+            /* Compute turnstile platform rotation for minotaur (shared by
+             * shadow + body).  Same 85/15 easing as platform mesh. */
+            float mino_turnstile_yaw = 0.0f;
+            if (animating && anim_queue_phase(&ps->anim) == ANIM_PHASE_ENVIRONMENT) {
+                const AnimEvent* env_cur = anim_queue_current_event(&ps->anim);
+                if (env_cur && env_cur->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
+                    env_cur->turnstile.actor_moved[1]) {
+                    float raw_t = anim_queue_rotation_progress(&ps->anim);
+                    bool cw_dir = env_cur->turnstile.clockwise;
+                    float target = cw_dir ? (float)M_PI_2 : -(float)M_PI_2;
+                    if (anim_queue_is_reversing(&ps->anim)) {
+                        mino_turnstile_yaw = target * (raw_t - 1.0f);
+                    } else if (raw_t < 0.85f) {
+                        mino_turnstile_yaw = target * (raw_t / 0.85f);
+                    } else {
+                        float u = (raw_t - 0.85f) / 0.15f;
+                        float osc = sinf(u * (float)M_PI * 2.0f)
+                                  * (1.0f - u) * 0.04f;
+                        mino_turnstile_yaw = target * (1.0f + osc);
+                    }
+                }
+            }
+
             /* Compute shadow scale: baseline shrink so the minotaur's shadow
              * extends a similar distance from his body as Theseus's does,
              * plus gentle additional shrink when airborne during the roll arc. */
@@ -2088,8 +2142,9 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
 
             /* Multi-plane shadow on floor + conveyor belt (stencil prevents
              * double-darkening; GL_LESS blocks shadows on walls). */
-            draw_actor_shadow_multiplane(ps, shader,
+            draw_actor_shadow_multiplane_rot(ps, shader,
                 mcol + 0.5f, mrow + 0.5f, mino_shadow_scale,
+                mino_turnstile_yaw,
                 ps->shadow_tex_minotaur, ps->shadow_extent_m);
 
             /* ── Roll animation state ── */
@@ -2196,31 +2251,8 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             } else {
                 /* ── Idle or non-moving step: translation + facing rotation ── */
 
-                /* Check if minotaur is riding an auto-turnstile (environment phase) */
-                float turnstile_yaw = 0.0f;
-                if (animating && anim_queue_phase(&ps->anim) == ANIM_PHASE_ENVIRONMENT) {
-                    const AnimEvent* env_cur = anim_queue_current_event(&ps->anim);
-                    if (env_cur && env_cur->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
-                        env_cur->turnstile.actor_moved[1]) {
-                        /* Compute platform rotation angle (same as turnstile rendering) */
-                        float raw_t = anim_queue_rotation_progress(&ps->anim);
-                        bool cw_dir = env_cur->turnstile.clockwise;
-                        float target = cw_dir ? (float)M_PI_2 : -(float)M_PI_2;
-                        if (anim_queue_is_reversing(&ps->anim)) {
-                            turnstile_yaw = target * (raw_t - 1.0f);
-                        } else if (raw_t < 0.85f) {
-                            turnstile_yaw = target * (raw_t / 0.85f);
-                        } else {
-                            float u = (raw_t - 0.85f) / 0.15f;
-                            float osc = sinf(u * (float)M_PI * 2.0f)
-                                      * (1.0f - u) * 0.04f;
-                            turnstile_yaw = target * (1.0f + osc);
-                        }
-                    }
-                }
-
                 /* Build model: T(pos) * Ry(facing + turnstile) */
-                float total_yaw = ps->mino_facing_angle + turnstile_yaw;
+                float total_yaw = ps->mino_facing_angle + mino_turnstile_yaw;
                 {
                     float t_pos[16], ry_mat[16], tmp_m[16];
                     mat4_translate(t_pos, mcol + 0.5f, mino_gy, mrow + 0.5f);
@@ -2455,13 +2487,37 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                           + actor_conveyor_y(ps, tcol, trow);
             float hop_y = thop * 0.3f;
 
+            /* Compute turnstile platform rotation for Theseus (shared by
+             * shadow + body).  Same 85/15 easing as platform mesh. */
+            float thes_turnstile_yaw = 0.0f;
+            if (animating && anim_queue_phase(&ps->anim) == ANIM_PHASE_ENVIRONMENT) {
+                const AnimEvent* env_cur = anim_queue_current_event(&ps->anim);
+                if (env_cur && env_cur->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
+                    env_cur->turnstile.actor_moved[0]) {
+                    float raw_t = anim_queue_rotation_progress(&ps->anim);
+                    bool cw_dir = env_cur->turnstile.clockwise;
+                    float target = cw_dir ? (float)M_PI_2 : -(float)M_PI_2;
+                    if (anim_queue_is_reversing(&ps->anim)) {
+                        thes_turnstile_yaw = target * (raw_t - 1.0f);
+                    } else if (raw_t < 0.85f) {
+                        thes_turnstile_yaw = target * (raw_t / 0.85f);
+                    } else {
+                        float u = (raw_t - 0.85f) / 0.15f;
+                        float osc = sinf(u * (float)M_PI * 2.0f)
+                                  * (1.0f - u) * 0.04f;
+                        thes_turnstile_yaw = target * (1.0f + osc);
+                    }
+                }
+            }
+
             /* Soft ground shadow — shrinks with hop height.
              * Always at Y=0.01 (floor level) regardless of trench.
              * GL_LESS passes on rim, trench floor, and normal floor,
              * but correctly fails against groove box top (Y=0.45). */
             float shadow_scale = 1.0f - thop * 0.5f;
-            draw_actor_shadow_multiplane(ps, shader,
+            draw_actor_shadow_multiplane_rot(ps, shader,
                 tcol + 0.5f, trow + 0.5f, shadow_scale,
+                thes_turnstile_yaw,
                 ps->shadow_tex_theseus, ps->shadow_extent_t);
 
             /* ── Compute Theseus deformation ── */
@@ -2738,27 +2794,6 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             shader_set_int(shader, "u_has_ao",
                            voxel_mesh_has_ao(&ps->theseus_parts.body) ? 1 : 0);
             shader_set_float(shader, "u_ao_intensity", ao_intensity);
-            /* Compute turnstile yaw for Theseus during auto-turnstile rotation */
-            float thes_turnstile_yaw = 0.0f;
-            if (animating && anim_queue_phase(&ps->anim) == ANIM_PHASE_ENVIRONMENT) {
-                const AnimEvent* env_cur = anim_queue_current_event(&ps->anim);
-                if (env_cur && env_cur->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
-                    env_cur->turnstile.actor_moved[0]) {
-                    float raw_t = anim_queue_rotation_progress(&ps->anim);
-                    bool cw_dir = env_cur->turnstile.clockwise;
-                    float target = cw_dir ? (float)M_PI_2 : -(float)M_PI_2;
-                    if (anim_queue_is_reversing(&ps->anim)) {
-                        thes_turnstile_yaw = target * (raw_t - 1.0f);
-                    } else if (raw_t < 0.85f) {
-                        thes_turnstile_yaw = target * (raw_t / 0.85f);
-                    } else {
-                        float u = (raw_t - 0.85f) / 0.15f;
-                        float osc = sinf(u * (float)M_PI * 2.0f)
-                                  * (1.0f - u) * 0.04f;
-                        thes_turnstile_yaw = target * (1.0f + osc);
-                    }
-                }
-            }
 
             float model[16];
             if (fabsf(thes_turnstile_yaw) > 0.001f) {

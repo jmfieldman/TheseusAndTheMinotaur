@@ -1354,8 +1354,18 @@ void anim_queue_theseus_pos(const AnimQueue* aq,
             }
             if (cur->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
                 cur->turnstile.actor_moved[0]) {
-                /* Arc interpolation: rotate actor position around junction */
-                float t = tween_value(&aq->rotation);
+                /* Arc interpolation: rotate actor position around junction.
+                 * Use same 85/15 easing as the platform mesh rotation. */
+                float raw_t = tween_value(&aq->rotation);
+                float eased;
+                if (raw_t < 0.85f) {
+                    eased = raw_t / 0.85f;
+                } else {
+                    float u = (raw_t - 0.85f) / 0.15f;
+                    float osc = sinf(u * (float)M_PI * 2.0f)
+                              * (1.0f - u) * 0.04f;
+                    eased = 1.0f + osc;
+                }
                 float jc = (float)cur->turnstile.junction_col;
                 float jr = (float)cur->turnstile.junction_row;
                 float fc = (float)cur->turnstile.actor_from_col[0] + 0.5f;
@@ -1363,7 +1373,7 @@ void anim_queue_theseus_pos(const AnimQueue* aq,
                 float dx = fc - jc;
                 float dz = fr - jr;
                 float sign = cur->turnstile.clockwise ? -1.0f : 1.0f;
-                float angle = t * ((float)M_PI * 0.5f) * sign;
+                float angle = eased * ((float)M_PI * 0.5f) * sign;
                 float cs = cosf(angle), sn = sinf(angle);
                 *out_col = jc + dx * cs - dz * sn - 0.5f;
                 *out_row = jr + dx * sn + dz * cs - 0.5f;
@@ -1421,8 +1431,19 @@ void anim_queue_minotaur_pos(const AnimQueue* aq,
             }
             if (cur->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
                 cur->turnstile.actor_moved[1]) {
-                /* Arc interpolation: rotate actor position around junction */
-                float t = tween_value(&aq->rotation);
+                /* Arc interpolation: rotate actor position around junction.
+                 * Use same 85/15 easing as the platform mesh rotation so
+                 * the actor stays locked to the platform surface. */
+                float raw_t = tween_value(&aq->rotation);
+                float eased;
+                if (raw_t < 0.85f) {
+                    eased = raw_t / 0.85f;
+                } else {
+                    float u = (raw_t - 0.85f) / 0.15f;
+                    float osc = sinf(u * (float)M_PI * 2.0f)
+                              * (1.0f - u) * 0.04f;
+                    eased = 1.0f + osc;
+                }
                 float jc = (float)cur->turnstile.junction_col;
                 float jr = (float)cur->turnstile.junction_row;
                 float fc = (float)cur->turnstile.actor_from_col[1] + 0.5f;
@@ -1430,7 +1451,7 @@ void anim_queue_minotaur_pos(const AnimQueue* aq,
                 float dx = fc - jc;
                 float dz = fr - jr;
                 float sign = cur->turnstile.clockwise ? -1.0f : 1.0f;
-                float angle = t * ((float)M_PI * 0.5f) * sign;
+                float angle = eased * ((float)M_PI * 0.5f) * sign;
                 float cs = cosf(angle), sn = sinf(angle);
                 *out_col = jc + dx * cs - dz * sn - 0.5f;
                 *out_row = jr + dx * sn + dz * cs - 0.5f;
