@@ -161,10 +161,16 @@ typedef struct {
     LightingState   diorama_light;
     WallStyle       wall_style;      /* cached for shader uniforms at render time */
 
-    /* Auto-turnstile wall meshes (separated from diorama for rotation animation) */
+    /* Auto-turnstile meshes (separated from diorama for rotation animation) */
     #define MAX_AUTO_TURNSTILES 8
+    #define TURNSTILE_GEAR_COUNT 5  /* 1 central + 4 satellite */
     struct {
-        VoxelMesh mesh;
+        VoxelMesh mesh;           /* walls + raised platform (rotates together) */
+        VoxelMesh gears[TURNSTILE_GEAR_COUNT];
+        float     gear_cx[TURNSTILE_GEAR_COUNT]; /* gear center X in world space */
+        float     gear_cz[TURNSTILE_GEAR_COUNT]; /* gear center Z in world space */
+        float     gear_speed[TURNSTILE_GEAR_COUNT]; /* rotation speed multiplier */
+        int       gear_count;
         int       jc, jr;         /* junction col/row */
         bool      clockwise;
         bool      valid;
@@ -184,6 +190,11 @@ typedef struct {
     bool*           conveyor_tile_map;  /* flat bool array [rows * cols] */
     int             conveyor_map_cols;
     int             conveyor_map_rows;
+
+    /* Turnstile tile tracking (for actor elevation — same height as conveyors) */
+    bool*           turnstile_tile_map;  /* flat bool array [rows * cols] */
+    int             turnstile_map_cols;
+    int             turnstile_map_rows;
 
     /* Failed push "bump" animation (no game state change, purely visual) */
     bool            bump_active;
@@ -949,6 +960,18 @@ static bool is_conveyor_tile(const PuzzleScene* ps, int col, int row) {
     return ps->conveyor_tile_map[row * ps->conveyor_map_cols + col];
 }
 
+static bool is_turnstile_tile(const PuzzleScene* ps, int col, int row) {
+    if (!ps->turnstile_tile_map) return false;
+    if (col < 0 || col >= ps->turnstile_map_cols) return false;
+    if (row < 0 || row >= ps->turnstile_map_rows) return false;
+    return ps->turnstile_tile_map[row * ps->turnstile_map_cols + col];
+}
+
+/* Check if a tile is any elevated platform (conveyor or turnstile) */
+static bool is_elevated_tile(const PuzzleScene* ps, int col, int row) {
+    return is_conveyor_tile(ps, col, row) || is_turnstile_tile(ps, col, row);
+}
+
 /*
  * Generate a blurred rectangular shadow texture for an actor.
  *
@@ -1291,42 +1314,40 @@ static float actor_groove_y(const PuzzleScene* ps, float col, float row) {
     return y;
 }
 
-/* Compute actor Y offset for conveyor tiles.
- * Actors standing on a conveyor are raised by CONVEYOR_HEIGHT. */
+/* Compute actor Y offset for elevated tiles (conveyors and turnstile platforms).
+ * Actors standing on an elevated tile are raised by CONVEYOR_HEIGHT. */
 #define CONVEYOR_ELEV     0.10f   /* must match diorama_gen.c CONVEYOR_HEIGHT */
 #define CONVEYOR_BELT_H   0.006f  /* must match diorama_gen.c CONVEYOR_BELT_H */
 #define CONVEYOR_BELT_TOP (CONVEYOR_ELEV + CONVEYOR_BELT_H)  /* shadow plane */
 static float actor_conveyor_y(const PuzzleScene* ps, float col, float row) {
-    if (!ps->conveyor_tile_map) return 0.0f;
-
     int ic = (int)floorf(col);
     int ir = (int)floorf(row);
     float fc = col - (float)ic;
     float fr = row - (float)ir;
 
-    bool cur = is_conveyor_tile(ps, ic, ir);
+    bool cur = is_elevated_tile(ps, ic, ir);
 
-    /* Simple: if on a conveyor tile, raise. With smooth transition near edges. */
+    /* Simple: if on an elevated tile, raise. With smooth transition near edges. */
     if (cur) {
-        /* Check if moving off conveyor soon — smooth transition */
+        /* Check if moving off elevated area — smooth transition */
         float y = CONVEYOR_ELEV;
         float blend = 0.3f;
         /* Check edges for smooth step-down */
-        if (fc > (1.0f - blend) && !is_conveyor_tile(ps, ic + 1, ir)) {
+        if (fc > (1.0f - blend) && !is_elevated_tile(ps, ic + 1, ir)) {
             float t = (fc - (1.0f - blend)) / blend;
             float s = t * t * (3.0f - 2.0f * t);
             y = CONVEYOR_ELEV * (1.0f - s);
-        } else if (fc < blend && !is_conveyor_tile(ps, ic - 1, ir)) {
+        } else if (fc < blend && !is_elevated_tile(ps, ic - 1, ir)) {
             float t = (blend - fc) / blend;
             float s = t * t * (3.0f - 2.0f * t);
             y = CONVEYOR_ELEV * (1.0f - s);
         }
-        if (fr > (1.0f - blend) && !is_conveyor_tile(ps, ic, ir + 1)) {
+        if (fr > (1.0f - blend) && !is_elevated_tile(ps, ic, ir + 1)) {
             float t = (fr - (1.0f - blend)) / blend;
             float s = t * t * (3.0f - 2.0f * t);
             float ry = CONVEYOR_ELEV * (1.0f - s);
             if (ry < y) y = ry;
-        } else if (fr < blend && !is_conveyor_tile(ps, ic, ir - 1)) {
+        } else if (fr < blend && !is_elevated_tile(ps, ic, ir - 1)) {
             float t = (blend - fr) / blend;
             float s = t * t * (3.0f - 2.0f * t);
             float ry = CONVEYOR_ELEV * (1.0f - s);
@@ -1335,19 +1356,19 @@ static float actor_conveyor_y(const PuzzleScene* ps, float col, float row) {
         return y;
     }
 
-    /* Not on conveyor — check if approaching one */
+    /* Not on elevated tile — check if approaching one */
     float y = 0.0f;
     float blend = 0.3f;
-    if (fc > (1.0f - blend) && is_conveyor_tile(ps, ic + 1, ir)) {
+    if (fc > (1.0f - blend) && is_elevated_tile(ps, ic + 1, ir)) {
         float t = (fc - (1.0f - blend)) / blend;
         float s = t * t * (3.0f - 2.0f * t);
         y = CONVEYOR_ELEV * s;
-    } else if (fc < blend && is_conveyor_tile(ps, ic - 1, ir)) {
+    } else if (fc < blend && is_elevated_tile(ps, ic - 1, ir)) {
         float t = (blend - fc) / blend;
         float s = t * t * (3.0f - 2.0f * t);
         y = CONVEYOR_ELEV * s;
     }
-    if (fr > (1.0f - blend) && is_conveyor_tile(ps, ic, ir + 1)) {
+    if (fr > (1.0f - blend) && is_elevated_tile(ps, ic, ir + 1)) {
         float t = (fr - (1.0f - blend)) / blend;
         float s = t * t * (3.0f - 2.0f * t);
         float ry = CONVEYOR_ELEV * s;
@@ -1400,27 +1421,76 @@ static void draw_actor_shadow_multiplane(const PuzzleScene* ps, GLuint shader,
     glStencilMask(0xFF);
 }
 
-/* Helper: destroy all turnstile wall meshes */
+/* Helper: destroy all turnstile meshes (platform + walls + gears) */
 static void destroy_turnstile_meshes(PuzzleScene* ps) {
     for (int i = 0; i < ps->turnstile_mesh_count; i++) {
-        if (ps->turnstile_meshes[i].valid)
+        if (ps->turnstile_meshes[i].valid) {
             voxel_mesh_destroy(&ps->turnstile_meshes[i].mesh);
+            for (int g = 0; g < ps->turnstile_meshes[i].gear_count; g++)
+                voxel_mesh_destroy(&ps->turnstile_meshes[i].gears[g]);
+        }
     }
     ps->turnstile_mesh_count = 0;
 }
 
-/* Regenerate a single turnstile's wall mesh from current grid state */
+/* Regenerate a single turnstile's mesh (walls + platform) from current grid state */
 static void regenerate_turnstile_mesh(PuzzleScene* ps, int idx) {
     if (ps->turnstile_meshes[idx].valid) {
         voxel_mesh_destroy(&ps->turnstile_meshes[idx].mesh);
+        for (int g = 0; g < ps->turnstile_meshes[idx].gear_count; g++)
+            voxel_mesh_destroy(&ps->turnstile_meshes[idx].gears[g]);
         ps->turnstile_meshes[idx].valid = false;
     }
 
+    int jc = ps->turnstile_meshes[idx].jc;
+    int jr = ps->turnstile_meshes[idx].jr;
+
+    /* Generate walls + raised platform */
     voxel_mesh_begin(&ps->turnstile_meshes[idx].mesh);
-    diorama_generate_walls_only(&ps->turnstile_meshes[idx].mesh,
-                                 ps->grid, &ps->cached_biome,
-                                 (const int (*)[2])ps->turnstile_meshes[idx].cells, 4);
+    diorama_generate_turnstile(&ps->turnstile_meshes[idx].mesh,
+                                ps->grid, &ps->cached_biome,
+                                (const int (*)[2])ps->turnstile_meshes[idx].cells, 4,
+                                jc, jr);
     voxel_mesh_build(&ps->turnstile_meshes[idx].mesh, 0.0625f);
+
+    /* Generate gear meshes — 1 central + 4 satellites */
+    float cx = (float)jc;  /* junction is at corner of 4 tiles */
+    float cz = (float)jr;
+    int gc = 0;
+
+    /* Central gear at junction point */
+    ps->turnstile_meshes[idx].gear_cx[gc] = cx;
+    ps->turnstile_meshes[idx].gear_cz[gc] = cz;
+    ps->turnstile_meshes[idx].gear_speed[gc] = 1.0f;  /* 1:1 with platform */
+    voxel_mesh_begin(&ps->turnstile_meshes[idx].gears[gc]);
+    diorama_generate_gear(&ps->turnstile_meshes[idx].gears[gc],
+                           cx, cz, 8, 0.25f);
+    voxel_mesh_build(&ps->turnstile_meshes[idx].gears[gc], 0.0625f);
+    gc++;
+
+    /* 4 satellite gears at diagonal offsets from center */
+    float sat_dist = 0.55f;   /* distance from junction to satellite center */
+    float sat_radius = 0.14f; /* smaller gears */
+    float sat_speed = -2.5f;  /* opposite direction, faster */
+    float diag[][2] = {
+        { -sat_dist, -sat_dist },
+        {  sat_dist, -sat_dist },
+        {  sat_dist,  sat_dist },
+        { -sat_dist,  sat_dist },
+    };
+    for (int s = 0; s < 4; s++) {
+        ps->turnstile_meshes[idx].gear_cx[gc] = cx + diag[s][0];
+        ps->turnstile_meshes[idx].gear_cz[gc] = cz + diag[s][1];
+        ps->turnstile_meshes[idx].gear_speed[gc] = sat_speed;
+        voxel_mesh_begin(&ps->turnstile_meshes[idx].gears[gc]);
+        diorama_generate_gear(&ps->turnstile_meshes[idx].gears[gc],
+                               cx + diag[s][0], cz + diag[s][1],
+                               6, sat_radius);
+        voxel_mesh_build(&ps->turnstile_meshes[idx].gears[gc], 0.0625f);
+        gc++;
+    }
+    ps->turnstile_meshes[idx].gear_count = gc;
+
     ps->turnstile_meshes[idx].valid = true;
 }
 
@@ -1436,6 +1506,8 @@ static void build_diorama(PuzzleScene* ps) {
         ps->groove_tile_map = NULL;
         free(ps->conveyor_tile_map);
         ps->conveyor_tile_map = NULL;
+        free(ps->turnstile_tile_map);
+        ps->turnstile_tile_map = NULL;
     }
 
     int cols = ps->grid->cols;
@@ -1523,6 +1595,19 @@ static void build_diorama(PuzzleScene* ps) {
                 exclude.cells[exclude.count][1] = ps->turnstile_meshes[idx].cells[ci][1];
                 exclude.count++;
             }
+        }
+    }
+
+    /* Build turnstile tile map for actor elevation (same height as conveyors) */
+    ps->turnstile_map_cols = cols;
+    ps->turnstile_map_rows = rows;
+    ps->turnstile_tile_map = calloc((size_t)(cols * rows), sizeof(bool));
+    if (ps->turnstile_tile_map) {
+        for (int i = 0; i < exclude.count; i++) {
+            int tc = exclude.cells[i][0];
+            int tr = exclude.cells[i][1];
+            if (tc >= 0 && tc < cols && tr >= 0 && tr < rows)
+                ps->turnstile_tile_map[tr * cols + tc] = true;
         }
     }
 
@@ -1743,7 +1828,7 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
     /* Draw static geometry (floor, walls, exit marker) */
     voxel_mesh_draw(&ps->diorama_mesh);
 
-    /* Draw auto-turnstile walls (rotated around junction during animation) */
+    /* Draw auto-turnstile platform + walls (rotated around junction during animation) */
     for (int ti = 0; ti < ps->turnstile_mesh_count; ti++) {
         if (!ps->turnstile_meshes[ti].valid) continue;
 
@@ -1752,7 +1837,7 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
         bool cw = ps->turnstile_meshes[ti].clockwise;
 
         /* Determine rotation angle from animation */
-        float angle = 0.0f;
+        float platform_angle = 0.0f;
         if (anim_queue_is_playing(&ps->anim)) {
             const AnimEvent* cur = anim_queue_current_event(&ps->anim);
             AnimPhase phase = anim_queue_phase(&ps->anim);
@@ -1767,26 +1852,45 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                  * walls "snap into place" with a quick wiggle. */
                 float target = cw ? (float)M_PI_2 : -(float)M_PI_2;
                 if (raw_t < 0.85f) {
-                    angle = target * (raw_t / 0.85f);
+                    platform_angle = target * (raw_t / 0.85f);
                 } else {
                     float u = (raw_t - 0.85f) / 0.15f; /* 0→1 in last 15% */
                     float osc = sinf(u * (float)M_PI * 2.0f)
                               * (1.0f - u) * 0.04f;
-                    angle = target * (1.0f + osc);
+                    platform_angle = target * (1.0f + osc);
                 }
             }
         }
 
         /* Build model matrix: T(jc,0,jr) * Ry(angle) * T(-jc,0,-jr) */
-        float t1[16], ry[16], t2[16], tmp[16], model[16];
-        mat4_translate(t1, (float)jc, 0.0f, (float)jr);
-        mat4_rot_y(ry, angle);
-        mat4_translate(t2, -(float)jc, 0.0f, -(float)jr);
-        mat4_mul(tmp, t1, ry);
-        mat4_mul(model, tmp, t2);
+        {
+            float t1[16], ry[16], t2[16], tmp[16], model[16];
+            mat4_translate(t1, (float)jc, 0.0f, (float)jr);
+            mat4_rot_y(ry, platform_angle);
+            mat4_translate(t2, -(float)jc, 0.0f, -(float)jr);
+            mat4_mul(tmp, t1, ry);
+            mat4_mul(model, tmp, t2);
 
-        shader_set_mat4(shader, "u_model", model);
-        voxel_mesh_draw(&ps->turnstile_meshes[ti].mesh);
+            shader_set_mat4(shader, "u_model", model);
+            voxel_mesh_draw(&ps->turnstile_meshes[ti].mesh);
+        }
+
+        /* Draw gears — each rotates around its own center axis */
+        for (int g = 0; g < ps->turnstile_meshes[ti].gear_count; g++) {
+            float gear_angle = platform_angle * ps->turnstile_meshes[ti].gear_speed[g];
+            float gcx = ps->turnstile_meshes[ti].gear_cx[g];
+            float gcz = ps->turnstile_meshes[ti].gear_cz[g];
+
+            float t1[16], ry[16], t2[16], tmp[16], model[16];
+            mat4_translate(t1, gcx, 0.0f, gcz);
+            mat4_rot_y(ry, gear_angle);
+            mat4_translate(t2, -gcx, 0.0f, -gcz);
+            mat4_mul(tmp, t1, ry);
+            mat4_mul(model, tmp, t2);
+
+            shader_set_mat4(shader, "u_model", model);
+            voxel_mesh_draw(&ps->turnstile_meshes[ti].gears[g]);
+        }
     }
 
     /* Reset model matrix back to identity */
@@ -2696,6 +2800,8 @@ static void puzzle_on_exit(State* self) {
         ps->groove_tile_map = NULL;
         free(ps->conveyor_tile_map);
         ps->conveyor_tile_map = NULL;
+        free(ps->turnstile_tile_map);
+        ps->turnstile_tile_map = NULL;
         ps->diorama_built = false;
     }
     if (ps->grid) {
@@ -3168,6 +3274,8 @@ static void puzzle_destroy(State* self) {
         ps->groove_tile_map = NULL;
         free(ps->conveyor_tile_map);
         ps->conveyor_tile_map = NULL;
+        free(ps->turnstile_tile_map);
+        ps->turnstile_tile_map = NULL;
     }
     if (ps->grid) {
         grid_destroy(ps->grid);

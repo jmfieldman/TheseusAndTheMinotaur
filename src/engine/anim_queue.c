@@ -1,5 +1,6 @@
 #include "engine/anim_queue.h"
 #include "data/settings.h"
+#include <math.h>
 #include <string.h>
 
 /* ── Helpers: find events by phase ────────────────────── */
@@ -1353,13 +1354,19 @@ void anim_queue_theseus_pos(const AnimQueue* aq,
             }
             if (cur->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
                 cur->turnstile.actor_moved[0]) {
+                /* Arc interpolation: rotate actor position around junction */
                 float t = tween_value(&aq->rotation);
-                *out_col = (float)cur->turnstile.actor_from_col[0] +
-                           ((float)cur->turnstile.actor_to_col[0] -
-                            (float)cur->turnstile.actor_from_col[0]) * t;
-                *out_row = (float)cur->turnstile.actor_from_row[0] +
-                           ((float)cur->turnstile.actor_to_row[0] -
-                            (float)cur->turnstile.actor_from_row[0]) * t;
+                float jc = (float)cur->turnstile.junction_col;
+                float jr = (float)cur->turnstile.junction_row;
+                float fc = (float)cur->turnstile.actor_from_col[0] + 0.5f;
+                float fr = (float)cur->turnstile.actor_from_row[0] + 0.5f;
+                float dx = fc - jc;
+                float dz = fr - jr;
+                float sign = cur->turnstile.clockwise ? -1.0f : 1.0f;
+                float angle = t * ((float)M_PI * 0.5f) * sign;
+                float cs = cosf(angle), sn = sinf(angle);
+                *out_col = jc + dx * cs - dz * sn - 0.5f;
+                *out_row = jr + dx * sn + dz * cs - 0.5f;
                 *out_hop = 0.0f;
                 return;
             }
@@ -1414,13 +1421,19 @@ void anim_queue_minotaur_pos(const AnimQueue* aq,
             }
             if (cur->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
                 cur->turnstile.actor_moved[1]) {
+                /* Arc interpolation: rotate actor position around junction */
                 float t = tween_value(&aq->rotation);
-                *out_col = (float)cur->turnstile.actor_from_col[1] +
-                           ((float)cur->turnstile.actor_to_col[1] -
-                            (float)cur->turnstile.actor_from_col[1]) * t;
-                *out_row = (float)cur->turnstile.actor_from_row[1] +
-                           ((float)cur->turnstile.actor_to_row[1] -
-                            (float)cur->turnstile.actor_from_row[1]) * t;
+                float jc = (float)cur->turnstile.junction_col;
+                float jr = (float)cur->turnstile.junction_row;
+                float fc = (float)cur->turnstile.actor_from_col[1] + 0.5f;
+                float fr = (float)cur->turnstile.actor_from_row[1] + 0.5f;
+                float dx = fc - jc;
+                float dz = fr - jr;
+                float sign = cur->turnstile.clockwise ? -1.0f : 1.0f;
+                float angle = t * ((float)M_PI * 0.5f) * sign;
+                float cs = cosf(angle), sn = sinf(angle);
+                *out_col = jc + dx * cs - dz * sn - 0.5f;
+                *out_row = jr + dx * sn + dz * cs - 0.5f;
                 return;
             }
         }
