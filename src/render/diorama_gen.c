@@ -95,6 +95,10 @@ static void add_light(DioramaGenResult* result,
     pl->radius = radius;
 }
 
+/* Forward declaration (defined below with wall filtering helpers) */
+static bool cell_in_set(int col, int row,
+                         const int (*cells)[2], int count);
+
 /* Check if a wall segment is a door (entrance or exit) */
 static bool is_door(const Grid* grid, int col, int row, Direction side) {
     if (col == grid->entrance_col && row == grid->entrance_row &&
@@ -173,13 +177,18 @@ static GrooveTileInfo* build_groove_info(const Grid* grid) {
 
 static void gen_floor(VoxelMesh* mesh, const Grid* grid,
                       const BiomeConfig* biome, RNG* rng,
-                      const GrooveTileInfo* groove_info) {
+                      const GrooveTileInfo* groove_info,
+                      const int (*exclude_cells)[2], int exclude_count) {
     const GrooveTrenchConfig* tc = &biome->groove_trench;
 
     for (int r = 0; r < grid->rows; r++) {
         for (int c = 0; c < grid->cols; c++) {
             const Cell* cell = grid_cell_const(grid, c, r);
             if (cell->impassable) continue;
+
+            /* Skip tiles claimed by auto-turnstile platforms */
+            if (exclude_cells && cell_in_set(c, r, exclude_cells, exclude_count))
+                continue;
 
             /* Checkerboard: one flat box per logical tile */
             const float* base_color;
@@ -1304,6 +1313,167 @@ static void gen_edge_border(VoxelMesh* mesh, const Grid* grid,
     }
 }
 
+/* ---------- Auto-turnstile platform + gear generation ---------- */
+
+#define TURNSTILE_HEIGHT       CONVEYOR_HEIGHT   /* 0.10 — same elevation as conveyors */
+#define TURNSTILE_PLATE_H      0.006f            /* thin metal cap */
+#define TURNSTILE_GEAR_Y0     -0.08f             /* gear bottom (below floor) */
+#define TURNSTILE_GEAR_Y1     -0.015f            /* gear top (below floor surface) */
+
+/* Number of vertices in the turnstile polygon. */
+#define TURNSTILE_POLY_N 12
+
+/* Build the 12 vertices of the turnstile platform polygon.
+ * A regular 12-gon inscribed in a circle of the given radius,
+ * offset by 15° so flat edges align with the cardinal directions (N/S/E/W).
+ * Vertices are in CCW order viewed from above. */
+static void build_turnstile_polygon(float (*out)[2], float cx, float cz, float radius) {
+    for (int i = 0; i < TURNSTILE_POLY_N; i++) {
+        /* 15° offset aligns flat edges with N/S/E/W */
+        float angle = ((float)i / (float)TURNSTILE_POLY_N) * (float)M_PI * 2.0f
+                    + (float)M_PI / 12.0f;  /* 15° offset */
+        out[i][0] = cx + radius * cosf(angle);
+        out[i][1] = cz + radius * sinf(angle);
+    }
+}
+
+/* Generate the 2x2 raised platform (base + top + hazard stripes) for one
+ * auto-turnstile as a clean 12-sided polygon prism.  The chamfered corners
+ * prevent the platform from bleeding outside the 2×2 boundary during
+ * rotation and permanently expose the gear mechanism underneath.
+ * Geometry goes into the turnstile's rotating mesh so it spins with the
+ * walls during animation. */
+static void gen_turnstile_platform(VoxelMesh* mesh,
+                                    const int (*cells)[2], int cell_count,
+                                    int jc, int jr,
+                                    const BiomeConfig* biome) {
+    (void)cells; (void)cell_count; /* polygon covers the full 2×2 area */
+
+    float cx = (float)jc;  /* junction = center of the 2×2 block */
+    float cz = (float)jr;
+
+    /* Build the 12-sided polygon.
+     * Radius = 1.0: the circumscribed circle touches the edge of the 2×2 area.
+     * When rotated, the polygon stays within this circle — no corner bleeding. */
+    float poly[TURNSTILE_POLY_N][2];
+    build_turnstile_polygon(poly, cx, cz, 1.0f);
+
+    /* Platform body: prism from floor to platform height.
+     * Sides use platform_side color; top is covered by the metallic cap. */
+    voxel_mesh_add_polygon_prism(mesh, (const float (*)[2])poly, TURNSTILE_POLY_N,
+                                  0.0f, TURNSTILE_HEIGHT,
+                                  biome->palette.platform_side[0],
+                                  biome->palette.platform_side[1],
+                                  biome->palette.platform_side[2],
+                                  1.0f,
+                                  AO_MODE_NONE,     /* top — covered by plate */
+                                  AO_MODE_NONE);    /* sides — wall heuristic */
+
+    /* Metallic top plate — diamond-plate surface (thin cap on top) */
+    voxel_mesh_add_polygon_cap(mesh, (const float (*)[2])poly, TURNSTILE_POLY_N,
+                                TURNSTILE_HEIGHT + TURNSTILE_PLATE_H,
+                                0.52f, 0.52f, 0.56f, 1.0f,
+                                AO_MODE_TURNSTILE_PLATE);
+
+    /* Hazard stripes: thin box strips along the 4 cardinal-aligned edges.
+     * The 12-gon with 15° offset has its flat edges at 0°, 30°, 60°, 90°, etc.
+     * The edges at 0° (E), 90° (N), 180° (W), 270° (S) are the cardinal ones.
+     * For a radius-1.0 12-gon, the inradius (edge distance) = cos(15°) ≈ 0.966.
+     * Edge half-length = sin(15°) ≈ 0.259. */
+    {
+        float stripe_w = 0.08f;
+        float stripe_h = TURNSTILE_HEIGHT;
+        float yr = 0.85f, yg = 0.75f, yb = 0.15f;
+        float inr = cosf((float)M_PI / 12.0f);    /* ~0.966 */
+        float half_e = sinf((float)M_PI / 12.0f);  /* ~0.259 */
+
+        /* South edge (-Z) */
+        add_box_ao(mesh, cx - half_e, 0.0f, cz - inr,
+                   half_e * 2.0f, stripe_h, stripe_w,
+                   yr, yg, yb, 1.0f, false, AO_MODE_CONVEYOR_STRIPE);
+        /* North edge (+Z) */
+        add_box_ao(mesh, cx - half_e, 0.0f, cz + inr - stripe_w,
+                   half_e * 2.0f, stripe_h, stripe_w,
+                   yr, yg, yb, 1.0f, false, AO_MODE_CONVEYOR_STRIPE);
+        /* West edge (-X) */
+        add_box_ao(mesh, cx - inr, 0.0f, cz - half_e,
+                   stripe_w, stripe_h, half_e * 2.0f,
+                   yr, yg, yb, 1.0f, false, AO_MODE_CONVEYOR_STRIPE);
+        /* East edge (+X) */
+        add_box_ao(mesh, cx + inr - stripe_w, 0.0f, cz - half_e,
+                   stripe_w, stripe_h, half_e * 2.0f,
+                   yr, yg, yb, 1.0f, false, AO_MODE_CONVEYOR_STRIPE);
+    }
+}
+
+/* Generate a single gear mesh (central hub + cog teeth).
+ * The gear is centered at (cx, cz) in world space.
+ * tooth_count: number of teeth around the gear.
+ * radius: distance from center to tooth tip.
+ * The mesh should be initialized with voxel_mesh_begin() before calling. */
+/* Build a sprocket gear using polygon prisms.
+ * The gear profile alternates between inner radius (valleys) and outer
+ * radius (tooth tips), creating a proper sprocket silhouette.
+ * tooth_count: number of teeth (profile has 2*tooth_count vertices).
+ * radius: outer radius (tooth tip).  Inner radius is 65% of outer. */
+static void gen_gear_mesh(VoxelMesh* mesh,
+                           float cx, float cz,
+                           int tooth_count, float radius) {
+    float inner_r = radius * 0.65f;
+    float hub_r   = radius * 0.35f;
+
+    /* Sprocket profile: alternate inner/outer vertices */
+    int profile_n = tooth_count * 2;
+    #define GEAR_MAX_VERTS 64
+    float profile[GEAR_MAX_VERTS][2];
+    if (profile_n > GEAR_MAX_VERTS) profile_n = GEAR_MAX_VERTS;
+
+    /* Tooth shape: each tooth spans ~40% of its arc slot (sharper teeth).
+     * The remaining 60% is the valley at inner_r. */
+    float tooth_arc_frac = 0.40f;
+    for (int i = 0; i < tooth_count; i++) {
+        float base_angle = (float)i / (float)tooth_count * (float)M_PI * 2.0f;
+        float step = 1.0f / (float)tooth_count * (float)M_PI * 2.0f;
+        /* Tooth tip — centered in slot */
+        float tip_angle = base_angle + step * 0.5f;
+        /* Valley — at slot boundary */
+        float val_angle = base_angle;
+        /* Outer vertex (tooth tip, slightly narrower by offsetting) */
+        float ta = tip_angle;
+        profile[i * 2][0]     = cx + inner_r * cosf(val_angle);
+        profile[i * 2][1]     = cz + inner_r * sinf(val_angle);
+        profile[i * 2 + 1][0] = cx + radius * cosf(ta);
+        profile[i * 2 + 1][1] = cz + radius * sinf(ta);
+    }
+
+    float tooth_r = 0.38f, tooth_g = 0.38f, tooth_b = 0.40f;
+    float gear_height = TURNSTILE_GEAR_Y1 - TURNSTILE_GEAR_Y0;
+
+    /* Sprocket body as extruded polygon */
+    voxel_mesh_add_polygon_prism(mesh,
+        (const float (*)[2])profile, profile_n,
+        TURNSTILE_GEAR_Y0, gear_height,
+        tooth_r, tooth_g, tooth_b, 1.0f,
+        AO_MODE_TURNSTILE_PLATE, AO_MODE_TURNSTILE_PLATE);
+
+    /* Central hub disc (circular polygon, darker) */
+    int hub_sides = 16;
+    float hub_verts[16][2];
+    for (int i = 0; i < hub_sides; i++) {
+        float a = (float)i / (float)hub_sides * (float)M_PI * 2.0f;
+        hub_verts[i][0] = cx + hub_r * cosf(a);
+        hub_verts[i][1] = cz + hub_r * sinf(a);
+    }
+    /* Hub slightly taller so it protrudes above sprocket face */
+    voxel_mesh_add_polygon_prism(mesh,
+        (const float (*)[2])hub_verts, hub_sides,
+        TURNSTILE_GEAR_Y0 - 0.005f, gear_height + 0.01f,
+        0.30f, 0.30f, 0.33f, 1.0f,
+        AO_MODE_TURNSTILE_PLATE, AO_MODE_TURNSTILE_PLATE);
+
+    #undef GEAR_MAX_VERTS
+}
+
 /* ---------- Public API ---------- */
 
 void diorama_generate(VoxelMesh* mesh, const Grid* grid,
@@ -1323,7 +1493,10 @@ void diorama_generate_ex(VoxelMesh* mesh, const Grid* grid,
     GrooveTileInfo* groove_info = build_groove_info(grid);
 
     /* Pipeline */
-    gen_floor(mesh, grid, biome, &rng, groove_info);
+    gen_floor(mesh, grid, biome, &rng, groove_info,
+              (exclude && exclude->count > 0)
+                  ? (const int (*)[2])exclude->cells : NULL,
+              exclude ? exclude->count : 0);
 
     if (exclude && exclude->count > 0) {
         /* Exclude auto-turnstile cells from static wall mesh */
@@ -1331,6 +1504,23 @@ void diorama_generate_ex(VoxelMesh* mesh, const Grid* grid,
                            1, (const int (*)[2])exclude->cells, exclude->count);
     } else {
         gen_walls(mesh, grid, biome, &rng);
+    }
+
+    /* Add a dark sub-floor beneath excluded (turnstile) cells so the
+     * gear mechanism has a visible background instead of void/black.
+     * Sits below the gears as a machinery pit floor. */
+    if (exclude && exclude->count > 0) {
+        for (int i = 0; i < exclude->count; i++) {
+            float fx = (float)exclude->cells[i][0];
+            float fz = (float)exclude->cells[i][1];
+            add_box_ao(mesh, fx, TURNSTILE_GEAR_Y0 - 0.02f, fz,
+                       1.0f, 0.005f, 1.0f,
+                       0.14f, 0.14f, 0.16f,
+                       1.0f, false, AO_MODE_TURNSTILE_PLATE);
+        }
+
+        /* Floor-edge shadow over gear pit is rendered as a blended
+         * vignette quad in puzzle_scene.c (not opaque geometry). */
     }
 
     gen_doors(mesh, grid, biome);
@@ -1357,4 +1547,24 @@ void diorama_generate_walls_only(VoxelMesh* mesh, const Grid* grid,
     RNG rng;
     rng_seed(&rng, grid->level_id);
     gen_walls_filtered(mesh, grid, biome, &rng, 2, cells, cell_count);
+}
+
+void diorama_generate_turnstile(VoxelMesh* mesh, const Grid* grid,
+                                 const BiomeConfig* biome,
+                                 const int (*cells)[2], int cell_count,
+                                 int junction_col, int junction_row) {
+    /* Walls */
+    RNG rng;
+    rng_seed(&rng, grid->level_id);
+    gen_walls_filtered(mesh, grid, biome, &rng, 2, cells, cell_count);
+
+    /* Raised platform (base + top plate + hazard stripes) */
+    gen_turnstile_platform(mesh, cells, cell_count,
+                           junction_col, junction_row, biome);
+}
+
+void diorama_generate_gear(VoxelMesh* mesh,
+                            float center_x, float center_z,
+                            int tooth_count, float radius) {
+    gen_gear_mesh(mesh, center_x, center_z, tooth_count, radius);
 }

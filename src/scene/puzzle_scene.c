@@ -155,20 +155,29 @@ typedef struct {
     float           shadow_extent_t;     /* world-space half-extent of Theseus shadow quad */
     float           shadow_extent_m;     /* world-space half-extent of Minotaur shadow quad */
     float           shadow_extent_gb;    /* world-space half-extent of groove box shadow quad */
+    GLuint          shadow_tex_pit;      /* R8 vignette texture for turnstile gear pit shadow */
+    float           shadow_extent_pit;   /* world-space half-extent of pit shadow quad */
     float           shadow_offset_x;     /* world-space shadow offset (simulates light angle) */
     float           shadow_offset_z;
     DioramaCamera   diorama_cam;
     LightingState   diorama_light;
     WallStyle       wall_style;      /* cached for shader uniforms at render time */
 
-    /* Auto-turnstile wall meshes (separated from diorama for rotation animation) */
+    /* Auto-turnstile meshes (separated from diorama for rotation animation) */
     #define MAX_AUTO_TURNSTILES 8
+    #define TURNSTILE_GEAR_COUNT 12 /* 1 central + up to 11 satellites */
     struct {
-        VoxelMesh mesh;
+        VoxelMesh mesh;           /* walls + raised platform (rotates together) */
+        VoxelMesh gears[TURNSTILE_GEAR_COUNT];
+        float     gear_cx[TURNSTILE_GEAR_COUNT]; /* gear center X in world space */
+        float     gear_cz[TURNSTILE_GEAR_COUNT]; /* gear center Z in world space */
+        float     gear_speed[TURNSTILE_GEAR_COUNT]; /* rotation speed multiplier */
+        int       gear_count;
         int       jc, jr;         /* junction col/row */
         bool      clockwise;
         bool      valid;
         bool      was_animating;  /* true if this turnstile was animating last frame */
+        float     held_angle;     /* rotation to hold after reverse event ends, until undo_pop */
         int       cells[4][2];    /* the 4 tile positions around junction */
     } turnstile_meshes[MAX_AUTO_TURNSTILES];
     int             turnstile_mesh_count;
@@ -184,6 +193,11 @@ typedef struct {
     bool*           conveyor_tile_map;  /* flat bool array [rows * cols] */
     int             conveyor_map_cols;
     int             conveyor_map_rows;
+
+    /* Turnstile tile tracking (for actor elevation — same height as conveyors) */
+    bool*           turnstile_tile_map;  /* flat bool array [rows * cols] */
+    int             turnstile_map_cols;
+    int             turnstile_map_rows;
 
     /* Failed push "bump" animation (no game state change, purely visual) */
     bool            bump_active;
@@ -202,6 +216,9 @@ typedef struct {
     bool            mino_wobble_active;
     float           mino_wobble_timer;
     bool            was_mino_rolling;  /* true if previous frame was in Minotaur step phase */
+
+    /* Minotaur facing direction (radians, 0 = facing -Z/north) */
+    float           mino_facing_angle;
 
     /* Camera shake (triggered on minotaur stomp) */
     float           shake_timer;       /* seconds remaining (0 = inactive) */
@@ -949,6 +966,18 @@ static bool is_conveyor_tile(const PuzzleScene* ps, int col, int row) {
     return ps->conveyor_tile_map[row * ps->conveyor_map_cols + col];
 }
 
+static bool is_turnstile_tile(const PuzzleScene* ps, int col, int row) {
+    if (!ps->turnstile_tile_map) return false;
+    if (col < 0 || col >= ps->turnstile_map_cols) return false;
+    if (row < 0 || row >= ps->turnstile_map_rows) return false;
+    return ps->turnstile_tile_map[row * ps->turnstile_map_cols + col];
+}
+
+/* Check if a tile is any elevated platform (conveyor or turnstile) */
+static bool is_elevated_tile(const PuzzleScene* ps, int col, int row) {
+    return is_conveyor_tile(ps, col, row) || is_turnstile_tile(ps, col, row);
+}
+
 /*
  * Generate a blurred rectangular shadow texture for an actor.
  *
@@ -1047,6 +1076,68 @@ static void build_shadow_resources(PuzzleScene* ps, const ActorShadowConfig* cfg
     generate_actor_shadow_texture(gb_footprint, 0.45f, cfg,
                                    &ps->shadow_tex_groovebox, &ps->shadow_extent_gb);
 
+    /* Turnstile gear pit vignette shadow: dark around the 2×2 perimeter,
+     * transparent in the center so gears remain visible through the shadow.
+     * The pit covers a 2×2 tile area (extent = 1.0 from center). */
+    {
+        int tex_size = SHADOW_TEX_SIZE;
+        float extent = 1.05f;  /* slight oversize to cover floor edges */
+        float* shadow = (float*)calloc((size_t)tex_size * (size_t)tex_size, sizeof(float));
+        float inset = 0.35f;   /* shadow width in world units from edge inward */
+        float intensity = 0.50f;
+
+        for (int ty = 0; ty < tex_size; ty++) {
+            for (int tx = 0; tx < tex_size; tx++) {
+                /* Map texel to [-extent, +extent] world space */
+                float wx = ((float)tx + 0.5f) / (float)tex_size * 2.0f * extent - extent;
+                float wz = ((float)ty + 0.5f) / (float)tex_size * 2.0f * extent - extent;
+
+                /* Distance from nearest edge of the 1.0-radius square */
+                float dx = 1.0f - fabsf(wx);  /* distance from left/right edge */
+                float dz = 1.0f - fabsf(wz);  /* distance from top/bottom edge */
+                float d = fminf(dx, dz);       /* distance from nearest edge */
+
+                /* Outside the pit area: no shadow */
+                if (d < 0.0f) continue;
+
+                /* Smooth gradient from edge (d=0) to inset depth */
+                if (d < inset) {
+                    float t = d / inset;               /* 0 at edge → 1 at inset */
+                    float smooth = t * t * (3.0f - 2.0f * t);  /* smoothstep */
+                    shadow[ty * tex_size + tx] = intensity * (1.0f - smooth);
+                }
+                /* d >= inset: shadow stays 0 (fully lit center) */
+            }
+        }
+        /* Light Gaussian blur for smoother edges */
+        shadow_gaussian_blur(shadow, tex_size, tex_size, 2.0f);
+
+        /* Convert to "lit" space: 255=lit, 0=dark */
+        uint8_t* texels = (uint8_t*)malloc((size_t)tex_size * (size_t)tex_size);
+        for (int i = 0; i < tex_size * tex_size; i++) {
+            float v = 1.0f - shadow[i];
+            if (v < 0.0f) v = 0.0f;
+            if (v > 1.0f) v = 1.0f;
+            texels[i] = (uint8_t)(v * 255.0f + 0.5f);
+        }
+        free(shadow);
+
+        GLuint tex;
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, tex_size, tex_size, 0,
+                     GL_RED, GL_UNSIGNED_BYTE, texels);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        free(texels);
+
+        ps->shadow_tex_pit = tex;
+        ps->shadow_extent_pit = extent;
+    }
+
     /* Cache shadow offsets for draw-time positioning (same as wall shadows) */
     ps->shadow_offset_x = cfg->shadow_offset_x;
     ps->shadow_offset_z = cfg->shadow_offset_z;
@@ -1109,6 +1200,7 @@ static void destroy_shadow_resources(PuzzleScene* ps) {
     if (ps->shadow_tex_theseus) { glDeleteTextures(1, &ps->shadow_tex_theseus); ps->shadow_tex_theseus = 0; }
     if (ps->shadow_tex_minotaur) { glDeleteTextures(1, &ps->shadow_tex_minotaur); ps->shadow_tex_minotaur = 0; }
     if (ps->shadow_tex_groovebox) { glDeleteTextures(1, &ps->shadow_tex_groovebox); ps->shadow_tex_groovebox = 0; }
+    if (ps->shadow_tex_pit) { glDeleteTextures(1, &ps->shadow_tex_pit); ps->shadow_tex_pit = 0; }
     ps->shadow_vertex_count = 0;
 }
 
@@ -1170,8 +1262,9 @@ static void mat4_scale_y(float m[16], float sy) {
     m[5] = sy;
 }
 
-static void draw_shadow_at_y(const PuzzleScene* ps, GLuint shader,
+static void draw_shadow_at_y_rot(const PuzzleScene* ps, GLuint shader,
                               float x, float y, float z, float scale,
+                              float rot_y,
                               GLuint shadow_tex, float extent) {
     if (ps->shadow_vertex_count == 0 || !shadow_tex) return;
 
@@ -1201,17 +1294,33 @@ static void draw_shadow_at_y(const PuzzleScene* ps, GLuint shader,
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
                         GL_ZERO, GL_ONE);
 
-    /* Quad spans [-1,+1] in local space; scale to shadow extent */
+    /* Quad spans [-1,+1] in local space; scale to shadow extent.
+     * When rot_y is non-zero, rotate the shadow quad around its center
+     * so it follows the actor on a rotating turnstile platform. */
     float s = extent * scale;
     float model[16];
-    memset(model, 0, sizeof(model));
-    model[0]  = s;
-    model[5]  = 1.0f;
-    model[10] = s;
-    model[15] = 1.0f;
-    model[12] = x + ps->shadow_offset_x;
-    model[13] = y;
-    model[14] = z + ps->shadow_offset_z;
+    if (fabsf(rot_y) > 0.001f) {
+        float c = cosf(rot_y), sn = sinf(rot_y);
+        memset(model, 0, sizeof(model));
+        model[0]  = s * c;
+        model[2]  = -s * sn;
+        model[5]  = 1.0f;
+        model[8]  = s * sn;
+        model[10] = s * c;
+        model[15] = 1.0f;
+        model[12] = x + ps->shadow_offset_x;
+        model[13] = y;
+        model[14] = z + ps->shadow_offset_z;
+    } else {
+        memset(model, 0, sizeof(model));
+        model[0]  = s;
+        model[5]  = 1.0f;
+        model[10] = s;
+        model[15] = 1.0f;
+        model[12] = x + ps->shadow_offset_x;
+        model[13] = y;
+        model[14] = z + ps->shadow_offset_z;
+    }
     shader_set_mat4(shader, "u_model", model);
 
     glBindVertexArray(ps->shadow_vao);
@@ -1235,19 +1344,27 @@ static void draw_shadow_at_y(const PuzzleScene* ps, GLuint shader,
     }
 }
 
+static void draw_shadow_at_y(const PuzzleScene* ps, GLuint shader,
+                              float x, float y, float z, float scale,
+                              GLuint shadow_tex, float extent) {
+    draw_shadow_at_y_rot(ps, shader, x, y, z, scale, 0.0f, shadow_tex, extent);
+}
+
 /* Compute actor Y offset based on current fractional position.
  * If the actor is over a groove tile, lower them by trench_depth.
  * During animation (fractional positions), smoothly interpolate. */
 static float actor_groove_y(const PuzzleScene* ps, float col, float row) {
     if (!ps->groove_tile_map || ps->trench_depth <= 0.0f) return 0.0f;
 
-    /* For integer positions, simple lookup */
-    int ic = (int)floorf(col);
-    int ir = (int)floorf(row);
+    /* Shift to visual center (same reason as actor_conveyor_y) */
+    float cx = col + 0.5f;
+    float cz = row + 0.5f;
+    int ic = (int)floorf(cx);
+    int ir = (int)floorf(cz);
 
     /* Fraction within tile */
-    float fc = col - (float)ic;
-    float fr = row - (float)ir;
+    float fc = cx - (float)ic;
+    float fr = cz - (float)ir;
 
     bool cur = is_groove_tile(ps, ic, ir);
 
@@ -1291,42 +1408,45 @@ static float actor_groove_y(const PuzzleScene* ps, float col, float row) {
     return y;
 }
 
-/* Compute actor Y offset for conveyor tiles.
- * Actors standing on a conveyor are raised by CONVEYOR_HEIGHT. */
+/* Compute actor Y offset for elevated tiles (conveyors and turnstile platforms).
+ * Actors standing on an elevated tile are raised by CONVEYOR_HEIGHT. */
 #define CONVEYOR_ELEV     0.10f   /* must match diorama_gen.c CONVEYOR_HEIGHT */
 #define CONVEYOR_BELT_H   0.006f  /* must match diorama_gen.c CONVEYOR_BELT_H */
 #define CONVEYOR_BELT_TOP (CONVEYOR_ELEV + CONVEYOR_BELT_H)  /* shadow plane */
 static float actor_conveyor_y(const PuzzleScene* ps, float col, float row) {
-    if (!ps->conveyor_tile_map) return 0.0f;
+    /* Shift to visual center: grid position 5 → actor center at 5.5.
+     * Without this, a stationary actor at exact integer coords has fc=0,
+     * which triggers edge blending and drops elevation to zero. */
+    float cx = col + 0.5f;
+    float cz = row + 0.5f;
+    int ic = (int)floorf(cx);
+    int ir = (int)floorf(cz);
+    float fc = cx - (float)ic;
+    float fr = cz - (float)ir;
 
-    int ic = (int)floorf(col);
-    int ir = (int)floorf(row);
-    float fc = col - (float)ic;
-    float fr = row - (float)ir;
+    bool cur = is_elevated_tile(ps, ic, ir);
 
-    bool cur = is_conveyor_tile(ps, ic, ir);
-
-    /* Simple: if on a conveyor tile, raise. With smooth transition near edges. */
+    /* Simple: if on an elevated tile, raise. With smooth transition near edges. */
     if (cur) {
-        /* Check if moving off conveyor soon — smooth transition */
+        /* Check if moving off elevated area — smooth transition */
         float y = CONVEYOR_ELEV;
         float blend = 0.3f;
         /* Check edges for smooth step-down */
-        if (fc > (1.0f - blend) && !is_conveyor_tile(ps, ic + 1, ir)) {
+        if (fc > (1.0f - blend) && !is_elevated_tile(ps, ic + 1, ir)) {
             float t = (fc - (1.0f - blend)) / blend;
             float s = t * t * (3.0f - 2.0f * t);
             y = CONVEYOR_ELEV * (1.0f - s);
-        } else if (fc < blend && !is_conveyor_tile(ps, ic - 1, ir)) {
+        } else if (fc < blend && !is_elevated_tile(ps, ic - 1, ir)) {
             float t = (blend - fc) / blend;
             float s = t * t * (3.0f - 2.0f * t);
             y = CONVEYOR_ELEV * (1.0f - s);
         }
-        if (fr > (1.0f - blend) && !is_conveyor_tile(ps, ic, ir + 1)) {
+        if (fr > (1.0f - blend) && !is_elevated_tile(ps, ic, ir + 1)) {
             float t = (fr - (1.0f - blend)) / blend;
             float s = t * t * (3.0f - 2.0f * t);
             float ry = CONVEYOR_ELEV * (1.0f - s);
             if (ry < y) y = ry;
-        } else if (fr < blend && !is_conveyor_tile(ps, ic, ir - 1)) {
+        } else if (fr < blend && !is_elevated_tile(ps, ic, ir - 1)) {
             float t = (blend - fr) / blend;
             float s = t * t * (3.0f - 2.0f * t);
             float ry = CONVEYOR_ELEV * (1.0f - s);
@@ -1335,24 +1455,24 @@ static float actor_conveyor_y(const PuzzleScene* ps, float col, float row) {
         return y;
     }
 
-    /* Not on conveyor — check if approaching one */
+    /* Not on elevated tile — check if approaching one */
     float y = 0.0f;
     float blend = 0.3f;
-    if (fc > (1.0f - blend) && is_conveyor_tile(ps, ic + 1, ir)) {
+    if (fc > (1.0f - blend) && is_elevated_tile(ps, ic + 1, ir)) {
         float t = (fc - (1.0f - blend)) / blend;
         float s = t * t * (3.0f - 2.0f * t);
         y = CONVEYOR_ELEV * s;
-    } else if (fc < blend && is_conveyor_tile(ps, ic - 1, ir)) {
+    } else if (fc < blend && is_elevated_tile(ps, ic - 1, ir)) {
         float t = (blend - fc) / blend;
         float s = t * t * (3.0f - 2.0f * t);
         y = CONVEYOR_ELEV * s;
     }
-    if (fr > (1.0f - blend) && is_conveyor_tile(ps, ic, ir + 1)) {
+    if (fr > (1.0f - blend) && is_elevated_tile(ps, ic, ir + 1)) {
         float t = (fr - (1.0f - blend)) / blend;
         float s = t * t * (3.0f - 2.0f * t);
         float ry = CONVEYOR_ELEV * s;
         if (ry > y) y = ry;
-    } else if (fr < blend && is_conveyor_tile(ps, ic, ir - 1)) {
+    } else if (fr < blend && is_elevated_tile(ps, ic, ir - 1)) {
         float t = (blend - fr) / blend;
         float s = t * t * (3.0f - 2.0f * t);
         float ry = CONVEYOR_ELEV * s;
@@ -1374,9 +1494,10 @@ static void draw_shadow(const PuzzleScene* ps, GLuint shader,
  *   2. Conveyor shadow (GL_LESS, Y=belt+eps): only renders where stencil≠1,
  *      i.e. where the floor shadow was blocked by the belt.
  *      Passes on belt, blocked on walls (closer depth). */
-static void draw_actor_shadow_multiplane(const PuzzleScene* ps, GLuint shader,
-                                          float x, float z, float scale,
-                                          GLuint shadow_tex, float extent) {
+static void draw_actor_shadow_multiplane_rot(const PuzzleScene* ps, GLuint shader,
+                                              float x, float z, float scale,
+                                              float rot_y,
+                                              GLuint shadow_tex, float extent) {
     /* --- Floor plane: write stencil=1 wherever the shadow renders --- */
     glEnable(GL_STENCIL_TEST);
     glStencilMask(0xFF);
@@ -1384,43 +1505,119 @@ static void draw_actor_shadow_multiplane(const PuzzleScene* ps, GLuint shader,
     glStencilFunc(GL_ALWAYS, 1, 0xFF);
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
 
-    draw_shadow_at_y(ps, shader, x, 0.01f, z, scale, shadow_tex, extent);
+    draw_shadow_at_y_rot(ps, shader, x, 0.01f, z, scale, rot_y, shadow_tex, extent);
 
     /* --- Conveyor plane: only where floor shadow didn't reach --- */
     if (ps->conveyor_tile_map) {
         glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
         glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
 
-        draw_shadow_at_y(ps, shader,
+        draw_shadow_at_y_rot(ps, shader,
                          x, CONVEYOR_BELT_TOP + 0.005f,
-                         z, scale, shadow_tex, extent);
+                         z, scale, rot_y, shadow_tex, extent);
     }
 
     glDisable(GL_STENCIL_TEST);
     glStencilMask(0xFF);
 }
 
-/* Helper: destroy all turnstile wall meshes */
+static void draw_actor_shadow_multiplane(const PuzzleScene* ps, GLuint shader,
+                                          float x, float z, float scale,
+                                          GLuint shadow_tex, float extent) {
+    draw_actor_shadow_multiplane_rot(ps, shader, x, z, scale, 0.0f,
+                                      shadow_tex, extent);
+}
+
+/* Helper: destroy all turnstile meshes (platform + walls + gears) */
 static void destroy_turnstile_meshes(PuzzleScene* ps) {
     for (int i = 0; i < ps->turnstile_mesh_count; i++) {
-        if (ps->turnstile_meshes[i].valid)
+        if (ps->turnstile_meshes[i].valid) {
             voxel_mesh_destroy(&ps->turnstile_meshes[i].mesh);
+            for (int g = 0; g < ps->turnstile_meshes[i].gear_count; g++)
+                voxel_mesh_destroy(&ps->turnstile_meshes[i].gears[g]);
+        }
     }
     ps->turnstile_mesh_count = 0;
 }
 
-/* Regenerate a single turnstile's wall mesh from current grid state */
+/* Regenerate a single turnstile's mesh (walls + platform) from current grid state */
 static void regenerate_turnstile_mesh(PuzzleScene* ps, int idx) {
     if (ps->turnstile_meshes[idx].valid) {
         voxel_mesh_destroy(&ps->turnstile_meshes[idx].mesh);
+        for (int g = 0; g < ps->turnstile_meshes[idx].gear_count; g++)
+            voxel_mesh_destroy(&ps->turnstile_meshes[idx].gears[g]);
         ps->turnstile_meshes[idx].valid = false;
     }
 
+    int jc = ps->turnstile_meshes[idx].jc;
+    int jr = ps->turnstile_meshes[idx].jr;
+
+    /* Generate walls + raised platform */
     voxel_mesh_begin(&ps->turnstile_meshes[idx].mesh);
-    diorama_generate_walls_only(&ps->turnstile_meshes[idx].mesh,
-                                 ps->grid, &ps->cached_biome,
-                                 (const int (*)[2])ps->turnstile_meshes[idx].cells, 4);
+    diorama_generate_turnstile(&ps->turnstile_meshes[idx].mesh,
+                                ps->grid, &ps->cached_biome,
+                                (const int (*)[2])ps->turnstile_meshes[idx].cells, 4,
+                                jc, jr);
     voxel_mesh_build(&ps->turnstile_meshes[idx].mesh, 0.0625f);
+
+    /* Generate gear meshes — 1 central + 4 satellites */
+    float cx = (float)jc;  /* junction is at corner of 4 tiles */
+    float cz = (float)jr;
+    int gc = 0;
+
+    /* Central gear at junction point */
+    ps->turnstile_meshes[idx].gear_cx[gc] = cx;
+    ps->turnstile_meshes[idx].gear_cz[gc] = cz;
+    ps->turnstile_meshes[idx].gear_speed[gc] = 1.0f;  /* 1:1 with platform */
+    voxel_mesh_begin(&ps->turnstile_meshes[idx].gears[gc]);
+    diorama_generate_gear(&ps->turnstile_meshes[idx].gears[gc],
+                           cx, cz, 8, 0.25f);
+    voxel_mesh_build(&ps->turnstile_meshes[idx].gears[gc], 0.0625f);
+    gc++;
+
+    /* Satellite gears under the exposed corners of the 12-gon.
+     * Randomly sized and positioned like watch clockwork.  A simple
+     * deterministic hash from (jc, jr, index) seeds the variation so
+     * each turnstile looks unique but consistent across rebuilds. */
+    struct {
+        float dx, dz;       /* offset from junction */
+        float radius;       /* gear radius */
+        int   teeth;        /* tooth count */
+        float speed;        /* rotation speed multiplier */
+    } sats[] = {
+        /* Primary gear in each corner (larger) */
+        { -0.80f, -0.80f,  0.22f, 10, -1.4f },
+        {  0.80f, -0.80f,  0.19f,  8, -1.8f },
+        {  0.80f,  0.80f,  0.24f, 11, -1.2f },
+        { -0.80f,  0.80f,  0.17f,  7, -2.0f },
+        /* Smaller secondary gears clustered near primaries */
+        { -0.55f, -0.95f,  0.12f,  6,  2.5f },
+        {  0.95f, -0.55f,  0.10f,  5,  3.0f },
+        {  0.55f,  0.95f,  0.13f,  6,  2.2f },
+        { -0.95f,  0.55f,  0.11f,  5,  2.8f },
+        /* Tiny accent gears */
+        { -0.60f, -0.60f,  0.08f,  5,  3.5f },
+        {  0.62f, -0.62f,  0.07f,  4, -4.0f },
+        {  0.58f,  0.63f,  0.09f,  5,  3.2f },
+    };
+    int sat_count = (int)(sizeof(sats) / sizeof(sats[0]));
+    if (gc + sat_count > TURNSTILE_GEAR_COUNT)
+        sat_count = TURNSTILE_GEAR_COUNT - gc;
+
+    for (int s = 0; s < sat_count; s++) {
+        float gx = cx + sats[s].dx;
+        float gz = cz + sats[s].dz;
+        ps->turnstile_meshes[idx].gear_cx[gc] = gx;
+        ps->turnstile_meshes[idx].gear_cz[gc] = gz;
+        ps->turnstile_meshes[idx].gear_speed[gc] = sats[s].speed;
+        voxel_mesh_begin(&ps->turnstile_meshes[idx].gears[gc]);
+        diorama_generate_gear(&ps->turnstile_meshes[idx].gears[gc],
+                               gx, gz, sats[s].teeth, sats[s].radius);
+        voxel_mesh_build(&ps->turnstile_meshes[idx].gears[gc], 0.0625f);
+        gc++;
+    }
+    ps->turnstile_meshes[idx].gear_count = gc;
+
     ps->turnstile_meshes[idx].valid = true;
 }
 
@@ -1436,6 +1633,8 @@ static void build_diorama(PuzzleScene* ps) {
         ps->groove_tile_map = NULL;
         free(ps->conveyor_tile_map);
         ps->conveyor_tile_map = NULL;
+        free(ps->turnstile_tile_map);
+        ps->turnstile_tile_map = NULL;
     }
 
     int cols = ps->grid->cols;
@@ -1505,6 +1704,7 @@ static void build_diorama(PuzzleScene* ps) {
         ps->turnstile_meshes[idx].jr = jr;
         ps->turnstile_meshes[idx].clockwise = cw;
         ps->turnstile_meshes[idx].valid = false;
+        ps->turnstile_meshes[idx].held_angle = 0.0f;
 
         /* 4 tiles: NW, NE, SE, SW */
         ps->turnstile_meshes[idx].cells[0][0] = jc - 1;
@@ -1523,6 +1723,19 @@ static void build_diorama(PuzzleScene* ps) {
                 exclude.cells[exclude.count][1] = ps->turnstile_meshes[idx].cells[ci][1];
                 exclude.count++;
             }
+        }
+    }
+
+    /* Build turnstile tile map for actor elevation (same height as conveyors) */
+    ps->turnstile_map_cols = cols;
+    ps->turnstile_map_rows = rows;
+    ps->turnstile_tile_map = calloc((size_t)(cols * rows), sizeof(bool));
+    if (ps->turnstile_tile_map) {
+        for (int i = 0; i < exclude.count; i++) {
+            int tc = exclude.cells[i][0];
+            int tr = exclude.cells[i][1];
+            if (tc >= 0 && tc < cols && tr >= 0 && tr < rows)
+                ps->turnstile_tile_map[tr * cols + tc] = true;
         }
     }
 
@@ -1743,16 +1956,19 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
     /* Draw static geometry (floor, walls, exit marker) */
     voxel_mesh_draw(&ps->diorama_mesh);
 
-    /* Draw auto-turnstile walls (rotated around junction during animation) */
+    /* Draw auto-turnstile: gears first, then pit shadow, then plate+walls.
+     * Order matters because the plate (Y=0.10) would block the pit shadow
+     * (Y=-0.004) in the depth buffer if drawn first. */
+    float turnstile_angles[MAX_AUTO_TURNSTILES];
     for (int ti = 0; ti < ps->turnstile_mesh_count; ti++) {
-        if (!ps->turnstile_meshes[ti].valid) continue;
+        if (!ps->turnstile_meshes[ti].valid) { turnstile_angles[ti] = 0; continue; }
 
         int jc = ps->turnstile_meshes[ti].jc;
         int jr = ps->turnstile_meshes[ti].jr;
         bool cw = ps->turnstile_meshes[ti].clockwise;
 
-        /* Determine rotation angle from animation */
-        float angle = 0.0f;
+        /* Determine rotation angle from animation or held pose */
+        float platform_angle = ps->turnstile_meshes[ti].held_angle;
         if (anim_queue_is_playing(&ps->anim)) {
             const AnimEvent* cur = anim_queue_current_event(&ps->anim);
             AnimPhase phase = anim_queue_phase(&ps->anim);
@@ -1761,26 +1977,74 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 cur->turnstile.junction_col == jc &&
                 cur->turnstile.junction_row == jr) {
                 float raw_t = anim_queue_rotation_progress(&ps->anim);
-                /* Linear rotation with snap-oscillation at the end.
-                 * The rotation tween gives 0→1 linearly. We apply a
-                 * small damped overshoot oscillation past t≈0.85 so the
-                 * walls "snap into place" with a quick wiggle. */
                 float target = cw ? (float)M_PI_2 : -(float)M_PI_2;
-                if (raw_t < 0.85f) {
-                    angle = target * (raw_t / 0.85f);
+
+                if (anim_queue_is_reversing(&ps->anim)) {
+                    platform_angle = target * (raw_t - 1.0f);
                 } else {
-                    float u = (raw_t - 0.85f) / 0.15f; /* 0→1 in last 15% */
-                    float osc = sinf(u * (float)M_PI * 2.0f)
-                              * (1.0f - u) * 0.04f;
-                    angle = target * (1.0f + osc);
+                    if (raw_t < 0.85f) {
+                        platform_angle = target * (raw_t / 0.85f);
+                    } else {
+                        float u = (raw_t - 0.85f) / 0.15f;
+                        float osc = sinf(u * (float)M_PI * 2.0f)
+                                  * (1.0f - u) * 0.04f;
+                        platform_angle = target * (1.0f + osc);
+                    }
                 }
             }
         }
+        turnstile_angles[ti] = platform_angle;
 
-        /* Build model matrix: T(jc,0,jr) * Ry(angle) * T(-jc,0,-jr) */
+        /* Draw gears — each rotates around its own center axis */
+        for (int g = 0; g < ps->turnstile_meshes[ti].gear_count; g++) {
+            float gear_angle = platform_angle * ps->turnstile_meshes[ti].gear_speed[g];
+            float gcx = ps->turnstile_meshes[ti].gear_cx[g];
+            float gcz = ps->turnstile_meshes[ti].gear_cz[g];
+
+            float t1[16], ry[16], t2[16], tmp[16], model[16];
+            mat4_translate(t1, gcx, 0.0f, gcz);
+            mat4_rot_y(ry, gear_angle);
+            mat4_translate(t2, -gcx, 0.0f, -gcz);
+            mat4_mul(tmp, t1, ry);
+            mat4_mul(model, tmp, t2);
+
+            shader_set_mat4(shader, "u_model", model);
+            voxel_mesh_draw(&ps->turnstile_meshes[ti].gears[g]);
+        }
+    }
+
+    /* Draw vignette shadow over each turnstile gear pit.
+     * Rendered AFTER gears (so shadow darkens them) but BEFORE the
+     * turnstile plate+walls (so the plate at Y=0.10 draws on top). */
+    if (ps->turnstile_mesh_count > 0) {
+        shader_set_mat4(shader, "u_model", identity);
+    }
+    if (ps->turnstile_mesh_count > 0 && ps->shadow_tex_pit) {
+        float saved_ox = ps->shadow_offset_x;
+        float saved_oz = ps->shadow_offset_z;
+        ((PuzzleScene*)ps)->shadow_offset_x = 0.0f;
+        ((PuzzleScene*)ps)->shadow_offset_z = 0.0f;
+        for (int ti = 0; ti < ps->turnstile_mesh_count; ti++) {
+            if (!ps->turnstile_meshes[ti].valid) continue;
+            int jc = ps->turnstile_meshes[ti].jc;
+            int jr = ps->turnstile_meshes[ti].jr;
+            draw_shadow_at_y(ps, shader,
+                             (float)jc, -0.004f, (float)jr,
+                             1.0f, ps->shadow_tex_pit, ps->shadow_extent_pit);
+        }
+        ((PuzzleScene*)ps)->shadow_offset_x = saved_ox;
+        ((PuzzleScene*)ps)->shadow_offset_z = saved_oz;
+    }
+
+    /* Draw turnstile platform + walls on top of shadows */
+    for (int ti = 0; ti < ps->turnstile_mesh_count; ti++) {
+        if (!ps->turnstile_meshes[ti].valid) continue;
+        int jc = ps->turnstile_meshes[ti].jc;
+        int jr = ps->turnstile_meshes[ti].jr;
+
         float t1[16], ry[16], t2[16], tmp[16], model[16];
         mat4_translate(t1, (float)jc, 0.0f, (float)jr);
-        mat4_rot_y(ry, angle);
+        mat4_rot_y(ry, turnstile_angles[ti]);
         mat4_translate(t2, -(float)jc, 0.0f, -(float)jr);
         mat4_mul(tmp, t1, ry);
         mat4_mul(model, tmp, t2);
@@ -1934,6 +2198,29 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             float mino_gy = actor_groove_y(ps, mcol, mrow)
                           + actor_conveyor_y(ps, mcol, mrow);
 
+            /* Compute turnstile platform rotation for minotaur (shared by
+             * shadow + body).  Same 85/15 easing as platform mesh. */
+            float mino_turnstile_yaw = 0.0f;
+            if (animating && anim_queue_phase(&ps->anim) == ANIM_PHASE_ENVIRONMENT) {
+                const AnimEvent* env_cur = anim_queue_current_event(&ps->anim);
+                if (env_cur && env_cur->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
+                    env_cur->turnstile.actor_moved[1]) {
+                    float raw_t = anim_queue_rotation_progress(&ps->anim);
+                    bool cw_dir = env_cur->turnstile.clockwise;
+                    float target = cw_dir ? (float)M_PI_2 : -(float)M_PI_2;
+                    if (anim_queue_is_reversing(&ps->anim)) {
+                        mino_turnstile_yaw = target * (raw_t - 1.0f);
+                    } else if (raw_t < 0.85f) {
+                        mino_turnstile_yaw = target * (raw_t / 0.85f);
+                    } else {
+                        float u = (raw_t - 0.85f) / 0.15f;
+                        float osc = sinf(u * (float)M_PI * 2.0f)
+                                  * (1.0f - u) * 0.04f;
+                        mino_turnstile_yaw = target * (1.0f + osc);
+                    }
+                }
+            }
+
             /* Compute shadow scale: baseline shrink so the minotaur's shadow
              * extends a similar distance from his body as Theseus's does,
              * plus gentle additional shrink when airborne during the roll arc. */
@@ -1960,8 +2247,9 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
 
             /* Multi-plane shadow on floor + conveyor belt (stencil prevents
              * double-darkening; GL_LESS blocks shadows on walls). */
-            draw_actor_shadow_multiplane(ps, shader,
+            draw_actor_shadow_multiplane_rot(ps, shader,
                 mcol + 0.5f, mrow + 0.5f, mino_shadow_scale,
+                mino_turnstile_yaw,
                 ps->shadow_tex_minotaur, ps->shadow_extent_m);
 
             /* ── Roll animation state ── */
@@ -2003,11 +2291,13 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                     mino_deform.squash = 1.0f - 0.08f * s;  /* → 0.92 */
                     mino_deform.flare  = 0.04f * s;
 
-                    /* Stay at start position during squat */
-                    mat4_translate(model,
-                                   start_col + 0.5f,
-                                   mino_gy,
-                                   start_row + 0.5f);
+                    /* Stay at start position during squat, with facing rotation */
+                    {
+                        float t_pos[16], ry_mat[16];
+                        mat4_translate(t_pos, start_col + 0.5f, mino_gy, start_row + 0.5f);
+                        mat4_rot_y(ry_mat, ps->mino_facing_angle);
+                        mat4_mul(model, t_pos, ry_mat);
+                    }
 
                 } else {
                     /* ── Roll phase: 90° rotation around leading bottom edge ── */
@@ -2064,11 +2354,16 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                     mat4_mul(model, tmp, t2);
                 }
             } else {
-                /* ── Idle or non-moving step: simple translation ── */
-                mat4_translate(model,
-                               mcol + 0.5f,
-                               mino_gy,
-                               mrow + 0.5f);
+                /* ── Idle or non-moving step: translation + facing rotation ── */
+
+                /* Build model: T(pos) * Ry(facing + turnstile) */
+                float total_yaw = ps->mino_facing_angle + mino_turnstile_yaw;
+                {
+                    float t_pos[16], ry_mat[16], tmp_m[16];
+                    mat4_translate(t_pos, mcol + 0.5f, mino_gy, mrow + 0.5f);
+                    mat4_rot_y(ry_mat, total_yaw);
+                    mat4_mul(model, t_pos, ry_mat);
+                }
 
                 /* Post-roll wobble (heavier than Theseus) */
                 if (ps->mino_wobble_active) {
@@ -2297,13 +2592,37 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                           + actor_conveyor_y(ps, tcol, trow);
             float hop_y = thop * 0.3f;
 
+            /* Compute turnstile platform rotation for Theseus (shared by
+             * shadow + body).  Same 85/15 easing as platform mesh. */
+            float thes_turnstile_yaw = 0.0f;
+            if (animating && anim_queue_phase(&ps->anim) == ANIM_PHASE_ENVIRONMENT) {
+                const AnimEvent* env_cur = anim_queue_current_event(&ps->anim);
+                if (env_cur && env_cur->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
+                    env_cur->turnstile.actor_moved[0]) {
+                    float raw_t = anim_queue_rotation_progress(&ps->anim);
+                    bool cw_dir = env_cur->turnstile.clockwise;
+                    float target = cw_dir ? (float)M_PI_2 : -(float)M_PI_2;
+                    if (anim_queue_is_reversing(&ps->anim)) {
+                        thes_turnstile_yaw = target * (raw_t - 1.0f);
+                    } else if (raw_t < 0.85f) {
+                        thes_turnstile_yaw = target * (raw_t / 0.85f);
+                    } else {
+                        float u = (raw_t - 0.85f) / 0.15f;
+                        float osc = sinf(u * (float)M_PI * 2.0f)
+                                  * (1.0f - u) * 0.04f;
+                        thes_turnstile_yaw = target * (1.0f + osc);
+                    }
+                }
+            }
+
             /* Soft ground shadow — shrinks with hop height.
              * Always at Y=0.01 (floor level) regardless of trench.
              * GL_LESS passes on rim, trench floor, and normal floor,
              * but correctly fails against groove box top (Y=0.45). */
             float shadow_scale = 1.0f - thop * 0.5f;
-            draw_actor_shadow_multiplane(ps, shader,
+            draw_actor_shadow_multiplane_rot(ps, shader,
                 tcol + 0.5f, trow + 0.5f, shadow_scale,
+                thes_turnstile_yaw,
                 ps->shadow_tex_theseus, ps->shadow_extent_t);
 
             /* ── Compute Theseus deformation ── */
@@ -2580,15 +2899,24 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             shader_set_int(shader, "u_has_ao",
                            voxel_mesh_has_ao(&ps->theseus_parts.body) ? 1 : 0);
             shader_set_float(shader, "u_ao_intensity", ao_intensity);
+
             float model[16];
-            memset(model, 0, sizeof(model));
-            model[0]  = 1.0f;
-            model[5]  = 1.0f;
-            model[10] = 1.0f;
-            model[15] = 1.0f;
-            model[12] = tcol + 0.5f;
-            model[13] = thes_gy + hop_y;
-            model[14] = trow + 0.5f;
+            if (fabsf(thes_turnstile_yaw) > 0.001f) {
+                /* Rotating with turnstile platform */
+                float t_pos[16], ry_mat[16];
+                mat4_translate(t_pos, tcol + 0.5f, thes_gy + hop_y, trow + 0.5f);
+                mat4_rot_y(ry_mat, thes_turnstile_yaw);
+                mat4_mul(model, t_pos, ry_mat);
+            } else {
+                memset(model, 0, sizeof(model));
+                model[0]  = 1.0f;
+                model[5]  = 1.0f;
+                model[10] = 1.0f;
+                model[15] = 1.0f;
+                model[12] = tcol + 0.5f;
+                model[13] = thes_gy + hop_y;
+                model[14] = trow + 0.5f;
+            }
             shader_set_mat4(shader, "u_model", model);
             voxel_mesh_draw(&ps->theseus_parts.body);
         }
@@ -2662,6 +2990,7 @@ static void puzzle_on_enter(State* self) {
     ps->mino_wobble_active = false;
     ps->mino_wobble_timer = 0.0f;
     ps->was_mino_rolling = false;
+    ps->mino_facing_angle = 0.0f;
     ps->was_pushing = false;
     ps->was_turnstile_pushing = false;
     ps->push_dir_x = 0.0f;
@@ -2696,6 +3025,8 @@ static void puzzle_on_exit(State* self) {
         ps->groove_tile_map = NULL;
         free(ps->conveyor_tile_map);
         ps->conveyor_tile_map = NULL;
+        free(ps->turnstile_tile_map);
+        ps->turnstile_tile_map = NULL;
         ps->diorama_built = false;
     }
     if (ps->grid) {
@@ -2861,6 +3192,17 @@ static void puzzle_update(State* self, float dt) {
                 ps->undo_anim_pending = false;
                 undo_pop(&ps->undo, ps->grid);
 
+                /* Regenerate all turnstile meshes from the now-correct
+                 * grid state.  Without this, meshes built during the
+                 * reverse animation still reflect the POST-turn wall
+                 * layout, causing a visible flicker on the next forward
+                 * turn. */
+                for (int ti = 0; ti < ps->turnstile_mesh_count; ti++) {
+                    if (ps->turnstile_meshes[ti].valid)
+                        regenerate_turnstile_mesh(ps, ti);
+                    ps->turnstile_meshes[ti].held_angle = 0.0f;
+                }
+
                 /* Check for buffered action (e.g. rapid undo presses) */
                 SemanticAction buffered = input_buffer_consume(&ps->input_buf);
                 if (buffered == ACTION_NONE) {
@@ -2997,6 +3339,41 @@ static void puzzle_update(State* self, float dt) {
             }
         }
         if (ps->turnstile_meshes[ti].was_animating && !is_animating) {
+            /* During reverse (undo) playback, the turnstile event finishes
+             * early (events play in reverse order) but undo_pop hasn't
+             * restored the grid yet.  Skip regeneration here — the meshes
+             * will be rebuilt from the correct grid state after undo_pop
+             * completes (see the undo_anim_pending block above). */
+            if (anim_queue_is_reversing(&ps->anim)) {
+                /* Latch the final reverse rotation angle so the mesh
+                 * stays in the correct visual position while the rest
+                 * of the undo animation (theseus move, etc.) plays out.
+                 * Cleared when undo_pop regenerates meshes. */
+                float target = ps->turnstile_meshes[ti].clockwise
+                    ? (float)M_PI_2 : -(float)M_PI_2;
+                ps->turnstile_meshes[ti].held_angle = -target;
+                ps->turnstile_meshes[ti].was_animating = is_animating;
+                continue;
+            }
+
+            /* Update minotaur facing angle if it was on this turnstile */
+            if (anim_queue_is_playing(&ps->anim) || ps->anim.record.event_count > 0) {
+                /* Find the most recent auto-turnstile event for this junction */
+                for (int ei = 0; ei < ps->anim.record.event_count; ei++) {
+                    const AnimEvent* e = &ps->anim.record.events[ei];
+                    if (e->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
+                        e->turnstile.junction_col == ps->turnstile_meshes[ti].jc &&
+                        e->turnstile.junction_row == ps->turnstile_meshes[ti].jr &&
+                        e->turnstile.actor_moved[1]) {
+                        /* Minotaur was on this turnstile — rotate facing angle.
+                         * Sign matches platform rendering: cw → +π/2. */
+                        float rot = ps->turnstile_meshes[ti].clockwise
+                            ? (float)M_PI_2 : -(float)M_PI_2;
+                        ps->mino_facing_angle += rot;
+                        break;
+                    }
+                }
+            }
             regenerate_turnstile_mesh(ps, ti);
         }
         ps->turnstile_meshes[ti].was_animating = is_animating;
@@ -3018,6 +3395,16 @@ static void puzzle_update(State* self, float dt) {
         if (ps->was_mino_rolling && !is_rolling) {
             ps->mino_wobble_active = true;
             ps->mino_wobble_timer = 0.0f;
+
+            /* Update minotaur facing direction based on last movement.
+             * 0 = facing -Z (north), π/2 = facing +X (east), etc. */
+            {
+                float dx = ps->anim.mino_x.end - ps->anim.mino_x.start;
+                float dz = ps->anim.mino_y.end - ps->anim.mino_y.start;
+                if (fabsf(dx) > 0.01f || fabsf(dz) > 0.01f) {
+                    ps->mino_facing_angle = atan2f(dx, -dz);
+                }
+            }
 
             /* Trigger stomp effects (dust puffs + camera shake).
              * Skip during undo — effects are too hard to get right in reverse.
@@ -3168,6 +3555,8 @@ static void puzzle_destroy(State* self) {
         ps->groove_tile_map = NULL;
         free(ps->conveyor_tile_map);
         ps->conveyor_tile_map = NULL;
+        free(ps->turnstile_tile_map);
+        ps->turnstile_tile_map = NULL;
     }
     if (ps->grid) {
         grid_destroy(ps->grid);

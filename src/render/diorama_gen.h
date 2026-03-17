@@ -86,4 +86,22 @@ void diorama_generate_walls_only(VoxelMesh* mesh, const Grid* grid,
                                   const BiomeConfig* biome,
                                   const int (*cells)[2], int cell_count);
 
+/*
+ * Generate walls + raised platform + hazard stripes for an auto-turnstile.
+ * The mesh must be initialized with voxel_mesh_begin().
+ * This produces the complete rotating geometry for one turnstile.
+ */
+void diorama_generate_turnstile(VoxelMesh* mesh, const Grid* grid,
+                                 const BiomeConfig* biome,
+                                 const int (*cells)[2], int cell_count,
+                                 int junction_col, int junction_row);
+
+/*
+ * Generate a single gear mesh (hub + cog teeth) centered at (center_x, center_z).
+ * The mesh must be initialized with voxel_mesh_begin().
+ */
+void diorama_generate_gear(VoxelMesh* mesh,
+                            float center_x, float center_z,
+                            int tooth_count, float radius);
+
 #endif /* DIORAMA_GEN_H */

@@ -233,6 +233,9 @@ static void bilerp3(float out[3], const float c[4][3], float u, float v) {
 void voxel_mesh_begin(VoxelMesh* mesh) {
     memset(mesh, 0, sizeof(VoxelMesh));
     mesh->cur_subdivisions = 1;
+    mesh->raw_verts = NULL;
+    mesh->raw_vert_count = 0;
+    mesh->raw_vert_cap = 0;
 }
 
 void voxel_mesh_set_subdivisions(VoxelMesh* mesh, int subdivs) {
@@ -346,9 +349,43 @@ static void apply_wall_heuristic(float color[4], float vertex_y,
 }
 
 void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
-    if (mesh->box_count == 0) {
+    if (mesh->box_count == 0 && mesh->raw_vert_count == 0) {
         mesh->built = true;
         mesh->vertex_count = 0;
+        return;
+    }
+
+    /* Raw-only mesh: no boxes to rasterize, just upload raw polygon verts */
+    if (mesh->box_count == 0) {
+        glGenVertexArrays(1, &mesh->vao);
+        glGenBuffers(1, &mesh->vbo);
+        glBindVertexArray(mesh->vao);
+        glBindBuffer(GL_ARRAY_BUFFER, mesh->vbo);
+        glBufferData(GL_ARRAY_BUFFER,
+                     (GLsizeiptr)((size_t)mesh->raw_vert_count * FLOATS_PER_VERTEX * sizeof(float)),
+                     mesh->raw_verts, GL_STATIC_DRAW);
+        /* position (vec3) */
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, FLOATS_PER_VERTEX * sizeof(float), (void*)0);
+        /* normal (vec3) */
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, FLOATS_PER_VERTEX * sizeof(float), (void*)(3 * sizeof(float)));
+        /* color (vec4) */
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, FLOATS_PER_VERTEX * sizeof(float), (void*)(6 * sizeof(float)));
+        /* uv (vec2) */
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, FLOATS_PER_VERTEX * sizeof(float), (void*)(10 * sizeof(float)));
+        /* ao_mode (float) */
+        glEnableVertexAttribArray(4);
+        glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, FLOATS_PER_VERTEX * sizeof(float), (void*)(12 * sizeof(float)));
+        glBindVertexArray(0);
+        mesh->vertex_count = mesh->raw_vert_count;
+        mesh->built = true;
+        free(mesh->raw_verts);
+        mesh->raw_verts = NULL;
+        mesh->raw_vert_count = 0;
+        mesh->raw_vert_cap = 0;
         return;
     }
 
@@ -782,6 +819,26 @@ void voxel_mesh_build(VoxelMesh* mesh, float cell_size) {
     }
 
     /* ---------- 6. Upload geometry to GPU ---------- */
+
+    /* Append raw polygon vertices (if any) after box-generated vertices */
+    int total_vert_count = vert_count + mesh->raw_vert_count;
+    float* upload_verts = verts;
+    if (mesh->raw_vert_count > 0) {
+        upload_verts = realloc(verts,
+            (size_t)total_vert_count * FLOATS_PER_VERTEX * sizeof(float));
+        if (upload_verts) {
+            memcpy(upload_verts + vert_count * FLOATS_PER_VERTEX,
+                   mesh->raw_verts,
+                   (size_t)mesh->raw_vert_count * FLOATS_PER_VERTEX * sizeof(float));
+            verts = upload_verts;  /* update for later free() */
+        }
+        vert_count = total_vert_count;
+        free(mesh->raw_verts);
+        mesh->raw_verts = NULL;
+        mesh->raw_vert_count = 0;
+        mesh->raw_vert_cap = 0;
+    }
+
     glGenVertexArrays(1, &mesh->vao);
     glGenBuffers(1, &mesh->vbo);
 
@@ -886,6 +943,7 @@ void voxel_mesh_destroy(VoxelMesh* mesh) {
     if (mesh->vbo) glDeleteBuffers(1, &mesh->vbo);
     if (mesh->ao_texture) glDeleteTextures(1, &mesh->ao_texture);
     if (mesh->floor_lm_texture) glDeleteTextures(1, &mesh->floor_lm_texture);
+    free(mesh->raw_verts);
     memset(mesh, 0, sizeof(VoxelMesh));
 }
 
@@ -895,4 +953,134 @@ int voxel_mesh_get_vertex_count(const VoxelMesh* mesh) {
 
 bool voxel_mesh_has_ao(const VoxelMesh* mesh) {
     return mesh->has_ao;
+}
+
+/* ---------- Raw vertex / polygon prism support ---------- */
+
+/* Append raw pre-formatted vertex data (13 floats per vertex) to staging. */
+static void raw_verts_append(VoxelMesh* mesh, const float* data, int count) {
+    int needed = mesh->raw_vert_count + count;
+    if (needed > mesh->raw_vert_cap) {
+        int new_cap = mesh->raw_vert_cap ? mesh->raw_vert_cap * 2 : 256;
+        while (new_cap < needed) new_cap *= 2;
+        mesh->raw_verts = realloc(mesh->raw_verts,
+            (size_t)new_cap * FLOATS_PER_VERTEX * sizeof(float));
+        mesh->raw_vert_cap = new_cap;
+    }
+    memcpy(mesh->raw_verts + mesh->raw_vert_count * FLOATS_PER_VERTEX,
+           data, (size_t)count * FLOATS_PER_VERTEX * sizeof(float));
+    mesh->raw_vert_count += count;
+}
+
+/* Emit one raw vertex into a float buffer at the given offset. */
+static void emit_raw_vert(float* dst,
+                           float px, float py, float pz,
+                           float nx, float ny, float nz,
+                           float r, float g, float b, float a,
+                           float u, float v, float ao_mode) {
+    dst[0]  = px; dst[1]  = py; dst[2]  = pz;
+    dst[3]  = nx; dst[4]  = ny; dst[5]  = nz;
+    dst[6]  = r;  dst[7]  = g;  dst[8]  = b;  dst[9] = a;
+    dst[10] = u;  dst[11] = v;
+    dst[12] = ao_mode;
+}
+
+void voxel_mesh_add_polygon_prism(VoxelMesh* mesh,
+                                   const float (*verts_xz)[2], int n,
+                                   float y_base, float height,
+                                   float r, float g, float b, float a,
+                                   AoMode top_ao_mode, AoMode side_ao_mode) {
+    float y_top = y_base + height;
+    float am_top  = (float)top_ao_mode;
+    float am_side = (float)side_ao_mode;
+
+    /* Compute centroid for fan triangulation */
+    float cx = 0.0f, cz = 0.0f;
+    for (int i = 0; i < n; i++) {
+        cx += verts_xz[i][0];
+        cz += verts_xz[i][1];
+    }
+    cx /= (float)n;
+    cz /= (float)n;
+
+    float tri[3 * FLOATS_PER_VERTEX];
+
+    /* Top face: triangle fan from centroid (CCW winding) */
+    for (int i = 0; i < n; i++) {
+        int j = (i + 1) % n;
+        emit_raw_vert(tri + 0 * 13, cx, y_top, cz,
+                      0, 1, 0, r, g, b, a, 0, 0, am_top);
+        emit_raw_vert(tri + 1 * 13, verts_xz[i][0], y_top, verts_xz[i][1],
+                      0, 1, 0, r, g, b, a, 0, 0, am_top);
+        emit_raw_vert(tri + 2 * 13, verts_xz[j][0], y_top, verts_xz[j][1],
+                      0, 1, 0, r, g, b, a, 0, 0, am_top);
+        raw_verts_append(mesh, tri, 3);
+    }
+
+    /* Bottom face: reversed winding */
+    for (int i = 0; i < n; i++) {
+        int j = (i + 1) % n;
+        emit_raw_vert(tri + 0 * 13, cx, y_base, cz,
+                      0, -1, 0, r, g, b, a, 0, 0, am_side);
+        emit_raw_vert(tri + 1 * 13, verts_xz[j][0], y_base, verts_xz[j][1],
+                      0, -1, 0, r, g, b, a, 0, 0, am_side);
+        emit_raw_vert(tri + 2 * 13, verts_xz[i][0], y_base, verts_xz[i][1],
+                      0, -1, 0, r, g, b, a, 0, 0, am_side);
+        raw_verts_append(mesh, tri, 3);
+    }
+
+    /* Side faces: one quad (2 triangles) per edge */
+    float quad[6 * FLOATS_PER_VERTEX];
+    for (int i = 0; i < n; i++) {
+        int j = (i + 1) % n;
+        float dx = verts_xz[j][0] - verts_xz[i][0];
+        float dz = verts_xz[j][1] - verts_xz[i][1];
+        float len = sqrtf(dx * dx + dz * dz);
+        if (len < 1e-6f) continue;
+        /* Outward-facing normal (perpendicular to edge, horizontal) */
+        float nx = dz / len;
+        float nz = -dx / len;
+
+        /* Quad: v_i_bottom, v_j_bottom, v_j_top, v_i_bottom, v_j_top, v_i_top */
+        emit_raw_vert(quad + 0 * 13, verts_xz[i][0], y_base, verts_xz[i][1],
+                      nx, 0, nz, r, g, b, a, 0, 0, am_side);
+        emit_raw_vert(quad + 1 * 13, verts_xz[j][0], y_base, verts_xz[j][1],
+                      nx, 0, nz, r, g, b, a, 0, 0, am_side);
+        emit_raw_vert(quad + 2 * 13, verts_xz[j][0], y_top, verts_xz[j][1],
+                      nx, 0, nz, r, g, b, a, 0, 0, am_side);
+        emit_raw_vert(quad + 3 * 13, verts_xz[i][0], y_base, verts_xz[i][1],
+                      nx, 0, nz, r, g, b, a, 0, 0, am_side);
+        emit_raw_vert(quad + 4 * 13, verts_xz[j][0], y_top, verts_xz[j][1],
+                      nx, 0, nz, r, g, b, a, 0, 0, am_side);
+        emit_raw_vert(quad + 5 * 13, verts_xz[i][0], y_top, verts_xz[i][1],
+                      nx, 0, nz, r, g, b, a, 0, 0, am_side);
+        raw_verts_append(mesh, quad, 6);
+    }
+}
+
+void voxel_mesh_add_polygon_cap(VoxelMesh* mesh,
+                                 const float (*verts_xz)[2], int n,
+                                 float y,
+                                 float r, float g, float b, float a,
+                                 AoMode ao_mode) {
+    float am = (float)ao_mode;
+    float cx = 0.0f, cz = 0.0f;
+    for (int i = 0; i < n; i++) {
+        cx += verts_xz[i][0];
+        cz += verts_xz[i][1];
+    }
+    cx /= (float)n;
+    cz /= (float)n;
+
+    float tri[3 * FLOATS_PER_VERTEX];
+    for (int i = 0; i < n; i++) {
+        int j = (i + 1) % n;
+        emit_raw_vert(tri + 0 * 13, cx, y, cz,
+                      0, 1, 0, r, g, b, a, 0, 0, am);
+        emit_raw_vert(tri + 1 * 13, verts_xz[i][0], y, verts_xz[i][1],
+                      0, 1, 0, r, g, b, a, 0, 0, am);
+        emit_raw_vert(tri + 2 * 13, verts_xz[j][0], y, verts_xz[j][1],
+                      0, 1, 0, r, g, b, a, 0, 0, am);
+        raw_verts_append(mesh, tri, 3);
+    }
 }
