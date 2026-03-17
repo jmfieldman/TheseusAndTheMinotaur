@@ -1083,8 +1083,8 @@ static void build_shadow_resources(PuzzleScene* ps, const ActorShadowConfig* cfg
         int tex_size = SHADOW_TEX_SIZE;
         float extent = 1.05f;  /* slight oversize to cover floor edges */
         float* shadow = (float*)calloc((size_t)tex_size * (size_t)tex_size, sizeof(float));
-        float inset = 0.25f;   /* shadow width in world units from edge inward */
-        float intensity = 0.55f;
+        float inset = 0.35f;   /* shadow width in world units from edge inward */
+        float intensity = 0.50f;
 
         for (int ty = 0; ty < tex_size; ty++) {
             for (int tx = 0; tx < tex_size; tx++) {
@@ -1109,7 +1109,6 @@ static void build_shadow_resources(PuzzleScene* ps, const ActorShadowConfig* cfg
                 /* d >= inset: shadow stays 0 (fully lit center) */
             }
         }
-
         /* Light Gaussian blur for smoother edges */
         shadow_gaussian_blur(shadow, tex_size, tex_size, 2.0f);
 
