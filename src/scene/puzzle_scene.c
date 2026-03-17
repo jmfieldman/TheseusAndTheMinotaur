@@ -1268,13 +1268,15 @@ static void draw_shadow_at_y(const PuzzleScene* ps, GLuint shader,
 static float actor_groove_y(const PuzzleScene* ps, float col, float row) {
     if (!ps->groove_tile_map || ps->trench_depth <= 0.0f) return 0.0f;
 
-    /* For integer positions, simple lookup */
-    int ic = (int)floorf(col);
-    int ir = (int)floorf(row);
+    /* Shift to visual center (same reason as actor_conveyor_y) */
+    float cx = col + 0.5f;
+    float cz = row + 0.5f;
+    int ic = (int)floorf(cx);
+    int ir = (int)floorf(cz);
 
     /* Fraction within tile */
-    float fc = col - (float)ic;
-    float fr = row - (float)ir;
+    float fc = cx - (float)ic;
+    float fr = cz - (float)ir;
 
     bool cur = is_groove_tile(ps, ic, ir);
 
@@ -1324,10 +1326,15 @@ static float actor_groove_y(const PuzzleScene* ps, float col, float row) {
 #define CONVEYOR_BELT_H   0.006f  /* must match diorama_gen.c CONVEYOR_BELT_H */
 #define CONVEYOR_BELT_TOP (CONVEYOR_ELEV + CONVEYOR_BELT_H)  /* shadow plane */
 static float actor_conveyor_y(const PuzzleScene* ps, float col, float row) {
-    int ic = (int)floorf(col);
-    int ir = (int)floorf(row);
-    float fc = col - (float)ic;
-    float fr = row - (float)ir;
+    /* Shift to visual center: grid position 5 → actor center at 5.5.
+     * Without this, a stationary actor at exact integer coords has fc=0,
+     * which triggers edge blending and drops elevation to zero. */
+    float cx = col + 0.5f;
+    float cz = row + 0.5f;
+    int ic = (int)floorf(cx);
+    int ir = (int)floorf(cz);
+    float fc = cx - (float)ic;
+    float fr = cz - (float)ir;
 
     bool cur = is_elevated_tile(ps, ic, ir);
 
@@ -1377,7 +1384,7 @@ static float actor_conveyor_y(const PuzzleScene* ps, float col, float row) {
         float s = t * t * (3.0f - 2.0f * t);
         float ry = CONVEYOR_ELEV * s;
         if (ry > y) y = ry;
-    } else if (fr < blend && is_conveyor_tile(ps, ic, ir - 1)) {
+    } else if (fr < blend && is_elevated_tile(ps, ic, ir - 1)) {
         float t = (blend - fr) / blend;
         float s = t * t * (3.0f - 2.0f * t);
         float ry = CONVEYOR_ELEV * s;
