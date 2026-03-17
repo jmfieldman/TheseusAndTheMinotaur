@@ -1934,10 +1934,34 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             float mino_gy = actor_groove_y(ps, mcol, mrow)
                           + actor_conveyor_y(ps, mcol, mrow);
 
+            /* Compute shadow scale: baseline shrink so the minotaur's shadow
+             * extends a similar distance from his body as Theseus's does,
+             * plus gentle additional shrink when airborne during the roll arc. */
+            float mino_shadow_scale = 0.85f;  /* baseline: tighten around body */
+            {
+                bool in_mino_roll = animating &&
+                    (anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP1 ||
+                     anim_queue_phase(&ps->anim) == ANIM_PHASE_MINOTAUR_STEP2) &&
+                    ps->anim.record.minotaur_steps > 0;
+                if (in_mino_roll) {
+                    int dc = 0, dr = 0;
+                    anim_queue_minotaur_dir(&ps->anim, &dc, &dr);
+                    if (dc != 0 || dr != 0) {
+                        float rt_raw = anim_queue_minotaur_progress(&ps->anim);
+                        if (rt_raw >= 0.08f) {
+                            float rt = (rt_raw - 0.08f) / (1.0f - 0.08f);
+                            float arc = 0.10f * 4.0f * rt * (1.0f - rt);
+                            /* Gentle shrink during tumble: ~15% at arc peak */
+                            mino_shadow_scale *= (1.0f - arc * 1.5f);
+                        }
+                    }
+                }
+            }
+
             /* Multi-plane shadow on floor + conveyor belt (stencil prevents
              * double-darkening; GL_LESS blocks shadows on walls). */
             draw_actor_shadow_multiplane(ps, shader,
-                mcol + 0.5f, mrow + 0.5f, 1.0f,
+                mcol + 0.5f, mrow + 0.5f, mino_shadow_scale,
                 ps->shadow_tex_minotaur, ps->shadow_extent_m);
 
             /* ── Roll animation state ── */
