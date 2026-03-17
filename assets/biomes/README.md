@@ -9,6 +9,7 @@ Biome configuration files for the procedural diorama generator. Each JSON file d
 | `stone_labyrinth.json` | Default biome. Warm sandstone palette with regular stacked-block walls, subtle floor pebbles and cracks. Cyan-tinted lanterns. |
 | `dark_forest.json`     | Forest biome. Dark green palette with rough, irregular walls. Mushroom and twig floor decorations, thick moss and vine wall decorations. Green lanterns. |
 | `crystal_caverns.json` | Icy cavern biome. Cool blue-grey palette with smooth walls and subtle frost decorations. Used by ice-tile test levels. Blue-tinted lanterns. |
+| `mechanical_halls.json` | Industrial biome. Cool grey steel palette with precise, regular walls. Rivet plates and grate floor decorations, wall brackets. Used by conveyor/turnstile test levels. Pale cyan lanterns. |
 
 ## JSON Format
 

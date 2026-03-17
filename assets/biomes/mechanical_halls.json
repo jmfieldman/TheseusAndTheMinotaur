@@ -1,0 +1,124 @@
+{
+    "id": "mechanical_halls",
+    "name": "Mechanical Halls",
+
+    "palette": {
+        "floor_a":        [0.30, 0.30, 0.33],
+        "floor_b":        [0.37, 0.37, 0.40],
+        "wall":           [0.48, 0.48, 0.52],
+        "wall_jitter":    0.01,
+        "accent":         [0.65, 0.50, 0.20],
+        "impassable":     [0.32, 0.32, 0.35],
+        "platform_side":  [0.22, 0.22, 0.25],
+        "back_wall":      [0.40, 0.40, 0.44]
+    },
+
+    "wall_style": {
+        "stone_height":       0.16,
+        "stone_width_min":    0.35,
+        "stone_width_max":    0.50,
+        "mortar_width":       0.02,
+        "mortar_darkness":    0.75,
+        "bevel_width":        0.06,
+        "bevel_darkness":     0.05,
+        "color_variation":    0.04,
+        "grain_intensity":    0.03,
+        "grain_scale":        18.0,
+        "wear":               0.0,
+        "gap_color":          [0.08, 0.08, 0.10]
+    },
+
+    "floor_style": {
+        "subdivisions":     2,
+        "regularity":       0.95,
+        "edge_inset":       0.0,
+        "inner_gap":        0.0,
+        "height_variation": 0.001,
+        "color_jitter":     0.008,
+        "size_jitter":      0.02
+    },
+
+    "floor_decorations": {
+        "density":       0.06,
+        "max_per_tile":  1,
+        "prefabs":       ["rivet_plate", "floor_grate"]
+    },
+
+    "wall_decorations": {
+        "density":       0.10,
+        "max_per_tile":  1,
+        "prefabs":       ["wall_bracket"]
+    },
+
+    "lantern_pillars": {
+        "glow_color":           [0.6, 0.85, 0.9],
+        "density":              0.5,
+        "place_at_corners":     true,
+        "place_at_wall_endpoints": true
+    },
+
+    "platform": {
+        "depth_blocks": 3
+    },
+
+    "back_wall": {
+        "height_multiplier":   4.0,
+        "decoration_density":  0.2
+    },
+
+    "edge_border": {
+        "depth": 1
+    },
+
+    "doors": {
+        "frame_height_blocks": 4
+    },
+
+    "floor_shadow": {
+        "shadow_softness":    0.1,
+        "shadow_scale":       1.25,
+        "shadow_offset_x":    0.02,
+        "shadow_offset_z":   -0.02,
+        "shadow_blur_radius": 3.5,
+        "shadow_intensity":   0.40,
+        "shadow_resolution":  32
+    },
+
+    "actor_shadow": {
+        "shadow_softness":    0.1,
+        "shadow_scale":       1.00,
+        "shadow_offset_x":    0.00,
+        "shadow_offset_z":    0.00,
+        "shadow_blur_radius": 3.5,
+        "shadow_intensity":   0.35,
+        "shadow_resolution":  32
+    },
+
+    "prefabs": [
+        {
+            "name": "rivet_plate",
+            "boxes": [
+                { "dx": 0.0, "dy": 0.001, "dz": 0.0, "sx": 0.10, "sy": 0.005, "sz": 0.10, "color": [0.35, 0.35, 0.37] },
+                { "dx": 0.01, "dy": 0.005, "dz": 0.01, "sx": 0.015, "sy": 0.005, "sz": 0.015, "color": [0.45, 0.45, 0.48] },
+                { "dx": 0.075, "dy": 0.005, "dz": 0.01, "sx": 0.015, "sy": 0.005, "sz": 0.015, "color": [0.45, 0.45, 0.48] },
+                { "dx": 0.01, "dy": 0.005, "dz": 0.075, "sx": 0.015, "sy": 0.005, "sz": 0.015, "color": [0.45, 0.45, 0.48] },
+                { "dx": 0.075, "dy": 0.005, "dz": 0.075, "sx": 0.015, "sy": 0.005, "sz": 0.015, "color": [0.45, 0.45, 0.48] }
+            ]
+        },
+        {
+            "name": "floor_grate",
+            "boxes": [
+                { "dx": 0.0, "dy": 0.001, "dz": 0.0, "sx": 0.12, "sy": 0.003, "sz": 0.02, "color": [0.22, 0.22, 0.24] },
+                { "dx": 0.0, "dy": 0.001, "dz": 0.04, "sx": 0.12, "sy": 0.003, "sz": 0.02, "color": [0.22, 0.22, 0.24] },
+                { "dx": 0.0, "dy": 0.001, "dz": 0.08, "sx": 0.12, "sy": 0.003, "sz": 0.02, "color": [0.22, 0.22, 0.24] }
+            ]
+        },
+        {
+            "name": "wall_bracket",
+            "boxes": [
+                { "dx": 0.0, "dy": 0.0, "dz": 0.0, "sx": 0.06, "sy": 0.08, "sz": 0.03, "color": [0.38, 0.36, 0.34], "no_cull": true },
+                { "dx": 0.01, "dy": 0.06, "dz": 0.0, "sx": 0.10, "sy": 0.02, "sz": 0.025, "color": [0.40, 0.38, 0.36], "no_cull": true }
+            ]
+        }
+    ]
+}
