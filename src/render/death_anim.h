@@ -9,12 +9,10 @@
  *
  * When Theseus dies, his body mesh is decomposed into individual rigid voxel
  * particles that scatter with physics (gravity, floor-height awareness, pit
- * fall-through).  Each particle is rendered as a colored box.
+ * fall-through, wall collision).  Each particle is rendered as a colored box.
  *
  * Step 6.9a: Core framework with gravity + floor heights + pit fall-through.
- *            Uses simple lerp reversal for undo (replaced with keyframe
- *            reversal in Step 6.9b).
- *            No wall collision yet (added in Step 6.9b).
+ * Step 6.9b: Wall collision + keyframe-based undo reversal.
  */
 
 /* Dependencies */
@@ -24,6 +22,9 @@
 
 /* Maximum death voxels per animation */
 #define DEATH_VOXEL_MAX     64
+
+/* Maximum keyframes per voxel (init + collisions + rest) */
+#define VOXEL_KEYFRAME_MAX  8
 
 /* Death type — determines scatter pattern (initialized in Steps 6.10–6.14) */
 typedef enum {
@@ -35,6 +36,17 @@ typedef enum {
     DEATH_GENERIC       /* Fallback scatter (used until specific types are implemented) */
 } DeathType;
 
+/* Keyframe snapshot of a voxel's state at a collision/event time */
+typedef struct {
+    float time;             /* Seconds since animation start */
+    float pos[3];           /* Position at this moment */
+    float vel[3];           /* Velocity at this moment */
+    float rot[3];           /* Rotation at this moment */
+    float angular_vel[3];   /* Angular velocity at this moment */
+    float scale[3];         /* Scale at this moment */
+    bool  fallen;           /* Whether the voxel had fallen at this point */
+} VoxelKeyframe;
+
 /* Single voxel particle in a death animation */
 typedef struct {
     float pos[3];           /* Current world position */
@@ -44,7 +56,7 @@ typedef struct {
     float scale[3];         /* Current scale (1.0 = original size) */
     float color[4];         /* Current RGBA color */
 
-    float orig_pos[3];      /* Position at decomposition time (for lerp reversal) */
+    float orig_pos[3];      /* Position at decomposition time */
     float orig_color[4];    /* Color at decomposition time */
     float orig_scale[3];    /* Scale at decomposition time */
     float size[3];          /* Box dimensions (half-extents) */
@@ -52,6 +64,10 @@ typedef struct {
     bool  fallen;           /* True if voxel fell into a pit and is invisible */
     bool  at_rest;          /* True if voxel has come to rest */
     float rest_timer;       /* Accumulates time below speed threshold */
+
+    /* Keyframe trajectory recording for accurate undo reversal */
+    VoxelKeyframe keyframes[VOXEL_KEYFRAME_MAX];
+    int           keyframe_count;
 } DeathVoxel;
 
 /* Death animation state */
@@ -66,13 +82,6 @@ typedef struct {
     bool        finished;       /* True when playback (forward or reverse) is done */
     bool        reversing;      /* True during reverse (undo) playback */
     float       reverse_duration; /* Duration of reverse playback */
-
-    /* Snapshot of final state for lerp reversal */
-    float       final_pos[DEATH_VOXEL_MAX][3];
-    float       final_rot[DEATH_VOXEL_MAX][3];
-    float       final_scale[DEATH_VOXEL_MAX][3];
-    float       final_color[DEATH_VOXEL_MAX][4];
-    bool        final_fallen[DEATH_VOXEL_MAX];
 
     /* Environment references for tile queries during simulation */
     const Grid*       grid;
@@ -98,7 +107,7 @@ void death_anim_init(DeathAnim* da, DeathType type,
 
 /*
  * Advance the death animation by dt seconds.
- * Applies gravity, floor clamping, pit fall-through.
+ * Applies gravity, floor clamping, pit fall-through, wall collision.
  */
 void death_anim_update(DeathAnim* da, float dt);
 
@@ -110,7 +119,7 @@ void death_anim_render(const DeathAnim* da, GLuint shader);
 
 /*
  * Begin reverse playback (undo).
- * Snapshots current state and lerps all voxels back to original positions.
+ * Walks each voxel's keyframe array in reverse for frame-accurate reversal.
  */
 void death_anim_start_reverse(DeathAnim* da);
 

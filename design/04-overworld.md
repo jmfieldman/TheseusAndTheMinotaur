@@ -76,6 +76,56 @@ makes the overworld a living map of the player's progress.
 - No camera movement needed -- the full overworld diorama with all
   mini-dioramas is visible at the default camera framing.
 
+### 2.5 Pre-Rendered Overworld Image
+
+The overworld diorama (biome terrain, paths, decorative scenery, and all
+mini-diorama LOD meshes) is **pre-rendered to a static texture** when the biome
+loads. With orthographic projection this produces a pixel-identical result to
+live rendering — see [02 -- Visual Style](02-visual-style.md) §9.
+
+During normal overworld navigation, the engine draws:
+
+1. **Backdrop texture** — The pre-rendered static image of the entire biome
+   diorama. One textured quad, trivial draw cost.
+2. **Live overlay elements** — Rendered as meshes or sprites on top of the
+   backdrop:
+   - **Theseus player token** — Animated along paths between nodes.
+   - **Node state indicators** — Flags, torches, glow effects that reflect
+     completion status (see §2.3). These may change as the player progresses.
+   - **Idle decorative animations** — Birds, turning gears, flowing water,
+     flickering lanterns. These are optional cosmetic live elements rendered
+     over the static backdrop for visual richness. The backdrop provides the
+     static geometry; the live layer adds motion.
+   - **Secret node reveal animations** — When a secret node appears (§8.2),
+     the reveal effect renders live on top of the backdrop. Once the reveal
+     completes, the backdrop is **re-rendered** to include the newly visible
+     secret node and path.
+   - **Star gate visual effects** — Glow, shimmer, or unlock animations on
+     star gate nodes.
+3. **FX overlay** — Vignette, bloom on emissive elements (lantern glow,
+   god-light on available level nodes).
+
+**When to re-render the backdrop:**
+
+- On first biome load (always).
+- When a secret node is revealed (backdrop now includes the new node/path).
+- On viewport resize (must match pixel dimensions exactly).
+- On return from a puzzle if the completed level changes the mini-diorama's
+  visual state in a way baked into the backdrop (e.g. desaturated → normal
+  colors). Alternatively, node state changes can be handled entirely in the
+  live overlay layer using tint/color-shift sprites over the mini-diorama
+  region, avoiding a full re-render.
+
+**Transition handling:**
+
+During zoom transitions (overworld → puzzle or puzzle → overworld), the
+pre-rendered backdrop is **not used**. Both layers render as live geometry
+during the animated camera move so that the zoom, pan, and LOD crossfade
+are seamless. Once the camera settles at its final position (full overworld
+view or puzzle view), the backdrop texture is rendered at the new framing and
+used for subsequent static frames. See
+[08 -- Engine Architecture](08-engine-architecture.md) §3.3.6.
+
 ## 3. Graph Structure
 
 The overworld is internally a **graph**:

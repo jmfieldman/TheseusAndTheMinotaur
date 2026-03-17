@@ -349,28 +349,29 @@ not require touching any other constants -- everything adapts automatically.
 - Large grids (16x16): May need to zoom out. Must ensure tiles remain large
   enough to read on all target screen sizes (especially mobile).
 
-### 6.3 Projection Mode — Open Question
+### 6.3 Projection Mode — Orthographic (Decided)
 
-> **Status:** Under evaluation. Toggle at runtime with 'C' key; FOV adjustable in Settings.
+> **Status:** Decided — orthographic projection for all views.
 
-The default projection is **orthographic**, which preserves grid readability and
-ensures tiles appear the same size everywhere on screen. However, the zoom
-transition between the overworld map and the puzzle diorama may look unnatural
-with orthographic projection — objects scale uniformly with no depth cues.
+The game uses **orthographic projection exclusively**. This was chosen because:
 
-A **perspective projection** with a very narrow FOV (e.g. 20°) looks nearly
-identical to orthographic during normal gameplay, but produces a more natural
-zoom-in/zoom-out feel when the camera distance changes. The trade-off is subtle
-perspective distortion at screen edges that increases with wider FOV.
+- Orthographic preserves grid readability and ensures tiles appear the same size
+  everywhere on screen.
+- The pre-rendered backdrop system (§9) relies on the ortho property that a
+  static image is pixel-identical to live rendering. Perspective projection would
+  invalidate this — objects change relative size as the camera moves, so a
+  pre-rendered image would not match live geometry during transitions.
+- Zoom transitions (overworld ↔ puzzle) are handled by interpolating the
+  orthographic bounds. During transitions, all geometry renders live (backdrops
+  are bypassed), so the uniform scaling of ortho zoom is not a problem — the
+  live 3D geometry provides sufficient depth cues through parallax between
+  foreground and background elements.
 
-**Runtime toggle:** Press 'C' to switch between orthographic and perspective
-projection. The vertical FOV is configurable in Settings (5°–90°, default 20°).
-Both settings persist to `settings.yml` (`camera_perspective`, `camera_fov`).
-
-**Decision criteria:**
-- If zoom transitions look acceptable with ortho, keep ortho for simplicity
-- If perspective zoom is clearly better, switch default to perspective with a
-  narrow FOV (~15–25°) that minimizes edge distortion
+**Runtime toggle (debug only):** Press 'C' to switch between orthographic and
+perspective projection for visual comparison. The vertical FOV is configurable
+in Settings (5°–90°, default 20°). Both settings persist to `settings.yml`
+(`camera_perspective`, `camera_fov`). The game ships with ortho as the only
+supported mode; the perspective toggle exists for development evaluation only.
 
 ### 6.4 iOS Layout Constraint
 
@@ -474,16 +475,24 @@ If no environment events exist, a minimal 0.10s pause maintains turn rhythm.
 
 ### 7.4 Transitions
 
+During all zoom transitions, the pre-rendered backdrop system (§9) is
+**bypassed** and all geometry renders live. This ensures smooth camera
+interpolation, LOD crossfade, and parallax between layers. Once the camera
+settles, the backdrop is re-rendered at the final framing.
+
 - **Level enter (from overworld):** Camera **zooms in** from the overworld
   view to the selected puzzle node. The low-detail overworld mesh fades to
-  the high-detail puzzle mesh during the zoom. On arrival, the level start
-  sequence plays (see [01 -- Core Mechanics](01-core-mechanics.md) §7.5).
+  the high-detail puzzle mesh during the zoom. On arrival, the puzzle backdrop
+  is rendered and the level start sequence plays (see
+  [01 -- Core Mechanics](01-core-mechanics.md) §7.5).
 - **Auto-progression (puzzle → puzzle):** Camera **zooms out** from the
   current puzzle to a mid-level view showing both dioramas on the overworld,
   then **pans** across the overworld to the next puzzle node, then **zooms
-  in** to the next puzzle. The LOD meshes swap during zoom transitions.
+  in** to the next puzzle. All rendering is live throughout the move. The LOD
+  meshes swap during zoom transitions.
 - **Level exit (return to overworld):** Camera **zooms out** from the puzzle
-  back to the full overworld view.
+  back to the full overworld view. Once settled, the overworld backdrop
+  is re-rendered.
 
 ### 7.6 Level Start and Reset Animation
 
@@ -640,3 +649,90 @@ Kept minimal to maintain the clean matte look:
   lava glow). Bloom should be soft and contained -- it should make glowing
   elements feel luminous without washing out the scene.
 - No film grain, chromatic aberration, or heavy color grading.
+
+## 9. Pre-Rendered Backdrop System
+
+### 9.1 Principle
+
+With orthographic projection, a pre-rendered image of static 3D geometry is
+**pixel-identical** to rendering that geometry live every frame. Ortho has no
+depth-dependent distortion — every pixel maps 1:1 regardless of Z distance.
+The game exploits this property to pre-render all **static, non-interactive
+geometry** to textures at load time, dramatically reducing per-frame draw calls
+while producing visually identical results.
+
+### 9.2 Rendering Layers
+
+Both puzzle scenes and overworld scenes use a **three-layer compositing model**.
+Each layer renders into the same orthographic coordinate space so they align
+pixel-perfectly when composited:
+
+| Layer | Rendering | Contents |
+|-------|-----------|----------|
+| **Backdrop** | Pre-rendered texture (rendered once at load time) | Diorama platform, border terrain, non-interactive decorations, lantern pillar geometry, static scenery |
+| **Gameplay** | Live mesh (rendered every frame) | Floor tiles, walls, actors, interactive features, dynamic shadows |
+| **FX overlay** | Live (rendered every frame) | Bloom, vignette, god-light halos, dynamic light glow effects |
+
+The backdrop texture is rendered to an offscreen framebuffer using the same
+camera, projection, and viewport as the live scene — ensuring exact pixel
+alignment. It is then drawn as a single textured quad behind the live gameplay
+layer each frame.
+
+### 9.3 Puzzle Scene Backdrop
+
+For puzzle levels, the backdrop includes:
+
+- **Included in backdrop:** Diorama platform and edge geometry, border
+  decorations (cliff faces, foliage, water, stone frames), lantern pillar
+  geometry (not their dynamic glow), floor scatter decorations (pebbles, moss,
+  clover), wall surface detail (moss, cracks, mortar texture), wall-top crumble,
+  all non-interactive biome-themed scenery.
+- **Excluded from backdrop (rendered live):** Floor tiles (checkerboard
+  coloring), walls (gameplay-relevant, may change via pressure plates / locking
+  gates), actors (Theseus, Minotaur), all interactive environmental features
+  (spike traps, pressure plates, turnstiles, etc.), actor shadows, entrance/exit
+  door mechanisms, exit god-light cone.
+
+Baked ambient occlusion and vertex-color lighting on backdrop geometry looks
+correct in the pre-rendered image because these are already computed during mesh
+generation and don't change at runtime. Dynamic light *bleed* onto border
+decorations is intentionally omitted — the matte aesthetic makes this
+unnoticeable, and the live FX overlay layer provides glow/bloom on light sources.
+
+### 9.4 Overworld Backdrop
+
+For overworld scenes, the **entire biome diorama** (including all mini-diorama
+LOD meshes) is pre-rendered to a single backdrop texture. See
+[04 -- Overworld](04-overworld.md) §2.5 for details on the overworld pre-render
+system and its live overlay elements.
+
+### 9.5 Pixel Alignment Requirements
+
+Because the backdrop texture and live geometry share the same screen space, exact
+pixel alignment is critical to avoid visible seams or misregistration:
+
+- The backdrop framebuffer must match the **exact pixel dimensions** of the
+  viewport it will be displayed in. No scaling or filtering between render and
+  display.
+- The orthographic projection matrix used to render the backdrop must be
+  **identical** to the one used for the live gameplay layer (same bounds, same
+  center, same pixel mapping).
+- The backdrop quad must be drawn with **nearest-neighbor sampling** (or
+  rendered at exact 1:1 texel-to-pixel ratio) so that no interpolation
+  introduces sub-pixel blur at layer boundaries.
+- When the viewport size changes (window resize, orientation change), the
+  backdrop must be **re-rendered** at the new dimensions.
+- During zoom transitions (overworld ↔ puzzle), the backdrop is **not used** —
+  both layers render live during the animated camera move. The backdrop is
+  re-rendered at the final camera position once the transition settles. See
+  [08 -- Engine Architecture](08-engine-architecture.md) §3.3.6 for details.
+
+### 9.6 Generation Timing
+
+Backdrop textures are generated as part of the normal level/biome load sequence.
+Rendering a diorama's static geometry to an offscreen framebuffer takes <10ms on
+target hardware — negligible behind a loading screen. Textures are regenerated
+on each load (not cached to disk), since the render cost is trivial and this
+avoids cache management complexity. See
+[08 -- Engine Architecture](08-engine-architecture.md) §3.3.6 for the
+render-to-texture pipeline.

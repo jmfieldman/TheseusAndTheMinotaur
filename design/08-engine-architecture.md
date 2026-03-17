@@ -101,9 +101,11 @@ States can push/pop (e.g. Puzzle pushes PauseOverlay), and the state at the
 top of the stack receives input and renders on top.
 
 The **Overworld** and **Puzzle** states share the same scene geometry --
-the overworld contains all puzzle dioramas as LOD meshes. The
-**ZoomTransition** state manages the camera interpolation and LOD↔full-detail
-mesh crossfade between them. See §3.3.5 for the zoom camera system.
+the overworld contains all puzzle dioramas as LOD meshes. Both states use
+**pre-rendered backdrop textures** for their static geometry (see §3.3.6).
+The **ZoomTransition** state manages the camera interpolation, LOD↔full-detail
+mesh crossfade, and backdrop bypass/re-render between them. See §3.3.5 for
+the zoom camera system.
 
 ### 3.3 Renderer
 
@@ -118,14 +120,20 @@ mesh crossfade between them. See §3.3.5 for the zoom camera system.
 
 #### 3.3.2 Rendering Pipeline
 
+The pipeline uses a **three-layer compositing model** with pre-rendered
+backdrops for static geometry. See [02 -- Visual Style](02-visual-style.md) §9
+for the visual design rationale.
+
+**Puzzle scene (steady-state, no transition active):**
+
 ```
- 1. Shadow pass: render scene from each dynamic light's perspective into
-    shadow map(s) (actors, walls, dynamic features)
+ 1. Shadow pass: render dynamic shadows (actors, dynamic features)
  2. Set viewport (full screen on desktop, square sub-region on iOS)
  3. Clear framebuffer
  4. Set camera / projection uniforms
- 5. Render diorama (static voxel geometry with baked AO + shadows)
- 6. Render environmental features (animated/stateful geometry)
+ 5. Draw backdrop texture (single textured quad — pre-rendered static
+    diorama geometry: platform, borders, decorations, lantern pillars)
+ 6. Render gameplay layer (floor tiles, walls, environmental features)
  7. Render actors (Theseus, Minotaur) with real-time shadow sampling
  8. Render exit tile god-light volumetric effect
  9. Apply dynamic lighting from environmental light sources
@@ -134,6 +142,25 @@ mesh crossfade between them. See §3.3.5 for the zoom camera system.
 12. Render overlays (HUD, touch controls, UI)
 ```
 
+**Overworld scene (steady-state):**
+
+```
+ 1. Set viewport
+ 2. Clear framebuffer
+ 3. Set camera / projection uniforms
+ 4. Draw overworld backdrop texture (single textured quad — entire biome
+    diorama with all mini-diorama LOD meshes)
+ 5. Render live overlay elements (Theseus token, node state indicators,
+    idle decorative animations, star gate effects)
+ 6. Post-processing pass (vignette, bloom)
+ 7. Reset viewport to full screen
+ 8. Render overlays (HUD, touch controls, UI)
+```
+
+**During zoom transitions** (overworld ↔ puzzle), the backdrop is bypassed
+and all geometry renders live so that camera interpolation and LOD crossfade
+are seamless. See §3.3.6.
+
 #### 3.3.3 Voxel Rendering (Procedural)
 
 All level dioramas are **procedurally generated at runtime** from logical level
@@ -141,15 +168,21 @@ data + biome configuration (see [09 -- Content Pipeline](09-content-pipeline.md)
 §3). The engine builds GPU-ready geometry at two detail levels:
 
 **Full-detail mesh** (generated when entering a puzzle):
-- **Static diorama mesh:** Includes floor tiles (checkerboard with paving-
-  stone blocks), walls (biome-styled voxel compositions with mortar gaps),
-  entrance/exit doors, impassable tile
-  fill, all decoration layers (floor scatter, wall moss/cracks, wall-top
-  crumble), edge borders, lantern pillars, and exit door god-light geometry.
-  Packed into a single VBO with vertex colors.
-- **Dynamic elements:** Actors (Theseus, Minotaur), entrance door lock
-  mechanism, and stateful environmental features (spike traps, pressure
-  plates, etc.) are rendered as separate meshes that update per frame.
+- **Backdrop mesh** (pre-rendered to texture, drawn as single quad — see
+  §3.3.6): Diorama platform, edge borders and border terrain, all decoration
+  layers (floor scatter, wall moss/cracks, wall-top crumble, pebbles, moss,
+  clover), lantern pillar geometry, and any non-interactive biome-themed
+  scenery. Packed into a single VBO with vertex colors and baked AO. This
+  mesh is only rendered once (into the backdrop FBO at load time), not
+  per-frame.
+- **Gameplay mesh** (rendered live every frame): Floor tiles (checkerboard
+  with paving-stone blocks), walls (biome-styled voxel compositions with
+  mortar gaps), entrance/exit doors, impassable tile fill, exit door
+  god-light geometry. Packed into a single VBO with vertex colors.
+- **Dynamic elements** (rendered live every frame): Actors (Theseus,
+  Minotaur), entrance door lock mechanism, and stateful environmental
+  features (spike traps, pressure plates, etc.) are rendered as separate
+  meshes that update per frame.
 
 **LOD mesh** (generated for all puzzles when a biome loads):
 - Simplified version of the diorama for overworld display. Includes floor
@@ -157,7 +190,9 @@ data + biome configuration (see [09 -- Content Pipeline](09-content-pipeline.md)
   (simplified block shapes), entrance/exit door
   openings, diorama platform, and lantern pillars. Decoration layers are
   omitted. See [09 -- Content Pipeline](09-content-pipeline.md) §3.9.
-- All ~10 LOD meshes for a biome are held in VRAM simultaneously.
+- All ~10 LOD meshes for a biome are baked into the **overworld backdrop
+  texture** (see §3.3.6). The meshes are also held in VRAM for use during
+  zoom transitions when the backdrop is bypassed and geometry renders live.
 - Each LOD mesh is small enough (low voxel count, no decorations) that
   the combined memory footprint is manageable.
 
@@ -179,12 +214,70 @@ smooth interpolation of the **orthographic projection bounds**:
   with appropriate padding.
 - **Zoom animation:** Smoothly interpolate ortho bounds (position + scale)
   using an easing curve (e.g. ease-in-out cubic). Duration ~0.8--1.2s.
+- **Backdrop bypass:** During zoom transitions, the backdrop render-to-texture
+  system (§3.3.6) is **bypassed entirely**. All geometry (overworld terrain,
+  LOD meshes, puzzle meshes) renders live so that the interpolating camera,
+  LOD crossfade, and parallax between layers work correctly. Once the camera
+  settles at its final position, the appropriate backdrop (overworld or puzzle)
+  is re-rendered at the new framing and used for steady-state rendering.
 - **LOD crossfade:** During zoom-in, once the target diorama exceeds a
   screen-space size threshold, the LOD mesh fades out and the full-detail
   mesh fades in (alpha crossfade over ~0.2--0.3s). Reverse on zoom-out.
 - **Auto-progression (puzzle → puzzle):** Zoom out to a mid-level view
   (partial overworld), pan to the next puzzle node, zoom in. The zoom-out
-  and pan can overlap for a fluid camera move.
+  and pan can overlap for a fluid camera move. All live rendering throughout.
+
+#### 3.3.6 Backdrop Render-to-Texture System
+
+The engine pre-renders static, non-interactive geometry to offscreen textures
+at load time. With orthographic projection, the result is pixel-identical to
+live rendering — see [02 -- Visual Style](02-visual-style.md) §9.
+
+**Pipeline:**
+
+1. **Allocate FBO** at the exact pixel dimensions of the target viewport.
+2. **Bind FBO**, set the same orthographic projection matrix and camera
+   uniforms that will be used for the live gameplay layer.
+3. **Render static geometry** into the FBO:
+   - *Puzzle backdrop:* diorama platform, border terrain, decorative geometry,
+     lantern pillar meshes, floor scatter, wall surface detail. All baked AO
+     and vertex-color lighting is included.
+   - *Overworld backdrop:* entire biome diorama terrain, paths, decorative
+     scenery, and all mini-diorama LOD meshes.
+4. **Unbind FBO**, store the resulting color texture.
+5. At draw time, the backdrop is rendered as a **single textured quad** at
+   Z-behind all live geometry, using the same ortho projection.
+
+**Pixel alignment contract:**
+
+- The FBO dimensions must **exactly match** the viewport pixel dimensions.
+  No scaling, no filtering between render and display.
+- The ortho projection matrix for the FBO render must be **bit-identical** to
+  the one used for live geometry. Any discrepancy causes visible seams between
+  the backdrop and live layers.
+- The backdrop quad samples with `GL_NEAREST` (or is drawn at exact 1:1
+  texel-to-pixel mapping) to prevent sub-pixel blur at layer boundaries.
+
+**Invalidation and re-render triggers:**
+
+- Viewport resize (window resize, orientation change, display scale change).
+- Overworld secret node reveal (backdrop re-rendered to include new geometry).
+- Level/biome load (always rendered fresh as part of load sequence).
+- Node state changes that affect baked appearance (if not handled by live
+  overlay tinting — see [04 -- Overworld](04-overworld.md) §2.5).
+
+**Performance:** Rendering a diorama's static geometry to an offscreen FBO
+takes <10ms on target hardware. This is done once per level/biome load, making
+it negligible behind a loading screen. Textures are regenerated on each load
+(not cached to disk), since the render cost is trivial and this avoids cache
+directory management, storage budget, and invalidation complexity.
+
+**Transition bypass:** During zoom transitions (overworld ↔ puzzle or
+puzzle ↔ puzzle auto-progression), the backdrop system is **bypassed entirely**.
+All geometry renders live with the interpolating camera so that zoom, pan, and
+LOD crossfade work seamlessly. Once the camera settles at its final resting
+position, the backdrop FBO is rendered at the new framing and used for all
+subsequent steady-state frames until the next transition.
 
 #### 3.3.4 Shader Requirements
 
@@ -383,12 +476,17 @@ mapping). The engine loads strings from a data file at startup, keyed by locale.
   load. Biome "assets" are the parsed JSON configs + audio files.
 - **Biome load:** All LOD meshes for the biome's ~10 puzzles are procedurally
   generated and uploaded to VRAM. Overworld diorama mesh is procedurally
-  generated. Audio (music, ambient, SFX) is loaded from disk. This all
-  happens during the biome transition loading screen.
+  generated. The **overworld backdrop texture** is rendered to an offscreen FBO
+  (capturing the entire biome diorama with all LOD meshes — see §3.3.6). Audio
+  (music, ambient, SFX) is loaded from disk. This all happens during the biome
+  transition loading screen.
 - **Puzzle enter:** Full-detail mesh for the target puzzle is procedurally
-  generated and uploaded. The previous puzzle's full-detail mesh (if any) is
-  released. Only one full-detail puzzle mesh is in memory at a time.
-- **Biome exit:** All LOD meshes + overworld mesh released. Audio unloaded.
+  generated and uploaded. The **puzzle backdrop texture** is rendered to an
+  offscreen FBO (capturing all static decorative geometry — see §3.3.6). The
+  previous puzzle's full-detail mesh and backdrop texture (if any) are released.
+  Only one full-detail puzzle mesh + backdrop is in memory at a time.
+- **Biome exit:** All LOD meshes + overworld mesh + backdrop textures released.
+  Audio unloaded.
 - Simple scope-based lifetime (load on biome enter, release on biome exit).
 - C structs with explicit init/destroy functions (no RAII).
 

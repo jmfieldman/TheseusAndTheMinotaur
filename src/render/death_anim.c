@@ -10,15 +10,16 @@
 
 #define GRAVITY          -9.8f   /* world-units/s² (downward) */
 #define FLOOR_ELASTICITY  0.35f  /* vertical bounce coefficient */
+#define WALL_ELASTICITY   0.5f   /* horizontal bounce coefficient for wall hits */
 #define ANGULAR_DAMPING   0.7f   /* angular velocity multiplier on bounce */
-#define REST_SPEED_THRESHOLD 0.15f /* speed below which rest timer starts */
-#define REST_TIME_REQUIRED   0.1f  /* seconds at low speed before freezing */
+#define REST_SPEED_THRESHOLD 0.08f /* speed below which rest timer starts */
+#define REST_TIME_REQUIRED   0.3f  /* seconds at low speed before freezing */
 #define PIT_VANISH_Y     -0.5f   /* Y below which pit voxels start shrinking */
 #define PIT_SHRINK_RATE   3.0f   /* scale shrink per second when below vanish Y */
 #define PIT_MIN_SCALE     0.01f  /* scale at which a voxel is marked fallen */
 
 /* Forward duration — specific death types will override in Steps 6.10+ */
-#define DEFAULT_DURATION  1.2f
+#define DEFAULT_DURATION  3.0f
 #define REVERSE_DURATION_FACTOR 0.5f
 
 /* Subdivision: decompose actor body into N×N×N sub-cubes */
@@ -145,6 +146,39 @@ static void ensure_cube_vbo(DeathAnim* da) {
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     da->cube_vertex_count = vert_count;
+}
+
+/* ── Keyframe helpers ──────────────────────────────────── */
+
+static void record_keyframe(DeathVoxel* v, float time) {
+    if (v->keyframe_count >= VOXEL_KEYFRAME_MAX) {
+        /* Out of keyframe slots — force the voxel to rest */
+        v->vel[0] = v->vel[1] = v->vel[2] = 0.0f;
+        v->angular_vel[0] = v->angular_vel[1] = v->angular_vel[2] = 0.0f;
+        v->at_rest = true;
+
+        /* Overwrite last keyframe with final rest state */
+        VoxelKeyframe* kf = &v->keyframes[VOXEL_KEYFRAME_MAX - 1];
+        kf->time = time;
+        kf->pos[0] = v->pos[0]; kf->pos[1] = v->pos[1]; kf->pos[2] = v->pos[2];
+        kf->vel[0] = 0.0f; kf->vel[1] = 0.0f; kf->vel[2] = 0.0f;
+        kf->rot[0] = v->rot[0]; kf->rot[1] = v->rot[1]; kf->rot[2] = v->rot[2];
+        kf->angular_vel[0] = 0.0f; kf->angular_vel[1] = 0.0f; kf->angular_vel[2] = 0.0f;
+        kf->scale[0] = v->scale[0]; kf->scale[1] = v->scale[1]; kf->scale[2] = v->scale[2];
+        kf->fallen = v->fallen;
+        return;
+    }
+
+    VoxelKeyframe* kf = &v->keyframes[v->keyframe_count++];
+    kf->time = time;
+    kf->pos[0] = v->pos[0]; kf->pos[1] = v->pos[1]; kf->pos[2] = v->pos[2];
+    kf->vel[0] = v->vel[0]; kf->vel[1] = v->vel[1]; kf->vel[2] = v->vel[2];
+    kf->rot[0] = v->rot[0]; kf->rot[1] = v->rot[1]; kf->rot[2] = v->rot[2];
+    kf->angular_vel[0] = v->angular_vel[0];
+    kf->angular_vel[1] = v->angular_vel[1];
+    kf->angular_vel[2] = v->angular_vel[2];
+    kf->scale[0] = v->scale[0]; kf->scale[1] = v->scale[1]; kf->scale[2] = v->scale[2];
+    kf->fallen = v->fallen;
 }
 
 /* ── Decomposition ─────────────────────────────────────── */
@@ -283,9 +317,9 @@ static void apply_squish_scatter(DeathAnim* da) {
         float rand2 = ((float)(seed & 0xFFFF) / 65535.0f) * 2.0f - 1.0f;
         seed = seed * 1664525u + 1013904223u;
 
-        /* Gentle horizontal scatter — outward from center + small random */
-        v->vel[0] = dx * 2.0f + rand1 * 0.6f;
-        v->vel[2] = dz * 2.0f + rand2 * 0.6f;
+        /* Moderate horizontal scatter — outward from center + small random */
+        v->vel[0] = dx * 6.0f + rand1 * 1.5f;
+        v->vel[2] = dz * 6.0f + rand2 * 1.5f;
 
         /* No upward launch — squashed flat */
         v->vel[1] = 0.0f;
@@ -298,6 +332,73 @@ static void apply_squish_scatter(DeathAnim* da) {
         seed = seed * 1664525u + 1013904223u;
         v->angular_vel[2] = ((float)(seed & 0xFFFF) / 65535.0f - 0.5f) * 3.0f;
     }
+}
+
+/* ── Wall collision ────────────────────────────────────── */
+
+/*
+ * Check and resolve wall collisions for a voxel on the XZ plane.
+ * Tests all four sides of the voxel's current tile.
+ * Returns true if any wall collision occurred (so a keyframe is recorded).
+ */
+static bool resolve_wall_collisions(DeathVoxel* v,
+                                     const Grid* grid) {
+    int col = (int)floorf(v->pos[0]);
+    int row = (int)floorf(v->pos[2]);
+    float half_x = v->size[0];
+    float half_z = v->size[2];
+    bool hit = false;
+
+    /* East wall: voxel right edge vs wall plane */
+    if (tile_physics_has_wall(grid, col, row, DIR_EAST)) {
+        float wall_x = tile_physics_wall_coord(grid, col, row, DIR_EAST);
+        if (v->pos[0] + half_x > wall_x) {
+            v->pos[0] = wall_x - half_x;
+            v->vel[0] = -v->vel[0] * WALL_ELASTICITY;
+            /* Angular impulse from wall hit */
+            v->angular_vel[1] += v->vel[2] * 2.0f;
+            v->angular_vel[2] -= v->vel[0] * 1.0f;
+            hit = true;
+        }
+    }
+
+    /* West wall: voxel left edge vs wall plane */
+    if (tile_physics_has_wall(grid, col, row, DIR_WEST)) {
+        float wall_x = tile_physics_wall_coord(grid, col, row, DIR_WEST);
+        if (v->pos[0] - half_x < wall_x) {
+            v->pos[0] = wall_x + half_x;
+            v->vel[0] = -v->vel[0] * WALL_ELASTICITY;
+            v->angular_vel[1] -= v->vel[2] * 2.0f;
+            v->angular_vel[2] += v->vel[0] * 1.0f;
+            hit = true;
+        }
+    }
+
+    /* North wall: voxel front edge vs wall plane */
+    if (tile_physics_has_wall(grid, col, row, DIR_NORTH)) {
+        float wall_z = tile_physics_wall_coord(grid, col, row, DIR_NORTH);
+        if (v->pos[2] + half_z > wall_z) {
+            v->pos[2] = wall_z - half_z;
+            v->vel[2] = -v->vel[2] * WALL_ELASTICITY;
+            v->angular_vel[1] -= v->vel[0] * 2.0f;
+            v->angular_vel[0] += v->vel[2] * 1.0f;
+            hit = true;
+        }
+    }
+
+    /* South wall: voxel back edge vs wall plane */
+    if (tile_physics_has_wall(grid, col, row, DIR_SOUTH)) {
+        float wall_z = tile_physics_wall_coord(grid, col, row, DIR_SOUTH);
+        if (v->pos[2] - half_z < wall_z) {
+            v->pos[2] = wall_z + half_z;
+            v->vel[2] = -v->vel[2] * WALL_ELASTICITY;
+            v->angular_vel[1] += v->vel[0] * 2.0f;
+            v->angular_vel[0] -= v->vel[2] * 1.0f;
+            hit = true;
+        }
+    }
+
+    return hit;
 }
 
 /* ── Public API ────────────────────────────────────────── */
@@ -340,6 +441,11 @@ void death_anim_init(DeathAnim* da, DeathType type,
             break;
     }
 
+    /* Record initial keyframe (time=0) for every voxel */
+    for (int i = 0; i < da->count; i++) {
+        record_keyframe(&da->voxels[i], 0.0f);
+    }
+
     da->active = true;
     da->finished = false;
     da->reversing = false;
@@ -350,7 +456,7 @@ void death_anim_update(DeathAnim* da, float dt) {
     if (!da->active || da->finished) return;
 
     if (da->reversing) {
-        /* ── Reverse playback: lerp all voxels back to original positions ── */
+        /* ── Reverse playback: walk keyframes backward ── */
         da->timer += dt;
         float t = da->timer / da->reverse_duration;
         if (t >= 1.0f) t = 1.0f;
@@ -360,32 +466,85 @@ void death_anim_update(DeathAnim* da, float dt) {
 
         for (int i = 0; i < da->count; i++) {
             DeathVoxel* v = &da->voxels[i];
+            int kc = v->keyframe_count;
+            if (kc < 1) continue;
 
-            /* Lerp from final snapshot back to original */
+            /* Map u (0→1) to keyframe time, going backward:
+             * u=0 → last keyframe time, u=1 → time 0 (initial state) */
+            float last_time = v->keyframes[kc - 1].time;
+            float target_time = last_time * (1.0f - u);
+
+            /* Find the two keyframes that bracket target_time */
+            int ki = 0;
+            for (int k = 0; k < kc - 1; k++) {
+                if (v->keyframes[k + 1].time > target_time) {
+                    ki = k;
+                    break;
+                }
+                ki = k;
+            }
+
+            const VoxelKeyframe* kf_a = &v->keyframes[ki];
+            const VoxelKeyframe* kf_b = (ki + 1 < kc) ? &v->keyframes[ki + 1] : kf_a;
+
+            /* Interpolation factor between the two keyframes */
+            float seg_len = kf_b->time - kf_a->time;
+            float seg_t = (seg_len > 0.0001f)
+                        ? (target_time - kf_a->time) / seg_len
+                        : 0.0f;
+            if (seg_t < 0.0f) seg_t = 0.0f;
+            if (seg_t > 1.0f) seg_t = 1.0f;
+
+            /* Between keyframes, simulate physics forward from kf_a
+             * for (seg_t * seg_len) seconds.  This gives exact trajectory
+             * retracing since physics between keyframes is deterministic
+             * (constant gravity + initial velocity). */
+            float elapsed = seg_t * seg_len;
+
+            v->pos[0] = kf_a->pos[0] + kf_a->vel[0] * elapsed;
+            v->pos[1] = kf_a->pos[1] + kf_a->vel[1] * elapsed + 0.5f * GRAVITY * elapsed * elapsed;
+            v->pos[2] = kf_a->pos[2] + kf_a->vel[2] * elapsed;
+
+            v->rot[0] = kf_a->rot[0] + kf_a->angular_vel[0] * elapsed;
+            v->rot[1] = kf_a->rot[1] + kf_a->angular_vel[1] * elapsed;
+            v->rot[2] = kf_a->rot[2] + kf_a->angular_vel[2] * elapsed;
+
+            /* Scale: lerp between keyframes */
             for (int c = 0; c < 3; c++) {
-                v->pos[c]   = da->final_pos[i][c]   + (v->orig_pos[c]   - da->final_pos[i][c]) * u;
-                v->rot[c]   = da->final_rot[i][c]   * (1.0f - u);
-                v->scale[c] = da->final_scale[i][c]  + (v->orig_scale[c] - da->final_scale[i][c]) * u;
-            }
-            for (int c = 0; c < 4; c++) {
-                v->color[c] = da->final_color[i][c] + (v->orig_color[c] - da->final_color[i][c]) * u;
+                v->scale[c] = kf_a->scale[c] + (kf_b->scale[c] - kf_a->scale[c]) * seg_t;
             }
 
-            /* Un-fall voxels that were in pits */
-            if (da->final_fallen[i]) {
-                v->fallen = (u < 0.3f); /* reappear early in the reverse */
+            /* Handle fallen voxels: reappear as we reverse past pit entry */
+            if (kf_b->fallen && !kf_a->fallen) {
+                /* We're crossing the pit-entry boundary */
+                v->fallen = (seg_t > 0.5f);
                 if (!v->fallen) {
                     /* Scale back up */
-                    float reappear_t = (u - 0.3f) / 0.7f;
-                    float s = reappear_t < 1.0f ? reappear_t : 1.0f;
+                    float reappear_t = (0.5f - seg_t) / 0.5f;
+                    float s = 1.0f - reappear_t;
+                    if (s < 0.0f) s = 0.0f;
                     v->scale[0] = v->orig_scale[0] * s;
                     v->scale[1] = v->orig_scale[1] * s;
                     v->scale[2] = v->orig_scale[2] * s;
                 }
+            } else {
+                v->fallen = kf_a->fallen;
             }
         }
 
         if (t >= 1.0f) {
+            /* Snap all voxels to original positions */
+            for (int i = 0; i < da->count; i++) {
+                DeathVoxel* v = &da->voxels[i];
+                v->pos[0] = v->orig_pos[0];
+                v->pos[1] = v->orig_pos[1];
+                v->pos[2] = v->orig_pos[2];
+                v->rot[0] = v->rot[1] = v->rot[2] = 0.0f;
+                v->scale[0] = v->orig_scale[0];
+                v->scale[1] = v->orig_scale[1];
+                v->scale[2] = v->orig_scale[2];
+                v->fallen = false;
+            }
             da->finished = true;
             da->active = false;
         }
@@ -414,7 +573,13 @@ void death_anim_update(DeathAnim* da, float dt) {
         v->rot[1] += v->angular_vel[1] * dt;
         v->rot[2] += v->angular_vel[2] * dt;
 
-        /* Determine which tile this voxel is on */
+        /* Wall collision — check and resolve, record keyframe on hit */
+        if (resolve_wall_collisions(v, da->grid)) {
+            record_keyframe(v, da->timer);
+        }
+
+        /* Determine which tile this voxel is on (may have changed after
+         * wall collision pushed it back) */
         int vcol = (int)floorf(v->pos[0]);
         int vrow = (int)floorf(v->pos[2]);
 
@@ -424,6 +589,11 @@ void death_anim_update(DeathAnim* da, float dt) {
         /* Pit fall-through */
         if (surface.is_pit) {
             if (v->pos[1] < PIT_VANISH_Y) {
+                /* Record keyframe at pit entry (first time crossing) */
+                if (v->scale[0] > 1.0f - 0.01f) {
+                    record_keyframe(v, da->timer);
+                }
+
                 float shrink = PIT_SHRINK_RATE * dt;
                 v->scale[0] -= shrink;
                 v->scale[1] -= shrink;
@@ -433,6 +603,7 @@ void death_anim_update(DeathAnim* da, float dt) {
                     v->scale[1] = 0.0f;
                     v->scale[2] = 0.0f;
                     v->fallen = true;
+                    record_keyframe(v, da->timer);
                 }
             }
             /* No floor clamping — voxel falls freely */
@@ -456,6 +627,9 @@ void death_anim_update(DeathAnim* da, float dt) {
                 /* Friction: dampen horizontal velocity on each bounce */
                 v->vel[0] *= 0.85f;
                 v->vel[2] *= 0.85f;
+
+                /* Record keyframe at floor bounce */
+                record_keyframe(v, da->timer);
             } else {
                 v->vel[1] = 0.0f;
             }
@@ -477,6 +651,7 @@ void death_anim_update(DeathAnim* da, float dt) {
                 v->at_rest = true;
                 v->vel[0] = v->vel[1] = v->vel[2] = 0.0f;
                 v->angular_vel[0] = v->angular_vel[1] = v->angular_vel[2] = 0.0f;
+                record_keyframe(v, da->timer);
             }
         } else {
             v->rest_timer = 0.0f;
@@ -492,6 +667,7 @@ void death_anim_update(DeathAnim* da, float dt) {
                 v->at_rest = true;
                 v->vel[0] = v->vel[1] = v->vel[2] = 0.0f;
                 v->angular_vel[0] = v->angular_vel[1] = v->angular_vel[2] = 0.0f;
+                record_keyframe(v, da->timer);
             }
         }
         da->finished = true;
@@ -559,44 +735,6 @@ void death_anim_render(const DeathAnim* da, GLuint shader) {
 
         shader_set_mat4(shader, "u_model", model);
 
-        /* Override vertex color via uniform.
-         * The voxel shader multiplies vertex color by the fragment color,
-         * but our unit cube vertices are white (1,1,1,1), so we can
-         * tint via a color uniform if the shader supports it.
-         * Since the voxel shader uses vertex color directly, we need to
-         * update the VBO or use a per-instance approach.
-         *
-         * Simpler approach: use the model's vertex color as-is (white)
-         * and set a color multiplier uniform. The voxel shader doesn't
-         * have one, so instead we modify the light ambient to approximate.
-         *
-         * Actually, the cleanest approach for now: just draw with white
-         * voxels tinted by the existing lighting, and set the actor
-         * color via u_actor_ground_y trick... No, let's use the simplest
-         * path: the shader uses vertex color from the VBO. Since all
-         * voxels share one white VBO, we need a color override.
-         *
-         * Use u_deform_height < 0 to skip normal correction, and
-         * set a flat color via the existing uniform infrastructure.
-         * Actually the simplest: set u_has_ao=0, which makes the shader
-         * just use vertex_color * lighting. We can't change vertex color
-         * per-draw without modifying the VBO.
-         *
-         * Best solution for 6.9a: rebuild the cube VBO with the voxel's
-         * actual color baked in. But that's wasteful for 64 draws.
-         *
-         * Pragmatic solution: use a tint uniform. The voxel shader
-         * doesn't have one, but we can repurpose an unused uniform or
-         * accept white voxels for now. Let's accept colored lighting
-         * by setting the directional light color to the voxel color.
-         * No, that's hacky.
-         *
-         * Final approach: We'll create per-color cube VBOs on demand.
-         * Actually no — we'll just re-upload the color portion. No —
-         * simplest: we'll use glVertexAttrib4f to set a constant vertex
-         * attribute for color (location 2) when the VAO's attribute
-         * array is disabled. */
-
         /* Disable the color vertex attribute array and set a constant value */
         glDisableVertexAttribArray(2);
         glVertexAttrib4f(2, v->color[0], v->color[1], v->color[2], v->color[3]);
@@ -614,25 +752,6 @@ void death_anim_render(const DeathAnim* da, GLuint shader) {
 
 void death_anim_start_reverse(DeathAnim* da) {
     if (!da->active) return;
-
-    /* Snapshot current state as "end keyframe" for lerp */
-    for (int i = 0; i < da->count; i++) {
-        const DeathVoxel* v = &da->voxels[i];
-        da->final_pos[i][0]   = v->pos[0];
-        da->final_pos[i][1]   = v->pos[1];
-        da->final_pos[i][2]   = v->pos[2];
-        da->final_rot[i][0]   = v->rot[0];
-        da->final_rot[i][1]   = v->rot[1];
-        da->final_rot[i][2]   = v->rot[2];
-        da->final_scale[i][0] = v->scale[0];
-        da->final_scale[i][1] = v->scale[1];
-        da->final_scale[i][2] = v->scale[2];
-        da->final_color[i][0] = v->color[0];
-        da->final_color[i][1] = v->color[1];
-        da->final_color[i][2] = v->color[2];
-        da->final_color[i][3] = v->color[3];
-        da->final_fallen[i]   = v->fallen;
-    }
 
     da->reversing = true;
     da->finished = false;

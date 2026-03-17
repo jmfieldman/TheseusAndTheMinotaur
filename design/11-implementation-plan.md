@@ -478,7 +478,7 @@ Tile environment query layer, basic death voxel decomposition, gravity with floo
 
 ---
 
-### Step 6.9b — Death Animation Framework (Wall Collision + Keyframe Undo)
+### Step 6.9b — Death Animation Framework (Wall Collision + Keyframe Undo) ✅
 
 Wall-bounce collision response and keyframe-based trajectory recording for frame-accurate undo reversal. Replaces the placeholder lerp reversal from 6.9a.
 
@@ -659,32 +659,65 @@ End-of-level flow with star display and progression.
 
 ---
 
-## Step 10 — Overworld Scene
+## Step 10 — Backdrop Render-to-Texture System
 
-Per-biome level-selection diorama with graph navigation.
+Offscreen FBO rendering pipeline for pre-rendering static geometry to textures. This is the foundation for both puzzle backdrops and overworld backdrops. See [02 -- Visual Style](02-visual-style.md) §9 and [08 -- Engine Architecture](08-engine-architecture.md) §3.3.6.
+
+**Files:**
+
+- `src/render/backdrop.h / .c` — Backdrop render-to-texture system:
+  - `Backdrop` struct: FBO handle, color texture handle, pixel dimensions, ortho projection matrix.
+  - `backdrop_create(Backdrop*, int width, int height)` — Allocate FBO + color texture at exact pixel dimensions.
+  - `backdrop_begin_render(Backdrop*, const mat4 ortho_proj)` — Bind FBO, set viewport to FBO dimensions, set projection. Stores the ortho matrix for pixel-alignment verification.
+  - `backdrop_end_render(Backdrop*)` — Unbind FBO, restore previous viewport.
+  - `backdrop_draw(const Backdrop*, GLuint shader)` — Draw the backdrop as a single textured quad at Z-behind all live geometry, using the stored ortho projection. Uses `GL_NEAREST` sampling to prevent sub-pixel blur.
+  - `backdrop_resize(Backdrop*, int new_width, int new_height)` — Reallocate FBO at new dimensions. Called on viewport resize.
+  - `backdrop_destroy(Backdrop*)` — Release FBO + texture.
+- Update `src/render/README.md` — Add backdrop entry.
+- Integration into puzzle scene (render the backdrop mesh split — decorative geometry only — into the FBO at level load, draw it each frame behind gameplay layer).
+
+**Pixel alignment contract:**
+
+- FBO dimensions must exactly match the target viewport pixel dimensions.
+- The ortho projection used for the FBO render must be bit-identical to the live gameplay projection.
+- The backdrop quad uses `GL_NEAREST` filtering (1:1 texel-to-pixel).
+- On viewport resize, the backdrop is re-rendered at the new dimensions.
+
+**Verification:** Pre-rendered backdrop is visually indistinguishable from live rendering. Toggle backdrop on/off at runtime (debug key) to confirm pixel-identical output. No seams visible at the boundary between backdrop and live gameplay geometry.
+
+---
+
+## Step 11 — Overworld Scene
+
+Per-biome level-selection diorama with graph navigation. The overworld diorama is pre-rendered to a backdrop texture (using the system from Step 10), with live overlay elements composited on top.
 
 **Files:**
 
 - `src/scene/overworld_scene.h / .c` — Implements `State` vtable:
   - Load overworld graph definition (YAML) for current biome
-  - Render biome diorama with level nodes as mini-dioramas
-  - Theseus marker on current node
+  - Generate biome diorama mesh + all LOD mini-diorama meshes
+  - Pre-render entire overworld to backdrop texture via `backdrop_*()` API
+  - Draw backdrop each frame, then render live overlay elements on top:
+    - Theseus player token (animated along paths)
+    - Node state indicators (flags, torches, completion glow)
+    - Optional idle decorative animations (birds, gears, water)
+    - Star gate visual effects
   - Cardinal direction navigation between nodes
-  - Enter node → push puzzle scene (or transition)
+  - Enter node → push zoom transition → puzzle scene
   - Back → return to biome select or title
   - Star gate nodes block until threshold met
-  - Auto-progression: after win, animate to next unbeaten node
+  - Re-render backdrop on secret node reveal or viewport resize
 - `src/data/overworld_data.h / .c` — Load overworld YAML (nodes, edges, positions, star gates)
 - `assets/overworld/stone_labyrinth.yml` — First biome overworld graph
 - `assets/overworld/dark_forest.yml` — Second biome overworld graph
 
-**Verification:** Navigate between level nodes, enter levels, see locked star gates, auto-progress after winning.
+**Verification:** Navigate between level nodes, enter levels, see locked star gates. Backdrop rendering matches live rendering (toggle with debug key). Live overlay elements (Theseus token, state indicators) render correctly on top of the static image.
 
 ---
 
-## Step 11 — LOD Mesh Generation
+## Step 12 — LOD Mesh Generation
 
-Simplified diorama meshes for overworld level nodes.
+Simplified diorama meshes for overworld level nodes. These are baked into the overworld backdrop texture.
 
 **Files:**
 
@@ -692,31 +725,34 @@ Simplified diorama meshes for overworld level nodes.
   - Flat checkerboard floor (no paving detail)
   - Wall silhouettes (no mortar/block detail)
   - Omit decorations, lanterns
-  - Completion indicator (checkmark/star overlay)
-- Update `src/scene/overworld_scene.c` — Render LOD meshes at each node position
+  - Diorama platform silhouette
+- Update `src/scene/overworld_scene.c` — Include LOD meshes in the overworld backdrop render pass. Node state indicators (completion flags, star overlays) are rendered as live overlay elements, not baked into the backdrop.
 
-**Verification:** Overworld shows recognizable mini-dioramas at each node. Completed levels have visual indicators.
+**Verification:** Overworld backdrop shows recognizable mini-dioramas at each node. Completed levels have live overlay visual indicators.
 
 ---
 
-## Step 12 — Zoom Transitions
+## Step 13 — Zoom Transitions
 
-Seamless zoom between overworld and puzzle views.
+Seamless zoom between overworld and puzzle views. During transitions, the backdrop system is **bypassed** and all geometry renders live so that camera interpolation and LOD crossfade work seamlessly.
 
 **Files:**
 
 - `src/scene/zoom_transition.h / .c` — Transition state pushed between overworld and puzzle:
+  - On start: flag backdrop system as bypassed, switch to live rendering of all geometry (both overworld terrain + LOD meshes and the incoming/outgoing puzzle mesh)
   - Zoom camera from overworld view → close-up on selected node
   - Crossfade LOD mesh → full-detail diorama mesh
   - Reverse on exit (puzzle → overworld)
   - Duration ~0.8–1.2 seconds
+  - On completion: re-render backdrop at final camera position, resume steady-state backdrop compositing
+  - Auto-progression (puzzle → puzzle): zoom out to mid-level, pan across overworld, zoom into next node — all live rendering during the move
 - Update `src/render/camera.c` — Smooth camera interpolation support
 
-**Verification:** Entering/exiting a level has smooth zoom animation with LOD crossfade. No pop-in or jarring cuts.
+**Verification:** Entering/exiting a level has smooth zoom animation with LOD crossfade. No pop-in or jarring cuts. Transition from live rendering back to backdrop compositing is seamless (no visible frame where the switch happens).
 
 ---
 
-## Step 13 — Audio System
+## Step 14 — Audio System
 
 Sound effects, music, and ambient audio.
 
@@ -738,7 +774,7 @@ Sound effects, music, and ambient audio.
 
 ---
 
-## Step 14 — Touch Input Adapter (iOS)
+## Step 15 — Touch Input Adapter (iOS)
 
 On-screen controls for iOS/iPadOS (portrait mode).
 
@@ -756,7 +792,7 @@ On-screen controls for iOS/iPadOS (portrait mode).
 
 ---
 
-## Step 15 — Apple TV Remote Adapter
+## Step 16 — Apple TV Remote Adapter
 
 Siri Remote and MFi gamepad support for tvOS.
 
@@ -774,7 +810,7 @@ Siri Remote and MFi gamepad support for tvOS.
 
 ---
 
-## Step 16 — Level Content (Full Biome Set)
+## Step 17 — Level Content (Full Biome Set)
 
 Author all level JSON files and overworld graphs for every biome.
 
@@ -791,7 +827,7 @@ Author all level JSON files and overworld graphs for every biome.
 
 ---
 
-## Step 17 — Audio Content
+## Step 18 — Audio Content
 
 Replace placeholder audio with final assets.
 
@@ -806,7 +842,7 @@ Replace placeholder audio with final assets.
 
 ---
 
-## Step 18 — Font and Visual Assets
+## Step 19 — Font and Visual Assets
 
 Replace placeholder font and add any remaining visual assets.
 
@@ -820,7 +856,7 @@ Replace placeholder font and add any remaining visual assets.
 
 ---
 
-## Step 19 — Platform Builds and Testing
+## Step 20 — Platform Builds and Testing
 
 Build, test, and fix per-platform issues.
 
@@ -841,7 +877,7 @@ Build, test, and fix per-platform issues.
 
 ---
 
-## Step 20 — Polish and Ship
+## Step 21 — Polish and Ship
 
 Final pass before release.
 
