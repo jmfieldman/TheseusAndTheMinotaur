@@ -222,8 +222,11 @@ typedef struct {
     /* Minotaur facing direction (radians, 0 = facing -Z/north) */
     float           mino_facing_angle;
 
-    /* Undo stack for minotaur facing angle (parallel to UndoStack) */
-    float           mino_facing_stack[UNDO_MAX_DEPTH];
+    /* Undo stack for minotaur facing angle (parallel to UndoStack).
+     * pre_turn: facing before the entire turn (restored on undo_pop).
+     * post_turnstile: facing after turnstile rotation but before stomps
+     *   (restored during undo reverse roll-end for correct idle facing). */
+    struct { float pre_turn; float post_turnstile; } mino_facing_stack[UNDO_MAX_DEPTH];
     int             mino_facing_stack_count;
 
     /* Camera shake (triggered on minotaur stomp) */
@@ -392,7 +395,7 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
                 ps->pit_fall_active = false;
                 anim_queue_init(&ps->anim);
                 if (ps->mino_facing_stack_count > 0)
-                    ps->mino_facing_angle = ps->mino_facing_stack[--ps->mino_facing_stack_count];
+                    ps->mino_facing_angle = ps->mino_facing_stack[--ps->mino_facing_stack_count].pre_turn;
                 set_status(ps, "Undo", COLOR_HUD, 0.8f);
             }
             return;
@@ -435,7 +438,7 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
             } else if (undo_pop(&ps->undo, ps->grid)) {
                 anim_queue_init(&ps->anim);
                 if (ps->mino_facing_stack_count > 0)
-                    ps->mino_facing_angle = ps->mino_facing_stack[--ps->mino_facing_stack_count];
+                    ps->mino_facing_angle = ps->mino_facing_stack[--ps->mino_facing_stack_count].pre_turn;
                 set_status(ps, "Undo", COLOR_HUD, 0.8f);
             }
             return;
@@ -454,8 +457,11 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
 
     /* Push undo snapshot BEFORE resolving */
     undo_push(&ps->undo, ps->grid);
-    if (ps->mino_facing_stack_count < UNDO_MAX_DEPTH)
-        ps->mino_facing_stack[ps->mino_facing_stack_count++] = ps->mino_facing_angle;
+    if (ps->mino_facing_stack_count < UNDO_MAX_DEPTH) {
+        ps->mino_facing_stack[ps->mino_facing_stack_count].pre_turn = ps->mino_facing_angle;
+        ps->mino_facing_stack[ps->mino_facing_stack_count].post_turnstile = ps->mino_facing_angle;
+        ps->mino_facing_stack_count++;
+    }
 
     /* Resolve the turn with animation recording */
     TurnRecord record;
@@ -3348,7 +3354,7 @@ static void puzzle_update(State* self, float dt) {
                 ps->undo_anim_pending = false;
                 undo_pop(&ps->undo, ps->grid);
                 if (ps->mino_facing_stack_count > 0)
-                    ps->mino_facing_angle = ps->mino_facing_stack[--ps->mino_facing_stack_count];
+                    ps->mino_facing_angle = ps->mino_facing_stack[--ps->mino_facing_stack_count].pre_turn;
 
                 /* Regenerate all turnstile meshes from the now-correct
                  * grid state.  Without this, meshes built during the
@@ -3515,6 +3521,20 @@ static void puzzle_update(State* self, float dt) {
                 float target = ps->turnstile_meshes[ti].clockwise
                     ? (float)M_PI_2 : -(float)M_PI_2;
                 ps->turnstile_meshes[ti].held_angle = -target;
+
+                /* Reverse the minotaur facing rotation so it transitions
+                 * smoothly from post-turnstile back to pre-turn direction. */
+                for (int ei = 0; ei < ps->anim.record.event_count; ei++) {
+                    const AnimEvent* e = &ps->anim.record.events[ei];
+                    if (e->type == ANIM_EVT_AUTO_TURNSTILE_ROTATE &&
+                        e->turnstile.junction_col == ps->turnstile_meshes[ti].jc &&
+                        e->turnstile.junction_row == ps->turnstile_meshes[ti].jr &&
+                        e->turnstile.actor_moved[1]) {
+                        ps->mino_facing_angle -= target;
+                        break;
+                    }
+                }
+
                 ps->turnstile_meshes[ti].was_animating = is_animating;
                 continue;
             }
@@ -3529,10 +3549,14 @@ static void puzzle_update(State* self, float dt) {
                         e->turnstile.junction_row == ps->turnstile_meshes[ti].jr &&
                         e->turnstile.actor_moved[1]) {
                         /* Minotaur was on this turnstile — rotate facing angle.
-                         * CW from above = negative Y rotation. */
+                         * Sign matches visual animation target (+π/2 for CW). */
                         float rot = ps->turnstile_meshes[ti].clockwise
-                            ? -(float)M_PI_2 : (float)M_PI_2;
+                            ? (float)M_PI_2 : -(float)M_PI_2;
                         ps->mino_facing_angle += rot;
+                        /* Record post-turnstile facing so undo can restore
+                         * the correct idle direction after reverse roll. */
+                        if (ps->mino_facing_stack_count > 0)
+                            ps->mino_facing_stack[ps->mino_facing_stack_count - 1].post_turnstile = ps->mino_facing_angle;
                         break;
                     }
                 }
@@ -3560,8 +3584,9 @@ static void puzzle_update(State* self, float dt) {
             ps->mino_wobble_timer = 0.0f;
 
             /* Update minotaur facing direction based on last movement.
-             * Skip during undo — the pre-turn angle is restored from the
-             * facing stack when undo_pop completes.
+             * During undo: restore the post-turnstile facing from the stack
+             * so the minotaur faces the correct direction while idle after
+             * un-stomping (before the reverse turnstile animation plays).
              * 0 = facing -Z (north), -π/2 = facing +X (east), etc. */
             if (!is_reversing) {
                 float dx = ps->anim.mino_x.end - ps->anim.mino_x.start;
@@ -3569,6 +3594,8 @@ static void puzzle_update(State* self, float dt) {
                 if (fabsf(dx) > 0.01f || fabsf(dz) > 0.01f) {
                     ps->mino_facing_angle = atan2f(-dx, -dz);
                 }
+            } else if (ps->mino_facing_stack_count > 0) {
+                ps->mino_facing_angle = ps->mino_facing_stack[ps->mino_facing_stack_count - 1].post_turnstile;
             }
 
             /* Trigger stomp effects (dust puffs + camera shake).
