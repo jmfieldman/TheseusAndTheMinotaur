@@ -436,17 +436,39 @@ Results UI overlay and camera pan to the next level's diorama. Theseus continues
 
 ### Step 6.9 — Death Animation Framework
 
-Core infrastructure for voxel-decomposition death animations. Does not implement specific death types yet — just the framework for decomposing an actor into individually animated voxel particles. Death voxels are rigid (no deformation shader) — the deformable mesh is only for the intact actor.
+Core infrastructure for voxel-decomposition death animations. Does not implement specific death types yet — just the framework for decomposing an actor into individually animated voxel particles, simulating them with physics (gravity, wall collisions, floor-height awareness, pit fall-through), recording their trajectories for frame-accurate undo reversal, and rendering them. Death voxels are rigid (no deformation shader) — the deformable mesh is only for the intact actor.
 
 **Files:**
 
+- `src/game/tile_physics.h / .c` — Tile environment query helper for voxel physics:
+  - `TileSurface` struct: `float surface_y` (floor height at this tile), `bool is_pit` (bottomless — voxels fall through), `bool is_impassable` (solid obstacle — voxels cannot enter).
+  - `tile_physics_query(const Grid*, const BiomeConfig*, int col, int row)` → `TileSurface` — Returns the physical properties of a tile for voxel scatter simulation. Accounts for all terrain types:
+    - **Normal floor:** `surface_y = 0.0`, not pit, not impassable.
+    - **Conveyor/auto-turnstile:** `surface_y = CONVEYOR_HEIGHT` (0.10). Voxels landing here rest at the elevated surface.
+    - **Groove trench tiles:** `surface_y = -trench_depth` (default −0.07). Voxels can fall into and roll along the trench channel. Uses `groove_box_get_path()` to identify groove tiles and reads `biome->groove_trench.trench_depth`.
+    - **Collapsed crumbling floor / moving-platform pit:** `is_pit = true`. Voxels that enter these tiles fall through and vanish (scale → 0 as Y decreases below −0.5).
+    - **Impassable (solid block):** `is_impassable = true`. Voxels treat these the same as walls — bounce off the tile boundary.
+    - **Out-of-bounds:** `is_pit = true`. Voxels that scatter off the grid edge fall into the void.
+  - `tile_physics_has_wall(const Grid*, int col, int row, Direction side)` → `bool` — Thin wrapper around `grid_has_wall()` that also returns true for impassable neighbor tiles (since their boundary acts as a wall for voxel scatter). Used by death_anim for wall-bounce raycasting.
+  - `tile_physics_wall_y(const Grid*, const BiomeConfig*, int col, int row, Direction side)` → `float` — Returns the world-space X or Z coordinate of the wall plane on the given side of the tile, accounting for `WALL_THICKNESS` (0.20). Used for precise bounce positioning.
+- Update `src/game/README.md` — Add tile_physics entry.
 - `src/render/death_anim.h / .c` — Death animation system:
-  - `DeathVoxel` struct: position (vec3), velocity (vec3), rotation (vec3), angular_velocity (vec3), scale (vec3), color (vec4), original_position (vec3), original_color (vec4). Each represents one box from the decomposed actor mesh.
-  - `DeathAnim` struct: array of `DeathVoxel` (max ~64), count, timer, duration, type enum (`DEATH_SQUISH`, `DEATH_WALK_INTO`, `DEATH_SPIKE`, `DEATH_PETRIFY`, `DEATH_PIT_FALL`), `finished` flag, `reversing` flag.
-  - `death_anim_init(DeathAnim*, DeathType, const ActorParts*, float actor_x, float actor_z)` — Decomposes the actor's body mesh into individual `DeathVoxel` particles at their current world positions. Sets initial velocities/rotations based on death type.
-  - `death_anim_update(DeathAnim*, float dt)` — Advances all voxel particles (physics: position += velocity _ dt, velocity += gravity, rotation += angular_vel _ dt). Clamps to ground plane. Applies type-specific behaviors (color shifts, scaling, etc.).
-  - `death_anim_render(const DeathAnim*, GLuint shader)` — Renders each `DeathVoxel` as an individually transformed box with `u_deform_height = 0.0` (deformation disabled). Uses a shared unit-cube VBO (generated once) with per-particle model matrix containing position, rotation, and scale.
-  - `death_anim_start_reverse(DeathAnim*)` — Switches to reverse playback. Stores current state as "end keyframe," interpolates all voxels back toward `original_position` and `original_color` over `duration * 0.5` seconds.
+  - **Keyframe recording for undo reversal:**
+    - `VoxelKeyframe` struct: `float time`, `vec3 position`, `vec3 velocity`, `vec3 rotation`, `vec3 angular_velocity`. Captured at initialization and at every collision event.
+    - Each `DeathVoxel` stores a keyframe array (max 8). If a voxel exceeds 8 collisions, its velocity is killed (it stops in place). Forward playback uses physics simulation; reverse playback walks keyframes backward, interpolating between them for frame-accurate trajectory reversal.
+  - `DeathVoxel` struct: position (vec3), velocity (vec3), rotation (vec3), angular_velocity (vec3), scale (vec3), color (vec4), original_position (vec3), original_color (vec4), `VoxelKeyframe keyframes[MAX_VOXEL_KEYFRAMES]`, `int keyframe_count`, `bool fallen` (true if voxel fell into a pit and is no longer visible).
+  - `DeathAnim` struct: array of `DeathVoxel` (max ~64), count, timer, duration, type enum (`DEATH_SQUISH`, `DEATH_WALK_INTO`, `DEATH_SPIKE`, `DEATH_PETRIFY`, `DEATH_PIT_FALL`), `finished` flag, `reversing` flag. Also stores a `const Grid*` and `const BiomeConfig*` pointer for tile queries during simulation.
+  - `death_anim_init(DeathAnim*, DeathType, const ActorParts*, float actor_x, float actor_z, const Grid*, const BiomeConfig*)` — Decomposes the actor's body mesh into individual `DeathVoxel` particles at their current world positions. Sets initial velocities/rotations based on death type. Records initial keyframe (time=0) for each voxel.
+  - `death_anim_update(DeathAnim*, float dt)` — Advances all voxel particles with physics:
+    - **Gravity:** `velocity.y += gravity * dt` (gravity ≈ −9.8 world-units/s²).
+    - **Integration:** `position += velocity * dt`, `rotation += angular_velocity * dt`.
+    - **Floor clamping:** Query `tile_physics_query()` at voxel's current (col, row). If `position.y ≤ surface_y`, clamp to `surface_y`, reflect `velocity.y` with elasticity (coefficient ≈ 0.3–0.4), dampen `angular_velocity` by 0.7×. Record keyframe at bounce time.
+    - **Wall collision:** Each physics substep, check if the voxel's XZ trajectory crosses a wall boundary via `tile_physics_has_wall()`. On collision: reflect the velocity component perpendicular to the wall with elasticity (coefficient ≈ 0.5–0.6), apply slight angular impulse from the impact. Record keyframe at bounce time. Use `tile_physics_wall_y()` for precise contact position.
+    - **Pit fall-through:** If `tile_physics_query()` returns `is_pit` at the voxel's tile, skip floor clamping — voxel falls freely. When `position.y < -0.5`, begin shrinking `scale` toward 0. When `scale < 0.01`, mark `fallen = true` and stop updating. Record keyframe at pit-entry time.
+    - **Floor-height transitions:** When a voxel crosses from one tile to another with a different `surface_y`, it naturally rolls off or onto the height difference (no special case needed — gravity + the new surface_y handle it). Groove trenches act as channels that collect and guide rolling voxels.
+    - **Rest detection:** When a voxel's speed (linear + angular) drops below a threshold for 0.1s, freeze it in place and record a final keyframe.
+  - `death_anim_render(const DeathAnim*, GLuint shader)` — Renders each non-fallen `DeathVoxel` as an individually transformed box with `u_deform_height = 0.0` (deformation disabled). Uses a shared unit-cube VBO (generated once) with per-particle model matrix containing position, rotation, and scale.
+  - `death_anim_start_reverse(DeathAnim*)` — Switches to reverse playback. For each voxel, walks its keyframe array in reverse order, interpolating position/velocity/rotation between keyframes. Fallen voxels reappear (scale back up from 0) at their pit-entry keyframe. Total reverse duration = `duration * 0.5` seconds (time-remapped to traverse all keyframes).
   - `death_anim_is_finished(const DeathAnim*)` — True when forward or reverse playback is done.
   - `death_anim_destroy(DeathAnim*)` — Cleanup.
 - Update `src/scene/puzzle_scene.c`:
@@ -455,7 +477,7 @@ Core infrastructure for voxel-decomposition death animations. Does not implement
   - When undo is triggered during death state, call `death_anim_start_reverse()`. Defer grid restore until reverse completes. Resume normal Theseus rendering after reverse finishes.
 - Update `src/render/README.md` — Add death_anim entry.
 
-**Verification:** Framework compiles and links. A test death (e.g., collision with Minotaur) triggers the decomposition — Theseus breaks into individual blue boxes that fall with gravity. Undo reconstitutes them. Specific scatter patterns come in subsequent substeps.
+**Verification:** Framework compiles and links. A test death (e.g., collision with Minotaur) triggers the decomposition — Theseus breaks into individual blue boxes that fall with gravity. Voxels bounce off walls with visible elasticity, settle at correct floor heights (roll into groove trenches, rest on conveyor surfaces), and fall through collapsed/pit tiles into the void. Undo reconstitutes them — voxels retrace their exact collision paths in reverse (rising out of pits, bouncing off walls backward, reassembling into Theseus). Specific scatter patterns come in subsequent substeps.
 
 ---
 
