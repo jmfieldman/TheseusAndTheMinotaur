@@ -299,7 +299,7 @@ Add a localized screen shake when the Minotaur lands after each roll step.
 
 ---
 
-### Step 6.6 — Contextual Deformations: Push, Turnstile, and Collision
+### Step 6.6 — Contextual Deformations: Push, Turnstile, and Collision ✅
 
 Deformation effects for Theseus interacting with pushable objects and walls. Uses directional squish (compression along the push axis) and bounce-back recovery.
 
