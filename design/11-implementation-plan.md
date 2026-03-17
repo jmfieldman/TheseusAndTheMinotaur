@@ -332,7 +332,7 @@ Deformation effects for special movement types that have distinct visual charact
 
 ---
 
-### Step 6.8a — Deferred Win Condition + Forced Exit
+### Step 6.8a — Deferred Win Condition + Forced Exit ✅
 
 Win condition logic and the forced exit-hop animation. The win is **deferred** (see 01-core-mechanics.md §7.4): Theseus reaching the exit tile does **not** end the level immediately. The full turn cycle completes (Environment Phase → Minotaur Phase), and the win is only confirmed at the **start of Theseus's next turn** if he is still alive on the exit tile. This ensures the Minotaur always gets his two steps.
 
@@ -350,6 +350,7 @@ Win condition logic and the forced exit-hop animation. The win is **deferred** (
 **Exit direction:**
 
 The exit tile is always on a border of the grid. Theseus's forced step goes **outward** through the exit door opening:
+
 - **Left-wall exit:** Theseus hops westward (screen-left) onto the virtual tile.
 - **Right-wall exit:** Theseus hops eastward (screen-right) onto the virtual tile.
 - **Top (back) wall exit:** Theseus hops northward (away from camera) onto the virtual tile.
@@ -382,7 +383,7 @@ The exit tile is always on a border of the grid. Theseus's forced step goes **ou
 
 ---
 
-### Step 6.8b — Victory Celebration Loop
+### Step 6.8b — Victory Celebration Loop ✅
 
 Looping in-place celebration bounce on the virtual exit tile. Two variants based on whether the player achieved the level's `optimal_turns` (from the level JSON). Builds on 6.8a — starts after the exit door locks.
 
