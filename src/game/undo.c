@@ -28,8 +28,9 @@ static void snapshot_capture(UndoSnapshot* snap, const Grid* grid) {
     snap->minotaur_col = grid->minotaur_col;
     snap->minotaur_row = grid->minotaur_row;
     snap->turn_count   = grid->turn_count;
-    snap->level_won    = grid->level_won;
-    snap->level_lost   = grid->level_lost;
+    snap->level_won        = grid->level_won;
+    snap->level_lost       = grid->level_lost;
+    snap->theseus_on_exit  = grid->theseus_on_exit;
 
     /* Serialize feature internal state */
     size_t blob_size = calc_feature_blob_size(grid);
@@ -87,8 +88,9 @@ static void snapshot_restore(const UndoSnapshot* snap, Grid* grid) {
     grid->minotaur_col = snap->minotaur_col;
     grid->minotaur_row = snap->minotaur_row;
     grid->turn_count   = snap->turn_count;
-    grid->level_won    = snap->level_won;
-    grid->level_lost   = snap->level_lost;
+    grid->level_won        = snap->level_won;
+    grid->level_lost       = snap->level_lost;
+    grid->theseus_on_exit  = snap->theseus_on_exit;
 
     /* Restore feature internal state */
     if (snap->feature_blob && snap->feature_blob_size > 0) {

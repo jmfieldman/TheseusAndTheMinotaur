@@ -774,7 +774,13 @@ static void render_actors(const PuzzleScene* ps) {
 
         if (animating) {
             float tcol, trow, thop;
-            anim_queue_theseus_pos(&ps->anim, &tcol, &trow, &thop);
+            AnimPhase cur_phase = anim_queue_phase(&ps->anim);
+            if (cur_phase == ANIM_PHASE_WIN_EXIT ||
+                cur_phase == ANIM_PHASE_WIN_GATE) {
+                anim_queue_win_exit_pos(&ps->anim, &tcol, &trow, &thop);
+            } else {
+                anim_queue_theseus_pos(&ps->anim, &tcol, &trow, &thop);
+            }
             grid_to_screen_f(ps, tcol, trow, &sx, &sy);
             /* Apply hop offset (negative Y = upward in screen space) */
             sy -= thop * ts;
@@ -2608,6 +2614,11 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                     trow = settle_start_row + (to_row - settle_start_row) * s;
                 }
                 thop = 0.0f;
+            } else if (animating &&
+                       (anim_queue_phase(&ps->anim) == ANIM_PHASE_WIN_EXIT ||
+                        anim_queue_phase(&ps->anim) == ANIM_PHASE_WIN_GATE)) {
+                /* Win exit/gate phase: use dedicated win position query */
+                anim_queue_win_exit_pos(&ps->anim, &tcol, &trow, &thop);
             } else if (animating) {
                 anim_queue_theseus_pos(&ps->anim, &tcol, &trow, &thop);
             } else {
@@ -3378,7 +3389,7 @@ static void puzzle_update(State* self, float dt) {
                 return;
             }
 
-            /* Show deferred result */
+            /* Show deferred result (loss) */
             if (ps->anim_result_pending) {
                 /* Trigger pit fall elongation for hazard deaths (Step 6.7) */
                 if (ps->pending_result == TURN_RESULT_LOSS_HAZARD) {
@@ -3387,17 +3398,30 @@ static void puzzle_update(State* self, float dt) {
                 }
                 show_turn_result(ps, ps->pending_result);
                 ps->anim_result_pending = false;
-            }
+                /* Don't process buffered actions after showing a result */
+            } else {
+                /* Check for deferred win (Theseus on exit tile, survived minotaur).
+                 * This generates a synthetic TurnRecord for the forced exit hop
+                 * and starts the win animation automatically. */
+                TurnRecord win_record;
+                TurnResult win_result = turn_check_deferred_win(ps->grid, &win_record);
+                if (win_result == TURN_RESULT_WIN) {
+                    input_buffer_init(&ps->input_buf);
+                    anim_queue_start(&ps->anim, &win_record);
+                    ps->anim_result_pending = true;
+                    ps->pending_result = TURN_RESULT_WIN;
+                } else {
+                    /* No deferred win — check for buffered action */
+                    SemanticAction buffered = input_buffer_consume(&ps->input_buf);
+                    if (buffered == ACTION_NONE) {
+                        /* Check held keys per §10.4 item 2 */
+                        buffered = input_buffer_check_held_keys();
+                    }
 
-            /* Check for buffered action */
-            SemanticAction buffered = input_buffer_consume(&ps->input_buf);
-            if (buffered == ACTION_NONE) {
-                /* Check held keys per §10.4 item 2 */
-                buffered = input_buffer_check_held_keys();
-            }
-
-            if (buffered != ACTION_NONE) {
-                resolve_action(ps, buffered);
+                    if (buffered != ACTION_NONE) {
+                        resolve_action(ps, buffered);
+                    }
+                }
             }
         }
     }

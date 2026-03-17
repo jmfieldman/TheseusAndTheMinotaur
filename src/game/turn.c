@@ -3,6 +3,80 @@
 #include "../engine/utils.h"
 #include <string.h>
 
+/* ── Deferred win check ────────────────────────────────── */
+
+TurnResult turn_check_deferred_win(Grid* grid, TurnRecord* record) {
+    if (!grid->theseus_on_exit || grid->level_lost) {
+        return TURN_RESULT_CONTINUE;
+    }
+
+    /* Confirm: Theseus is still on the exit tile and alive */
+    if (grid->theseus_col != grid->exit_col ||
+        grid->theseus_row != grid->exit_row) {
+        grid->theseus_on_exit = false;
+        return TURN_RESULT_CONTINUE;
+    }
+
+    /* Win confirmed — build a synthetic TurnRecord for the forced exit hop */
+    grid->level_won = true;
+    grid->theseus_on_exit = false;
+
+    /* Compute the virtual exit tile position (one step outside the grid) */
+    int virtual_col = grid->exit_col + direction_dcol(grid->exit_side);
+    int virtual_row = grid->exit_row + direction_drow(grid->exit_side);
+
+    if (record) {
+        memset(record, 0, sizeof(*record));
+        record->theseus_from_col   = grid->exit_col;
+        record->theseus_from_row   = grid->exit_row;
+        record->theseus_to_col     = virtual_col;
+        record->theseus_to_row     = virtual_row;
+        record->theseus_moved      = true;
+        record->minotaur_start_col = grid->minotaur_col;
+        record->minotaur_start_row = grid->minotaur_row;
+        record->minotaur_after1_col = grid->minotaur_col;
+        record->minotaur_after1_row = grid->minotaur_row;
+        record->minotaur_after2_col = grid->minotaur_col;
+        record->minotaur_after2_row = grid->minotaur_row;
+        record->minotaur_steps     = 0;
+        record->result             = TURN_RESULT_WIN;
+
+        /* Record a standard hop event for the forced exit step */
+        AnimEvent hop_evt = {
+            .type     = ANIM_EVT_THESEUS_HOP,
+            .phase    = ANIM_EVENT_PHASE_THESEUS,
+            .from_col = grid->exit_col,
+            .from_row = grid->exit_row,
+            .to_col   = virtual_col,
+            .to_row   = virtual_row,
+            .entity   = ENTITY_THESEUS,
+        };
+        turn_record_push_event(record, &hop_evt);
+
+        /* Record a gate lock event for the exit door closing behind Theseus */
+        AnimEvent gate_evt = {
+            .type     = ANIM_EVT_GATE_LOCK,
+            .phase    = ANIM_EVENT_PHASE_THESEUS_EFFECT,
+            .from_col = grid->exit_col,
+            .from_row = grid->exit_row,
+            .to_col   = grid->exit_col,
+            .to_row   = grid->exit_row,
+        };
+        gate_evt.gate.gate_side = grid->exit_side;
+        turn_record_push_event(record, &gate_evt);
+    }
+
+    /* Move Theseus logically to the virtual tile.
+     * Note: turn_count is NOT incremented for the forced step. */
+    grid->theseus_col = virtual_col;
+    grid->theseus_row = virtual_row;
+
+    /* Seal the exit door (place a wall so the Minotaur is visually blocked) */
+    grid_set_wall(grid, grid->exit_col, grid->exit_row, grid->exit_side, true);
+
+    return TURN_RESULT_WIN;
+}
+
 /* ── Environment phase ─────────────────────────────────── */
 
 void turn_run_environment_phase(Grid* grid) {
@@ -118,13 +192,18 @@ static TurnResult ice_slide_with_waypoints(Grid* grid, Direction dir,
     return TURN_RESULT_CONTINUE;
 }
 
-/* ── Exit check ────────────────────────────────────────── */
+/* ── Exit check (deferred win) ─────────────────────────── */
 
-static bool try_exit(Grid* grid, Direction player_dir) {
+/*
+ * Check if Theseus is on the exit tile and moved in the exit direction.
+ * Instead of winning immediately, set the deferred flag.  The full turn
+ * cycle (environment + minotaur) still runs.  The win is confirmed at the
+ * start of the NEXT turn if Theseus is still alive.
+ */
+static bool check_exit_deferred(Grid* grid) {
     if (grid->theseus_col == grid->exit_col &&
-        grid->theseus_row == grid->exit_row &&
-        player_dir == grid->exit_side) {
-        grid->level_won = true;
+        grid->theseus_row == grid->exit_row) {
+        grid->theseus_on_exit = true;
         return true;
     }
     return false;
@@ -160,21 +239,11 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
 
     /* ── Phase 1: Theseus ── */
 
-    if (player_dir != DIR_NONE) {
-        /* Check for exit first */
-        if (try_exit(grid, player_dir)) {
-            grid->turn_count++;
-            if (record) {
-                record->theseus_to_col = grid->theseus_col + direction_dcol(player_dir);
-                record->theseus_to_row = grid->theseus_row + direction_drow(player_dir);
-                record->theseus_moved  = true;
-                record_minotaur_nomove(record, grid);
-                record->result = TURN_RESULT_WIN;
-            }
-            result = TURN_RESULT_WIN;
-            goto done;
-        }
+    /* Clear deferred exit flag at the start of each turn —
+     * it is re-set below if Theseus is still on the exit tile. */
+    grid->theseus_on_exit = false;
 
+    if (player_dir != DIR_NONE) {
         int tc = grid->theseus_col + direction_dcol(player_dir);
         int tr = grid->theseus_row + direction_drow(player_dir);
 
@@ -310,6 +379,12 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
         }
     }
 
+    /* ── Deferred exit check ── */
+    /* If Theseus is on the exit tile after his move (or wait), set the
+     * flag but let the environment and minotaur phases run normally.
+     * The win is confirmed at the start of the NEXT turn. */
+    check_exit_deferred(grid);
+
     /* ── Phase 2: Environment ── */
 
     turn_run_environment_phase(grid);
@@ -413,6 +488,10 @@ TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record) {
     result = TURN_RESULT_CONTINUE;
 
 done:
+    /* Clear deferred exit if Theseus died this turn */
+    if (grid->level_lost) {
+        grid->theseus_on_exit = false;
+    }
     grid->active_record = NULL;
     return result;
 }

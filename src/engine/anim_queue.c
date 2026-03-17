@@ -345,6 +345,42 @@ static void start_minotaur_step2(AnimQueue* aq) {
     }
 }
 
+/* ── Win phase starters ────────────────────────────────── */
+
+static void start_win_exit_phase(AnimQueue* aq) {
+    const TurnRecord* r = &aq->record;
+    aq->phase = ANIM_PHASE_WIN_EXIT;
+
+    /* Find the exit direction from the gate lock event */
+    aq->win_exit_dir = DIR_NONE;
+    for (int i = 0; i < r->event_count; i++) {
+        if (r->events[i].type == ANIM_EVT_GATE_LOCK &&
+            r->events[i].phase == ANIM_EVENT_PHASE_THESEUS_EFFECT) {
+            aq->win_exit_dir  = r->events[i].gate.gate_side;
+            aq->win_gate_col  = r->events[i].from_col;
+            aq->win_gate_row  = r->events[i].from_row;
+            aq->win_gate_side = r->events[i].gate.gate_side;
+            break;
+        }
+    }
+
+    /* Standard hop from exit tile to virtual tile */
+    tween_init(&aq->win_exit_x, (float)r->theseus_from_col,
+               (float)r->theseus_to_col,
+               ANIM_WIN_EXIT_DURATION, ease_out_cubic);
+    tween_init(&aq->win_exit_y, (float)r->theseus_from_row,
+               (float)r->theseus_to_row,
+               ANIM_WIN_EXIT_DURATION, ease_out_cubic);
+    tween_init(&aq->win_exit_hop, 0.0f, 1.0f,
+               ANIM_WIN_EXIT_DURATION, ease_parabolic_arc);
+}
+
+static void start_win_gate_phase(AnimQueue* aq) {
+    aq->phase = ANIM_PHASE_WIN_GATE;
+    tween_init(&aq->win_gate, 0.0f, 1.0f,
+               ANIM_WIN_GATE_DURATION, ease_out_quad);
+}
+
 /*
  * Update env_theseus/minotaur tracking positions after the current
  * env event finishes animating.  This prevents actors from snapping
@@ -916,6 +952,14 @@ void anim_queue_start(AnimQueue* aq, const TurnRecord* record) {
     aq->reversing = false;
     aq->effect_event_idx = -1;
 
+    /* Deferred win: the record from turn_check_deferred_win() contains
+     * only the forced exit hop + gate lock events.  Skip straight to
+     * the win exit phase instead of playing a normal turn animation. */
+    if (record->result == TURN_RESULT_WIN) {
+        start_win_exit_phase(aq);
+        return;
+    }
+
     start_theseus_phase(aq);
 }
 
@@ -1244,6 +1288,9 @@ static void anim_queue_update_reverse(AnimQueue* aq, float dt) {
     }
 
     case ANIM_PHASE_IDLE:
+    case ANIM_PHASE_WIN_EXIT:
+    case ANIM_PHASE_WIN_GATE:
+        /* Win phases are never reversed (no undo from win state) */
         break;
     }
 }
@@ -1395,7 +1442,7 @@ void anim_queue_update(AnimQueue* aq, float dt) {
         {
             TurnResult res = aq->record.result;
             if (aq->record.minotaur_steps == 0 &&
-                (res == TURN_RESULT_WIN || res == TURN_RESULT_LOSS_COLLISION)) {
+                res == TURN_RESULT_LOSS_COLLISION) {
                 aq->playing = false;
                 aq->phase = ANIM_PHASE_IDLE;
                 return;
@@ -1529,6 +1576,24 @@ void anim_queue_update(AnimQueue* aq, float dt) {
         }
         break;
 
+    case ANIM_PHASE_WIN_EXIT:
+        tween_update(&aq->win_exit_x, dt);
+        tween_update(&aq->win_exit_y, dt);
+        tween_update(&aq->win_exit_hop, dt);
+        if (aq->win_exit_x.finished && aq->win_exit_y.finished) {
+            start_win_gate_phase(aq);
+        }
+        break;
+
+    case ANIM_PHASE_WIN_GATE:
+        tween_update(&aq->win_gate, dt);
+        if (aq->win_gate.finished) {
+            /* Win animation complete (6.8a stops here — 6.8b adds celebrate) */
+            aq->playing = false;
+            aq->phase = ANIM_PHASE_IDLE;
+        }
+        break;
+
     case ANIM_PHASE_IDLE:
         break;
     }
@@ -1543,11 +1608,14 @@ AnimPhase anim_queue_phase(const AnimQueue* aq) {
 }
 
 bool anim_queue_in_buffer_window(const AnimQueue* aq) {
-    /* Buffer window is open during ANY animation phase (forward or reverse).
-     * This lets the player queue their next action at any time while
-     * animations are playing. Fast-forward kicks in as soon as input
-     * is buffered, so remaining animations resolve quickly. */
-    return aq->playing;
+    /* Buffer window is open during ANY animation phase (forward or reverse)
+     * EXCEPT win phases — input is blocked during the win animation. */
+    if (!aq->playing) return false;
+    if (aq->phase == ANIM_PHASE_WIN_EXIT ||
+        aq->phase == ANIM_PHASE_WIN_GATE) {
+        return false;
+    }
+    return true;
 }
 
 void anim_queue_theseus_pos(const AnimQueue* aq,
@@ -1711,6 +1779,9 @@ void anim_queue_minotaur_pos(const AnimQueue* aq,
         break;
 
     case ANIM_PHASE_IDLE:
+    case ANIM_PHASE_WIN_EXIT:
+    case ANIM_PHASE_WIN_GATE:
+        /* During win phases, Minotaur stays at final position */
         *out_col = (float)aq->record.minotaur_after2_col;
         *out_row = (float)aq->record.minotaur_after2_row;
         break;
@@ -1822,4 +1893,40 @@ float anim_queue_minotaur_teleport_progress(const AnimQueue* aq, int* out_phase)
         *out_phase = (aq->mino_sub == MINO_SUB_TELEPORT_OUT) ? 0 : 1;
     }
     return tween_value(&aq->mino_effect);
+}
+
+/* ── Win animation queries ─────────────────────────────── */
+
+AnimPhase anim_queue_win_phase(const AnimQueue* aq) {
+    if (aq->phase == ANIM_PHASE_WIN_EXIT ||
+        aq->phase == ANIM_PHASE_WIN_GATE) {
+        return aq->phase;
+    }
+    return ANIM_PHASE_IDLE;
+}
+
+Direction anim_queue_win_exit_dir(const AnimQueue* aq) {
+    return aq->win_exit_dir;
+}
+
+void anim_queue_win_exit_pos(const AnimQueue* aq,
+                              float* out_col, float* out_row,
+                              float* out_hop) {
+    if (aq->phase == ANIM_PHASE_WIN_EXIT) {
+        *out_col = tween_value(&aq->win_exit_x);
+        *out_row = tween_value(&aq->win_exit_y);
+        *out_hop = tween_value(&aq->win_exit_hop);
+    } else {
+        /* After exit phase, Theseus is at the virtual tile */
+        *out_col = (float)aq->record.theseus_to_col;
+        *out_row = (float)aq->record.theseus_to_row;
+        *out_hop = 0.0f;
+    }
+}
+
+float anim_queue_win_gate_progress(const AnimQueue* aq) {
+    if (aq->phase == ANIM_PHASE_WIN_GATE) {
+        return tween_value(&aq->win_gate);
+    }
+    return -1.0f;
 }

@@ -36,6 +36,8 @@ typedef enum {
     ANIM_PHASE_ENVIRONMENT,          /* environment phase per-event animations */
     ANIM_PHASE_MINOTAUR_STEP1,       /* Minotaur step 1 */
     ANIM_PHASE_MINOTAUR_STEP2,       /* Minotaur step 2 */
+    ANIM_PHASE_WIN_EXIT,             /* forced exit hop onto virtual tile */
+    ANIM_PHASE_WIN_GATE,             /* exit door locks behind Theseus */
 } AnimPhase;
 
 /* Theseus sub-phase for multi-part moves */
@@ -80,6 +82,8 @@ typedef enum {
 #define ANIM_CONVEYOR_DURATION   0.15f
 #define ANIM_TURNSTILE_DURATION  0.20f
 #define ANIM_ENV_MIN_PAUSE       0.10f
+#define ANIM_WIN_EXIT_DURATION   0.15f  /* forced exit hop (~same as normal hop) */
+#define ANIM_WIN_GATE_DURATION   0.30f  /* exit door lock animation */
 
 typedef struct {
     AnimPhase        phase;
@@ -138,6 +142,18 @@ typedef struct {
 
     /* ── Fast-forward ─────────────────────────── */
     bool             fast_forward;    /* true when buffered input is pending */
+
+    /* ── Win exit animation ────────────────────── */
+    Tween            win_exit_x;     /* hop X (column) */
+    Tween            win_exit_y;     /* hop Y (row) */
+    Tween            win_exit_hop;   /* parabolic arc height */
+    Direction        win_exit_dir;   /* direction Theseus exits */
+
+    /* ── Win gate lock animation ───────────────── */
+    Tween            win_gate;       /* gate lock progress 0→1 */
+    int              win_gate_col;   /* exit tile col (where gate appears) */
+    int              win_gate_row;   /* exit tile row */
+    Direction        win_gate_side;  /* which side of the tile the gate is on */
 } AnimQueue;
 
 /* Initialize the animation queue (idle state). */
@@ -258,5 +274,29 @@ float anim_queue_minotaur_teleport_progress(const AnimQueue* aq, int* out_phase)
  * (undo) playback.
  */
 void anim_queue_set_fast_forward(AnimQueue* aq, bool fast);
+
+/* ── Win animation queries ──────────────────────── */
+
+/*
+ * Get the current win animation sub-phase.
+ * Returns ANIM_PHASE_WIN_EXIT, ANIM_PHASE_WIN_GATE, or ANIM_PHASE_IDLE
+ * if not in a win animation.
+ */
+AnimPhase anim_queue_win_phase(const AnimQueue* aq);
+
+/* Get the exit direction for the win animation. */
+Direction anim_queue_win_exit_dir(const AnimQueue* aq);
+
+/*
+ * Get interpolated Theseus position during win exit hop.
+ * Valid during ANIM_PHASE_WIN_EXIT; otherwise returns final position
+ * from the record.
+ */
+void anim_queue_win_exit_pos(const AnimQueue* aq,
+                              float* out_col, float* out_row,
+                              float* out_hop);
+
+/* Get the win gate lock progress (0→1). Returns -1 if not in gate phase. */
+float anim_queue_win_gate_progress(const AnimQueue* aq);
 
 #endif /* ENGINE_ANIM_QUEUE_H */

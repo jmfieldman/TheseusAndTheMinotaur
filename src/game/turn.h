@@ -14,10 +14,11 @@
  *   3. Minotaur Phase  — Minotaur takes 2 greedy steps
  *
  * Win/loss checks happen:
- *   - After Theseus moves (collision with Minotaur = loss,
- *     stepping through exit = win)
+ *   - After Theseus moves (collision with Minotaur = loss)
+ *   - After Theseus moves (deferred exit check: sets flag, does NOT win yet)
  *   - After environment phase (hazard kills Theseus = loss)
  *   - After each Minotaur step (collision = loss)
+ *   - At start of NEXT turn via turn_check_deferred_win() (win if alive on exit)
  *
  * Undo snapshots are pushed BEFORE the turn executes, so the
  * player can revert the entire turn atomically.
@@ -95,6 +96,21 @@ static inline void turn_record_push_event(TurnRecord* record,
  * Returns the result of the turn.
  */
 TurnResult turn_resolve(Grid* grid, Direction player_dir, TurnRecord* record);
+
+/*
+ * Check and trigger the deferred win condition.
+ *
+ * Call at the start of each turn BEFORE accepting player input.
+ * If Theseus is on the exit tile and alive (theseus_on_exit flag set
+ * from previous turn), fills the record with the forced exit hop
+ * (Theseus stepping onto the virtual tile) and a gate-lock event,
+ * then returns TURN_RESULT_WIN.
+ *
+ * Otherwise returns TURN_RESULT_CONTINUE (no win pending).
+ *
+ * The forced exit step does NOT increment turn_count.
+ */
+TurnResult turn_check_deferred_win(Grid* grid, TurnRecord* record);
 
 /*
  * Run only the environment phase.

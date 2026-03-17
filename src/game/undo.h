@@ -40,6 +40,7 @@ typedef struct {
     int turn_count;
     bool level_won;
     bool level_lost;
+    bool theseus_on_exit;
 
     /*
      * Feature snapshot blob.  Contains serialized state of all features

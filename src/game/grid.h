@@ -63,6 +63,8 @@ typedef struct Grid {
     int  turn_count;                    /* current turn number */
     bool level_won;
     bool level_lost;
+    bool theseus_on_exit;           /* deferred win: Theseus is on the exit tile,
+                                       win triggers at start of next turn if alive */
 } Grid;
 
 /* ── Lifecycle ─────────────────────────────────────────── */
