@@ -175,6 +175,7 @@ typedef struct {
         bool      clockwise;
         bool      valid;
         bool      was_animating;  /* true if this turnstile was animating last frame */
+        float     held_angle;     /* rotation to hold after reverse event ends, until undo_pop */
         int       cells[4][2];    /* the 4 tile positions around junction */
     } turnstile_meshes[MAX_AUTO_TURNSTILES];
     int             turnstile_mesh_count;
@@ -1584,6 +1585,7 @@ static void build_diorama(PuzzleScene* ps) {
         ps->turnstile_meshes[idx].jr = jr;
         ps->turnstile_meshes[idx].clockwise = cw;
         ps->turnstile_meshes[idx].valid = false;
+        ps->turnstile_meshes[idx].held_angle = 0.0f;
 
         /* 4 tiles: NW, NE, SE, SW */
         ps->turnstile_meshes[idx].cells[0][0] = jc - 1;
@@ -1843,8 +1845,8 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
         int jr = ps->turnstile_meshes[ti].jr;
         bool cw = ps->turnstile_meshes[ti].clockwise;
 
-        /* Determine rotation angle from animation */
-        float platform_angle = 0.0f;
+        /* Determine rotation angle from animation or held pose */
+        float platform_angle = ps->turnstile_meshes[ti].held_angle;
         if (anim_queue_is_playing(&ps->anim)) {
             const AnimEvent* cur = anim_queue_current_event(&ps->anim);
             AnimPhase phase = anim_queue_phase(&ps->anim);
@@ -1853,18 +1855,26 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                 cur->turnstile.junction_col == jc &&
                 cur->turnstile.junction_row == jr) {
                 float raw_t = anim_queue_rotation_progress(&ps->anim);
-                /* Linear rotation with snap-oscillation at the end.
-                 * The rotation tween gives 0→1 linearly. We apply a
-                 * small damped overshoot oscillation past t≈0.85 so the
-                 * walls "snap into place" with a quick wiggle. */
                 float target = cw ? (float)M_PI_2 : -(float)M_PI_2;
-                if (raw_t < 0.85f) {
-                    platform_angle = target * (raw_t / 0.85f);
+
+                if (anim_queue_is_reversing(&ps->anim)) {
+                    /* Reverse: the mesh has POST-turn walls (rebuilt after
+                     * the forward turn completed).  Post-turn walls at 0°
+                     * already look like the forward end-state, so we need
+                     * to rotate from 0 → −target to undo the visual turn.
+                     * raw_t goes 1→0, so (raw_t − 1) goes 0→−1. */
+                    platform_angle = target * (raw_t - 1.0f);
                 } else {
-                    float u = (raw_t - 0.85f) / 0.15f; /* 0→1 in last 15% */
-                    float osc = sinf(u * (float)M_PI * 2.0f)
-                              * (1.0f - u) * 0.04f;
-                    platform_angle = target * (1.0f + osc);
+                    /* Forward: linear rotation with snap-oscillation at
+                     * the end.  raw_t goes 0→1. */
+                    if (raw_t < 0.85f) {
+                        platform_angle = target * (raw_t / 0.85f);
+                    } else {
+                        float u = (raw_t - 0.85f) / 0.15f; /* 0→1 in last 15% */
+                        float osc = sinf(u * (float)M_PI * 2.0f)
+                                  * (1.0f - u) * 0.04f;
+                        platform_angle = target * (1.0f + osc);
+                    }
                 }
             }
         }
@@ -2189,7 +2199,9 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                         float raw_t = anim_queue_rotation_progress(&ps->anim);
                         bool cw_dir = env_cur->turnstile.clockwise;
                         float target = cw_dir ? (float)M_PI_2 : -(float)M_PI_2;
-                        if (raw_t < 0.85f) {
+                        if (anim_queue_is_reversing(&ps->anim)) {
+                            turnstile_yaw = target * (raw_t - 1.0f);
+                        } else if (raw_t < 0.85f) {
                             turnstile_yaw = target * (raw_t / 0.85f);
                         } else {
                             float u = (raw_t - 0.85f) / 0.15f;
@@ -2728,7 +2740,9 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                     float raw_t = anim_queue_rotation_progress(&ps->anim);
                     bool cw_dir = env_cur->turnstile.clockwise;
                     float target = cw_dir ? (float)M_PI_2 : -(float)M_PI_2;
-                    if (raw_t < 0.85f) {
+                    if (anim_queue_is_reversing(&ps->anim)) {
+                        thes_turnstile_yaw = target * (raw_t - 1.0f);
+                    } else if (raw_t < 0.85f) {
                         thes_turnstile_yaw = target * (raw_t / 0.85f);
                     } else {
                         float u = (raw_t - 0.85f) / 0.15f;
@@ -3031,6 +3045,17 @@ static void puzzle_update(State* self, float dt) {
                 ps->undo_anim_pending = false;
                 undo_pop(&ps->undo, ps->grid);
 
+                /* Regenerate all turnstile meshes from the now-correct
+                 * grid state.  Without this, meshes built during the
+                 * reverse animation still reflect the POST-turn wall
+                 * layout, causing a visible flicker on the next forward
+                 * turn. */
+                for (int ti = 0; ti < ps->turnstile_mesh_count; ti++) {
+                    if (ps->turnstile_meshes[ti].valid)
+                        regenerate_turnstile_mesh(ps, ti);
+                    ps->turnstile_meshes[ti].held_angle = 0.0f;
+                }
+
                 /* Check for buffered action (e.g. rapid undo presses) */
                 SemanticAction buffered = input_buffer_consume(&ps->input_buf);
                 if (buffered == ACTION_NONE) {
@@ -3167,6 +3192,23 @@ static void puzzle_update(State* self, float dt) {
             }
         }
         if (ps->turnstile_meshes[ti].was_animating && !is_animating) {
+            /* During reverse (undo) playback, the turnstile event finishes
+             * early (events play in reverse order) but undo_pop hasn't
+             * restored the grid yet.  Skip regeneration here — the meshes
+             * will be rebuilt from the correct grid state after undo_pop
+             * completes (see the undo_anim_pending block above). */
+            if (anim_queue_is_reversing(&ps->anim)) {
+                /* Latch the final reverse rotation angle so the mesh
+                 * stays in the correct visual position while the rest
+                 * of the undo animation (theseus move, etc.) plays out.
+                 * Cleared when undo_pop regenerates meshes. */
+                float target = ps->turnstile_meshes[ti].clockwise
+                    ? (float)M_PI_2 : -(float)M_PI_2;
+                ps->turnstile_meshes[ti].held_angle = -target;
+                ps->turnstile_meshes[ti].was_animating = is_animating;
+                continue;
+            }
+
             /* Update minotaur facing angle if it was on this turnstile */
             if (anim_queue_is_playing(&ps->anim) || ps->anim.record.event_count > 0) {
                 /* Find the most recent auto-turnstile event for this junction */
@@ -3177,7 +3219,7 @@ static void puzzle_update(State* self, float dt) {
                         e->turnstile.junction_row == ps->turnstile_meshes[ti].jr &&
                         e->turnstile.actor_moved[1]) {
                         /* Minotaur was on this turnstile — rotate facing angle.
-                         * Sign matches platform rendering: cw → +π/2 */
+                         * Sign matches platform rendering: cw → +π/2. */
                         float rot = ps->turnstile_meshes[ti].clockwise
                             ? (float)M_PI_2 : -(float)M_PI_2;
                         ps->mino_facing_angle += rot;
