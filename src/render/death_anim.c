@@ -407,6 +407,83 @@ static void apply_walk_into_scatter(DeathAnim* da) {
     }
 }
 
+/*
+ * DEATH_SPIKE scatter: spike extends under Theseus.
+ * Same radial burst pattern as generic but with reduced impulse —
+ * voxels scatter outward but don't fly as far.
+ */
+static void apply_spike_scatter(DeathAnim* da) {
+    for (int i = 0; i < da->count; i++) {
+        DeathVoxel* v = &da->voxels[i];
+
+        float dx = v->pos[0] - da->center_x;
+        float dz = v->pos[2] - da->center_z;
+        float dlen = sqrtf(dx * dx + dz * dz);
+        if (dlen > 0.001f) { dx /= dlen; dz /= dlen; }
+
+        unsigned int seed = (unsigned int)(i * 2654435761u);
+        float rand1 = ((float)(seed & 0xFFFF) / 65535.0f) * 2.0f - 1.0f;
+        seed = seed * 1664525u + 1013904223u;
+        float rand2 = ((float)(seed & 0xFFFF) / 65535.0f) * 2.0f - 1.0f;
+        seed = seed * 1664525u + 1013904223u;
+        float rand3 = ((float)(seed & 0xFFFF) / 65535.0f);
+
+        /* Reduced horizontal scatter (~40% of generic) */
+        v->vel[0] = dx * 1.6f + rand1 * 0.6f;
+        v->vel[2] = dz * 1.6f + rand2 * 0.6f;
+
+        /* Reduced upward launch */
+        v->vel[1] = 1.0f + rand3 * 1.5f;
+
+        /* Moderate spin */
+        seed = seed * 1664525u + 1013904223u;
+        v->angular_vel[0] = ((float)(seed & 0xFFFF) / 65535.0f - 0.5f) * 8.0f;
+        seed = seed * 1664525u + 1013904223u;
+        v->angular_vel[1] = ((float)(seed & 0xFFFF) / 65535.0f - 0.5f) * 8.0f;
+        seed = seed * 1664525u + 1013904223u;
+        v->angular_vel[2] = ((float)(seed & 0xFFFF) / 65535.0f - 0.5f) * 8.0f;
+    }
+}
+
+/*
+ * DEATH_SPIKE_WALK scatter: Theseus walks onto extended spikes.
+ * Voxels crumble downward and scatter in a small circle around the
+ * spike positions — the upward force from the spikes prevents any
+ * significant upward launch.
+ */
+static void apply_spike_walk_scatter(DeathAnim* da) {
+    for (int i = 0; i < da->count; i++) {
+        DeathVoxel* v = &da->voxels[i];
+
+        float dx = v->pos[0] - da->center_x;
+        float dz = v->pos[2] - da->center_z;
+        float dlen = sqrtf(dx * dx + dz * dz);
+        if (dlen > 0.001f) { dx /= dlen; dz /= dlen; }
+
+        unsigned int seed = (unsigned int)(i * 2654435761u);
+        float rand1 = ((float)(seed & 0xFFFF) / 65535.0f) * 2.0f - 1.0f;
+        seed = seed * 1664525u + 1013904223u;
+        float rand2 = ((float)(seed & 0xFFFF) / 65535.0f) * 2.0f - 1.0f;
+        seed = seed * 1664525u + 1013904223u;
+        float rand3 = ((float)(seed & 0xFFFF) / 65535.0f);
+
+        /* Small radial scatter — crumble close to the spikes */
+        v->vel[0] = dx * 0.4f + rand1 * 0.3f;
+        v->vel[2] = dz * 0.4f + rand2 * 0.3f;
+
+        /* Minimal upward pop — pieces mostly fall */
+        v->vel[1] = 0.2f + rand3 * 0.5f;
+
+        /* Gentle tumble */
+        seed = seed * 1664525u + 1013904223u;
+        v->angular_vel[0] = ((float)(seed & 0xFFFF) / 65535.0f - 0.5f) * 5.0f;
+        seed = seed * 1664525u + 1013904223u;
+        v->angular_vel[1] = ((float)(seed & 0xFFFF) / 65535.0f - 0.5f) * 5.0f;
+        seed = seed * 1664525u + 1013904223u;
+        v->angular_vel[2] = ((float)(seed & 0xFFFF) / 65535.0f - 0.5f) * 5.0f;
+    }
+}
+
 /* ── Wall collision ────────────────────────────────────── */
 
 /*
@@ -509,9 +586,12 @@ void death_anim_init(DeathAnim* da, DeathType type,
              * the actual direction — then re-applied in set_approach. */
             apply_walk_into_scatter(da);
             break;
-        /* Specific death types will be implemented in Steps 6.12–6.14.
-         * For now, remaining types use the generic scatter. */
         case DEATH_SPIKE:
+            apply_spike_scatter(da);
+            break;
+        case DEATH_SPIKE_WALK:
+            apply_spike_walk_scatter(da);
+            break;
         case DEATH_PETRIFY:
         case DEATH_PIT_FALL:
         case DEATH_GENERIC:

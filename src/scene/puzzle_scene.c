@@ -3888,7 +3888,36 @@ static void puzzle_update(State* self, float dt) {
                     if (ps->pending_result == TURN_RESULT_LOSS_COLLISION) {
                         dtype = (rec->minotaur_steps == 0) ? DEATH_WALK_INTO : DEATH_SQUISH;
                     } else {
-                        dtype = DEATH_GENERIC;
+                        /* Hazard death — check if spike-related */
+                        int tc = ps->grid->theseus_col;
+                        int tr = ps->grid->theseus_row;
+                        bool spike_extended_under = false;
+                        for (int ei = 0; ei < rec->event_count; ei++) {
+                            if (rec->events[ei].type == ANIM_EVT_SPIKE_CHANGE &&
+                                rec->events[ei].spike.extended &&
+                                rec->events[ei].from_col == tc &&
+                                rec->events[ei].from_row == tr) {
+                                spike_extended_under = true;
+                                break;
+                            }
+                        }
+                        if (spike_extended_under) {
+                            dtype = DEATH_SPIKE;
+                        } else {
+                            /* Check if Theseus is on a spike trap tile
+                             * (walked onto already-extended spikes) */
+                            const Cell* cell = grid_cell_const(ps->grid, tc, tr);
+                            bool on_spike = false;
+                            for (int fi = 0; fi < cell->feature_count; fi++) {
+                                if (cell->features[fi] && cell->features[fi]->vt &&
+                                    cell->features[fi]->vt->name &&
+                                    strcmp(cell->features[fi]->vt->name, "spike_trap") == 0) {
+                                    on_spike = true;
+                                    break;
+                                }
+                            }
+                            dtype = on_spike ? DEATH_SPIKE_WALK : DEATH_GENERIC;
+                        }
                     }
 
                     death_anim_init(&ps->death_anim, dtype,

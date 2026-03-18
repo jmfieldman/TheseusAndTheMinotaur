@@ -30,7 +30,8 @@
 typedef enum {
     DEATH_SQUISH,       /* Minotaur rolls onto Theseus */
     DEATH_WALK_INTO,    /* Theseus walks into Minotaur */
-    DEATH_SPIKE,        /* Spike trap impales Theseus */
+    DEATH_SPIKE,        /* Spike trap extends under Theseus (reduced burst) */
+    DEATH_SPIKE_WALK,   /* Theseus walks onto extended spikes (crumble in place) */
     DEATH_PETRIFY,      /* Medusa petrification */
     DEATH_PIT_FALL,     /* Fall into pit */
     DEATH_GENERIC       /* Fallback scatter (used until specific types are implemented) */
