@@ -165,6 +165,11 @@ typedef struct {
     bool             win_is_optimal;       /* true if turn_count <= optimal_turns */
     float            win_celebrate_col;    /* position (virtual tile) */
     float            win_celebrate_row;
+
+    /* ── Walk-into death reverse override ──────── */
+    bool             walk_into_reverse;       /* true: reverse hop uses fractional start pos */
+    float            walk_into_start_col;     /* fractional start col for reverse hop */
+    float            walk_into_start_row;     /* fractional start row for reverse hop */
 } AnimQueue;
 
 /* Initialize the animation queue (idle state). */

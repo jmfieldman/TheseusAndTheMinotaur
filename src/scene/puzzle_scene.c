@@ -262,6 +262,20 @@ typedef struct {
     DeathAnim       death_anim;
     bool            death_anim_pending;  /* true: death anim running, result deferred */
 
+    /* Minotaur recoil pulse (Step 6.11 — walk-into-minotaur impact) */
+    bool            mino_recoil_active;
+    float           mino_recoil_timer;
+    #define MINO_RECOIL_DURATION 0.15f
+    #define MINO_RECOIL_AMPLITUDE 0.08f
+
+    /* Death camera shake constants */
+    #define DEATH_SHAKE_DURATION 0.25f
+    #define DEATH_SHAKE_AMPLITUDE 0.05f
+
+    /* Walk-into death: mid-hop position where death was triggered */
+    float           walk_into_death_col;
+    float           walk_into_death_row;
+
     /* Debug animation speed (P key cycles through multipliers) */
     float           debug_anim_speed;  /* 0.125, 0.25, 0.5, or 1.0 */
 } PuzzleScene;
@@ -417,6 +431,7 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
                 ps->anim_result_pending = false;
                 ps->pit_fall_active = false;
                 ps->death_anim_pending = false;
+                ps->mino_recoil_active = false;
                 if (death_anim_is_active(&ps->death_anim)) {
                     ps->death_anim.active = false;
                     ps->death_anim.finished = true;
@@ -434,6 +449,7 @@ static void resolve_action(PuzzleScene* ps, SemanticAction action) {
                 ps->anim_result_pending = false;
                 ps->pit_fall_active = false;
                 ps->death_anim_pending = false;
+                ps->mino_recoil_active = false;
                 if (death_anim_is_active(&ps->death_anim)) {
                     ps->death_anim.active = false;
                     ps->death_anim.finished = true;
@@ -2555,6 +2571,15 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
                     mino_deform.flare  = (1.0f - mino_deform.squash) * 0.4f;
                     if (mino_deform.flare < 0.0f) mino_deform.flare = 0.0f;
                 }
+                /* Walk-into recoil: brief scale pulse on impact */
+                else if (ps->mino_recoil_active) {
+                    float rt = ps->mino_recoil_timer / MINO_RECOIL_DURATION;
+                    if (rt > 1.0f) rt = 1.0f;
+                    /* Single sine pulse: 0→peak→0 */
+                    float pulse = sinf(rt * (float)M_PI) * MINO_RECOIL_AMPLITUDE;
+                    mino_deform.squash = 1.0f + pulse;
+                    mino_deform.flare  = -pulse * 0.3f;
+                }
             }
 
             /* ── Draw body ── */
@@ -3384,6 +3409,8 @@ static void puzzle_on_enter(State* self) {
     ps->pit_fall_timer = 0.0f;
     ps->death_anim_pending = false;
     memset(&ps->death_anim, 0, sizeof(DeathAnim));
+    ps->mino_recoil_active = false;
+    ps->mino_recoil_timer = 0.0f;
     ps->debug_anim_speed = 1.0f;
 
     /* Build 3D diorama for verification */
@@ -3564,6 +3591,14 @@ static void puzzle_update(State* self, float dt) {
                 ps->pit_fall_active = false;
                 const TurnRecord* rec = undo_peek_turn_record(&ps->undo);
                 if (rec) {
+                    /* For walk-into deaths, the reverse hop should start
+                     * from the mid-hop position where the death was triggered,
+                     * not from the full destination tile. */
+                    if (ps->death_anim.type == DEATH_WALK_INTO) {
+                        ps->anim.walk_into_reverse = true;
+                        ps->anim.walk_into_start_col = ps->walk_into_death_col;
+                        ps->anim.walk_into_start_row = ps->walk_into_death_row;
+                    }
                     anim_queue_start_reverse(&ps->anim, rec);
                     /* undo_anim_pending already true from resolve_action */
                 }
@@ -3603,6 +3638,49 @@ static void puzzle_update(State* self, float dt) {
         anim_queue_set_fast_forward(&ps->anim, has_pending_input);
 
         anim_queue_update(&ps->anim, dt * ps->debug_anim_speed);
+
+        /* Walk-into death: interrupt hop at ~50% and trigger death mid-air.
+         * The anim queue keeps running (Theseus is hidden), but the death
+         * voxels appear at the interpolated mid-hop position. */
+        if (ps->anim_result_pending &&
+            ps->pending_result == TURN_RESULT_LOSS_COLLISION &&
+            ps->anim.record.minotaur_steps == 0 &&
+            !ps->death_anim_pending &&
+            anim_queue_phase(&ps->anim) == ANIM_PHASE_THESEUS &&
+            tween_progress(&ps->anim.move_x) >= 0.5f) {
+
+            /* Get the interpolated position at the moment of collision */
+            float tcol, trow, thop;
+            anim_queue_theseus_pos(&ps->anim, &tcol, &trow, &thop);
+
+            /* Store mid-hop position for undo reverse */
+            ps->walk_into_death_col = tcol;
+            ps->walk_into_death_row = trow;
+
+            /* Start death animation at the mid-hop position */
+            const TurnRecord* rec = &ps->anim.record;
+            death_anim_init(&ps->death_anim, DEATH_WALK_INTO,
+                            &ps->theseus_parts,
+                            tcol, trow,
+                            ps->grid, &ps->cached_biome);
+
+            /* Theseus's movement direction = approach toward Minotaur */
+            float tdx = (float)(rec->theseus_to_col - rec->theseus_from_col);
+            float tdz = (float)(rec->theseus_to_row - rec->theseus_from_row);
+            death_anim_set_approach(&ps->death_anim, tdx, tdz);
+
+            /* Minotaur recoil pulse on impact */
+            ps->mino_recoil_active = true;
+            ps->mino_recoil_timer = 0.0f;
+
+            /* Camera shake */
+            ps->shake_timer = DEATH_SHAKE_DURATION;
+            ps->shake_max_duration = DEATH_SHAKE_DURATION;
+            ps->shake_amp = DEATH_SHAKE_AMPLITUDE;
+
+            ps->death_anim_pending = true;
+            ps->anim_result_pending = false;  /* don't re-trigger when anim finishes */
+        }
 
         /* Check if animation just completed */
         if (!anim_queue_is_playing(&ps->anim)) {
@@ -3646,21 +3724,29 @@ static void puzzle_update(State* self, float dt) {
                         ps->pit_fall_active = true;
                         ps->pit_fall_timer = 0.0f;
                     }
-                    /* Start death animation — defer result display until it finishes */
-                    DeathType dtype = (ps->pending_result == TURN_RESULT_LOSS_COLLISION)
-                                    ? DEATH_SQUISH : DEATH_GENERIC;
+                    /* Determine death type for collisions:
+                     * - minotaur_steps == 0 means collision happened during
+                     *   Theseus's phase (he walked into the Minotaur) → WALK_INTO
+                     * - minotaur_steps >= 1 means the Minotaur rolled onto
+                     *   Theseus → SQUISH */
+                    const TurnRecord* rec = &ps->anim.record;
+                    DeathType dtype;
+                    if (ps->pending_result == TURN_RESULT_LOSS_COLLISION) {
+                        dtype = (rec->minotaur_steps == 0) ? DEATH_WALK_INTO : DEATH_SQUISH;
+                    } else {
+                        dtype = DEATH_GENERIC;
+                    }
+
                     death_anim_init(&ps->death_anim, dtype,
                                     &ps->theseus_parts,
                                     (float)ps->grid->theseus_col,
                                     (float)ps->grid->theseus_row,
                                     ps->grid, &ps->cached_biome);
-                    /* For squish deaths, set minotaur approach direction
-                     * so voxels scatter away from the roll direction. */
+
                     if (dtype == DEATH_SQUISH) {
-                        const TurnRecord* rec = &ps->anim.record;
+                        /* Minotaur approach direction for squish scatter bias */
                         float mdx, mdz;
                         if (rec->minotaur_steps >= 2) {
-                            /* Use step 2 direction (final approach) */
                             mdx = (float)(rec->minotaur_after2_col - rec->minotaur_after1_col);
                             mdz = (float)(rec->minotaur_after2_row - rec->minotaur_after1_row);
                         } else if (rec->minotaur_steps >= 1) {
@@ -3670,14 +3756,21 @@ static void puzzle_update(State* self, float dt) {
                             mdx = 0.0f; mdz = 0.0f;
                         }
                         death_anim_set_approach(&ps->death_anim, mdx, mdz);
+                    } else if (dtype == DEATH_WALK_INTO) {
+                        /* Theseus's movement direction = approach toward Minotaur */
+                        float tdx = (float)(rec->theseus_to_col - rec->theseus_from_col);
+                        float tdz = (float)(rec->theseus_to_row - rec->theseus_from_row);
+                        death_anim_set_approach(&ps->death_anim, tdx, tdz);
 
-                        /* Stronger camera shake on death impact */
-                        #define DEATH_SHAKE_DURATION 0.25f
-                        #define DEATH_SHAKE_AMPLITUDE 0.05f
-                        ps->shake_timer = DEATH_SHAKE_DURATION;
-                        ps->shake_max_duration = DEATH_SHAKE_DURATION;
-                        ps->shake_amp = DEATH_SHAKE_AMPLITUDE;
+                        /* Minotaur recoil pulse on impact */
+                        ps->mino_recoil_active = true;
+                        ps->mino_recoil_timer = 0.0f;
                     }
+
+                    /* Camera shake on death impact */
+                    ps->shake_timer = DEATH_SHAKE_DURATION;
+                    ps->shake_max_duration = DEATH_SHAKE_DURATION;
+                    ps->shake_amp = DEATH_SHAKE_AMPLITUDE;
                     ps->death_anim_pending = true;
                     ps->anim_result_pending = false;
                 } else {
@@ -3963,6 +4056,14 @@ static void puzzle_update(State* self, float dt) {
         ps->mino_wobble_timer += dt;
         if (ps->mino_wobble_timer >= MINO_WOBBLE_MAX) {
             ps->mino_wobble_active = false;
+        }
+    }
+
+    /* Update minotaur recoil pulse timer (walk-into impact) */
+    if (ps->mino_recoil_active) {
+        ps->mino_recoil_timer += dt;
+        if (ps->mino_recoil_timer >= MINO_RECOIL_DURATION) {
+            ps->mino_recoil_active = false;
         }
     }
 

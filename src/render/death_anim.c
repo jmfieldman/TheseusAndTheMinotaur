@@ -358,6 +358,55 @@ static void apply_squish_scatter(DeathAnim* da) {
     }
 }
 
+/*
+ * DEATH_WALK_INTO scatter: Theseus hops into the Minotaur and shatters
+ * backward on impact.  Higher velocity than squish — like bouncing off
+ * a wall.  Some upward scatter for a dramatic spray, plus lateral spread.
+ *
+ * approach_dx/dz points TOWARD the Minotaur (Theseus's movement direction).
+ * Voxels scatter in the OPPOSITE direction (backward).
+ */
+static void apply_walk_into_scatter(DeathAnim* da) {
+    /* Bounce-back direction = opposite of approach */
+    float back_x = -da->approach_dx;
+    float back_z = -da->approach_dz;
+
+    for (int i = 0; i < da->count; i++) {
+        DeathVoxel* v = &da->voxels[i];
+
+        /* Radial direction from actor center outward — normalize */
+        float rx = v->pos[0] - da->center_x;
+        float rz = v->pos[2] - da->center_z;
+        float rlen = sqrtf(rx * rx + rz * rz);
+        if (rlen > 0.001f) { rx /= rlen; rz /= rlen; }
+
+        /* Deterministic per-voxel noise */
+        unsigned int seed = (unsigned int)(i * 2654435761u);
+        float rand1 = ((float)(seed & 0xFFFF) / 65535.0f) * 2.0f - 1.0f;
+        seed = seed * 1664525u + 1013904223u;
+        float rand2 = ((float)(seed & 0xFFFF) / 65535.0f) * 2.0f - 1.0f;
+        seed = seed * 1664525u + 1013904223u;
+        float rand3 = ((float)(seed & 0xFFFF) / 65535.0f);
+        seed = seed * 1664525u + 1013904223u;
+
+        /* Primary: backward (bouncing off Minotaur)
+         * Secondary: radial spread + random noise */
+        v->vel[0] = back_x * 1.8f + rx * 0.8f + rand1 * 0.5f;
+        v->vel[2] = back_z * 1.8f + rz * 0.8f + rand2 * 0.5f;
+
+        /* Upward spray — moderate arc */
+        v->vel[1] = 1.5f + rand3 * 1.5f;
+
+        /* Moderate spin */
+        seed = seed * 1664525u + 1013904223u;
+        v->angular_vel[0] = ((float)(seed & 0xFFFF) / 65535.0f - 0.5f) * 8.0f;
+        seed = seed * 1664525u + 1013904223u;
+        v->angular_vel[1] = ((float)(seed & 0xFFFF) / 65535.0f - 0.5f) * 8.0f;
+        seed = seed * 1664525u + 1013904223u;
+        v->angular_vel[2] = ((float)(seed & 0xFFFF) / 65535.0f - 0.5f) * 8.0f;
+    }
+}
+
 /* ── Wall collision ────────────────────────────────────── */
 
 /*
@@ -455,9 +504,13 @@ void death_anim_init(DeathAnim* da, DeathType type,
         case DEATH_SQUISH:
             apply_squish_scatter(da);
             break;
-        /* Specific death types will be implemented in Steps 6.10–6.14.
-         * For now, remaining types use the generic scatter. */
         case DEATH_WALK_INTO:
+            /* Initial scatter uses generic until set_approach provides
+             * the actual direction — then re-applied in set_approach. */
+            apply_walk_into_scatter(da);
+            break;
+        /* Specific death types will be implemented in Steps 6.12–6.14.
+         * For now, remaining types use the generic scatter. */
         case DEATH_SPIKE:
         case DEATH_PETRIFY:
         case DEATH_PIT_FALL:
@@ -807,10 +860,12 @@ void death_anim_set_approach(DeathAnim* da, float dx, float dz) {
     }
 
     /* Re-apply scatter with the now-known direction.
-     * This is safe because init already called apply_squish_scatter
-     * with approach=(0,0), and we haven't started updating yet. */
+     * This is safe because init already applied scatter with
+     * approach=(0,0), and we haven't started updating yet. */
     if (da->type == DEATH_SQUISH) {
         apply_squish_scatter(da);
+    } else if (da->type == DEATH_WALK_INTO) {
+        apply_walk_into_scatter(da);
     }
 }
 

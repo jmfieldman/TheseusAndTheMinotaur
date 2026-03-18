@@ -520,7 +520,7 @@ The Minotaur rolls onto Theseus's tile and crushes him. Voxels flatten and scatt
 
 ---
 
-### Step 6.11 — Death: Walk Into Minotaur
+### Step 6.11 — Death: Walk Into Minotaur ✅
 
 Theseus hops toward the Minotaur and shatters on impact. The hop animation cuts short mid-arc.
 

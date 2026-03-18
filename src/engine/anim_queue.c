@@ -935,13 +935,24 @@ static void start_reverse_theseus_phase(AnimQueue* aq) {
         return;
     }
 
-    /* Normal hop reversed: to → from */
+    /* Normal hop reversed: to → from.
+     * For walk-into deaths, the reverse starts from the mid-hop
+     * position (fractional) where the death was triggered. */
     aq->theseus_event_type = ANIM_EVT_THESEUS_HOP;
     aq->theseus_sub = THESEUS_SUB_HOP;
     float dur = rev_dur(ANIM_THESEUS_DURATION);
-    tween_init(&aq->move_x, (float)r->theseus_to_col,
+    float start_col, start_row;
+    if (aq->walk_into_reverse) {
+        start_col = aq->walk_into_start_col;
+        start_row = aq->walk_into_start_row;
+        aq->walk_into_reverse = false;  /* one-shot */
+    } else {
+        start_col = (float)r->theseus_to_col;
+        start_row = (float)r->theseus_to_row;
+    }
+    tween_init(&aq->move_x, start_col,
                (float)r->theseus_from_col, dur, ease_out_cubic);
-    tween_init(&aq->move_y, (float)r->theseus_to_row,
+    tween_init(&aq->move_y, start_row,
                (float)r->theseus_from_row, dur, ease_out_cubic);
     tween_init(&aq->hop, 0.0f, 1.0f, dur, ease_parabolic_arc);
 }
