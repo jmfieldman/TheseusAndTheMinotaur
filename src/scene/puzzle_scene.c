@@ -1264,7 +1264,7 @@ static void build_shadow_resources(PuzzleScene* ps, const ActorShadowConfig* cfg
      * Radial gradient from center (dark) to edge (transparent). */
     {
         int tex_size = 32;  /* small texture, one per voxel is cheap */
-        float extent = 0.08f;  /* world-space half-extent (matches voxel sub-cube size) */
+        float extent = 0.20f;  /* world-space half-extent — noticeably wider than voxel (~0.056) */
         float* shadow = (float*)calloc((size_t)tex_size * (size_t)tex_size, sizeof(float));
 
         for (int ty = 0; ty < tex_size; ty++) {
@@ -1279,8 +1279,12 @@ static void build_shadow_resources(PuzzleScene* ps, const ActorShadowConfig* cfg
                 if (alpha < 0.0f) alpha = 0.0f;
                 /* Smooth the falloff */
                 alpha = alpha * alpha;
-                /* Convert to lit space (1=lit, 0=dark) */
-                shadow[ty * tex_size + tx] = 1.0f - alpha * cfg->shadow_intensity;
+                /* Convert to lit space (1=lit, 0=dark).
+                 * Use a fixed higher intensity for voxel shadows since they are
+                 * small and need to be visible regardless of biome settings. */
+                float voxel_shadow_intensity = cfg->shadow_intensity;
+                if (voxel_shadow_intensity < 0.55f) voxel_shadow_intensity = 0.55f;
+                shadow[ty * tex_size + tx] = 1.0f - alpha * voxel_shadow_intensity;
             }
         }
 
@@ -3323,11 +3327,11 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             float height = v->pos[1] - surf.surface_y;
             if (height < 0.0f) height = 0.0f;
 
-            /* Shadow shrinks with height: full size at ground level,
-             * vanishes beyond ~2 units above the surface. */
-            float fade = 1.0f - height * 0.5f;
+            /* Shadow shrinks and fades with height: full size at ground level,
+             * vanishes beyond ~3 units above the surface. */
+            float fade = 1.0f - height * 0.33f;
             if (fade <= 0.0f) continue;
-            float scale = 0.5f + 0.5f * fade;  /* shrink from 1.0 to 0.5 */
+            float scale = 0.6f + 0.4f * fade;  /* shrink from 1.0 to 0.6 */
 
             draw_shadow_at_y(ps, shader,
                              v->pos[0], ground_y, v->pos[2],

@@ -67,24 +67,29 @@ TileSurface tile_physics_query(const Grid* grid,
             return s;
         }
 
-        /* Auto-turnstile: elevated platform (same height as conveyors) */
-        if (strcmp(f->vt->name, "auto_turnstile") == 0) {
-            /* The turnstile feature lives on one tile but covers a 2×2 area.
-             * Check if (col, row) is one of the 4 junction tiles. */
-            int jc, jr;
-            bool cw;
-            if (auto_turnstile_get_junction(f, &jc, &jr, &cw)) {
-                int cells[4][2] = {
-                    { jc - 1, jr     },
-                    { jc,     jr     },
-                    { jc,     jr - 1 },
-                    { jc - 1, jr - 1 }
-                };
-                for (int t = 0; t < 4; t++) {
-                    if (cells[t][0] == col && cells[t][1] == row) {
-                        s.surface_y = CONVEYOR_HEIGHT;
-                        return s;
-                    }
+    }
+
+    /* Auto-turnstile: the feature is registered on only ONE cell but its
+     * platform covers a 2×2 area.  Scan the grid-level feature list so we
+     * don't miss the other 3 cells. */
+    for (int fi = 0; fi < grid->feature_count; fi++) {
+        const Feature* f = grid->features[fi];
+        if (!f || !f->vt || !f->vt->name) continue;
+        if (strcmp(f->vt->name, "auto_turnstile") != 0) continue;
+
+        int jc, jr;
+        bool cw;
+        if (auto_turnstile_get_junction(f, &jc, &jr, &cw)) {
+            int ts_cells[4][2] = {
+                { jc - 1, jr     },
+                { jc,     jr     },
+                { jc,     jr - 1 },
+                { jc - 1, jr - 1 }
+            };
+            for (int t = 0; t < 4; t++) {
+                if (ts_cells[t][0] == col && ts_cells[t][1] == row) {
+                    s.surface_y = CONVEYOR_HEIGHT;
+                    return s;
                 }
             }
         }
