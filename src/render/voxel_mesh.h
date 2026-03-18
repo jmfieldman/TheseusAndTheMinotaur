@@ -216,4 +216,13 @@ void voxel_mesh_add_polygon_cap(VoxelMesh* mesh,
                                  float r, float g, float b, float a,
                                  AoMode ao_mode);
 
+/* Add a four-sided pyramid (4 triangular side faces + square base).
+ * Base is a rectangle centered at (cx, base_y, cz) with half-extents hw, hd.
+ * Apex is at (cx, base_y + height, cz).
+ * Emits 18 raw vertices (4 side triangles + 2 base triangles). */
+void voxel_mesh_add_pyramid(VoxelMesh* mesh,
+                             float cx, float cz, float base_y,
+                             float half_w, float half_d, float height,
+                             float r, float g, float b, float a);
+
 #endif /* VOXEL_MESH_H */

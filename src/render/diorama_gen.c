@@ -844,17 +844,31 @@ static void gen_features(VoxelMesh* mesh, const Grid* grid,
                 float fz = (float)r;
 
                 if (strcmp(name, "spike_trap") == 0) {
-                    /* Recessed floor panel with thin slit gaps */
+                    /* Recessed floor panel */
                     float inset = 0.1f;
                     add_box(mesh, fx + inset, -0.02f, fz + inset,
                             1.0f - 2.0f * inset, 0.02f, 1.0f - 2.0f * inset,
                             0.35f, 0.30f, 0.25f, 1.0f, false);
-                    /* Slit gaps */
-                    for (int s = 0; s < 3; s++) {
-                        float sx = fx + 0.25f + (float)s * 0.25f;
-                        add_box(mesh, sx - 0.01f, 0.0f, fz + 0.2f,
-                                0.02f, 0.015f, 0.6f,
-                                0.15f, 0.12f, 0.10f, 1.0f, true);
+                    /* Five dark hole quads in die-pip (quincunx) pattern.
+                     * Spikes emerge through these during extension. */
+                    float hole_sz = 0.09f;
+                    float hole_half = hole_sz * 0.5f;
+                    float pip = 0.175f;
+                    float hcx = fx + 0.5f;
+                    float hcz = fz + 0.5f;
+                    float holes[5][2] = {
+                        { hcx,       hcz       },  /* center   */
+                        { hcx - pip, hcz - pip },  /* top-left */
+                        { hcx + pip, hcz - pip },  /* top-right */
+                        { hcx - pip, hcz + pip },  /* bottom-left */
+                        { hcx + pip, hcz + pip },  /* bottom-right */
+                    };
+                    for (int h = 0; h < 5; h++) {
+                        add_box(mesh,
+                                holes[h][0] - hole_half, -0.001f,
+                                holes[h][1] - hole_half,
+                                hole_sz, 0.003f, hole_sz,
+                                0.10f, 0.08f, 0.06f, 1.0f, false);
                     }
                 } else if (strcmp(name, "pressure_plate") == 0) {
                     /* Slightly depressed plate with border rim */

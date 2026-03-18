@@ -150,6 +150,7 @@ typedef struct {
     ActorParts      theseus_parts;   /* dynamic actor: Theseus */
     ActorParts      minotaur_parts;  /* dynamic actor: Minotaur */
     VoxelMesh       groove_box_mesh; /* dynamic: groove box (wooden crate) */
+    VoxelMesh       spike_mesh;      /* dynamic: spike trap spikes (prisms + pyramid tips) */
     GLuint          shadow_vao;
     GLuint          shadow_vbo;      /* simple quad for actor shadow */
     int             shadow_vertex_count;
@@ -1803,6 +1804,7 @@ static void build_diorama(PuzzleScene* ps) {
         actor_render_destroy(&ps->theseus_parts);
         actor_render_destroy(&ps->minotaur_parts);
         voxel_mesh_destroy(&ps->groove_box_mesh);
+        voxel_mesh_destroy(&ps->spike_mesh);
         destroy_shadow_resources(ps);
         destroy_turnstile_meshes(ps);
         free(ps->groove_tile_map);
@@ -2014,6 +2016,48 @@ static void build_diorama(PuzzleScene* ps) {
                                  -2.0f, -0.05f, -2.0f,
                                  4.0f, 0.05f, 4.0f);
         voxel_mesh_build(&ps->groove_box_mesh, box_sz * 0.25f);
+    }
+
+    /* Spike trap spikes — 5 prisms topped with pyramids in die-pip pattern.
+     * Mesh is centered at origin; translated to each spike trap tile at draw time. */
+    {
+        float pip = 0.175f;   /* offset from center for corner pips */
+        float spike_hw = 0.03f;   /* prism half-width */
+        float spike_hd = 0.03f;   /* prism half-depth */
+        float prism_h  = 0.336f;  /* prism body height */
+        float pyra_h   = 0.168f;  /* pyramid tip height */
+        /* total spike height = prism_h + pyra_h = 0.42 */
+
+        float pips[5][2] = {
+            {  0.0f,  0.0f },   /* center */
+            { -pip,  -pip  },   /* top-left */
+            {  pip,  -pip  },   /* top-right */
+            { -pip,   pip  },   /* bottom-left */
+            {  pip,   pip  },   /* bottom-right */
+        };
+
+        /* Dark iron color for prism bodies, lighter metallic for tips */
+        float pr = 0.35f, pg = 0.33f, pb = 0.30f;
+        float tr = 0.50f, tg = 0.48f, tb = 0.45f;
+
+        voxel_mesh_begin(&ps->spike_mesh);
+        for (int i = 0; i < 5; i++) {
+            /* Prism body */
+            voxel_mesh_add_box(&ps->spike_mesh,
+                                pips[i][0] - spike_hw, 0.0f,
+                                pips[i][1] - spike_hd,
+                                spike_hw * 2.0f, prism_h, spike_hd * 2.0f,
+                                pr, pg, pb, 1.0f, true);
+            /* Pyramid tip */
+            voxel_mesh_add_pyramid(&ps->spike_mesh,
+                                    pips[i][0], pips[i][1], prism_h,
+                                    spike_hw, spike_hd, pyra_h,
+                                    tr, tg, tb, 1.0f);
+        }
+        voxel_mesh_add_occluder(&ps->spike_mesh,
+                                 -2.0f, -0.05f, -2.0f,
+                                 4.0f, 0.05f, 4.0f);
+        voxel_mesh_build(&ps->spike_mesh, 0.06f);
     }
 
     /* Precomputed blurred rectangular shadow textures + quad.
@@ -2345,6 +2389,111 @@ static void render_diorama(PuzzleScene* ps, int vw, int vh) {
             model[14] = render_row + 0.5f;
             shader_set_mat4(shader, "u_model", model);
             voxel_mesh_draw(&ps->groove_box_mesh);
+        }
+
+        /* Reset model matrix */
+        {
+            float ident[16];
+            memset(ident, 0, sizeof(ident));
+            ident[0] = ident[5] = ident[10] = ident[15] = 1.0f;
+            shader_set_mat4(shader, "u_model", ident);
+        }
+    }
+
+    /* Draw dynamic spike trap spikes */
+    if (ps->spike_mesh.built && ps->spike_mesh.vertex_count > 0) {
+        bool animating = anim_queue_is_playing(&ps->anim);
+        AnimPhase phase = animating ? anim_queue_phase(&ps->anim) : ANIM_PHASE_IDLE;
+        bool reversing = anim_queue_is_reversing(&ps->anim);
+
+        shader_set_int(shader, "u_has_ao",
+                       voxel_mesh_has_ao(&ps->spike_mesh) ? 1 : 0);
+        shader_set_float(shader, "u_ao_intensity", 1.0f);
+
+        for (int fi = 0; fi < ps->grid->feature_count; fi++) {
+            const Feature* feat = ps->grid->features[fi];
+            if (!feat || !feat->vt || !feat->vt->name) continue;
+            if (strcmp(feat->vt->name, "spike_trap") != 0) continue;
+
+            /* Current game state (already resolved for this turn) */
+            bool hazardous = feat->vt->is_hazardous &&
+                             feat->vt->is_hazardous(feat, ps->grid, feat->col, feat->row);
+            float y_scale = hazardous ? 1.0f : 0.0f;
+
+            if (animating) {
+                /* Find spike_change event for this tile in the turn record */
+                const TurnRecord* rec = &ps->anim.record;
+                int spike_evt_idx = -1;
+                bool extending = false;
+                for (int ei = 0; ei < rec->event_count; ei++) {
+                    if (rec->events[ei].type == ANIM_EVT_SPIKE_CHANGE &&
+                        rec->events[ei].from_col == feat->col &&
+                        rec->events[ei].from_row == feat->row) {
+                        spike_evt_idx = ei;
+                        extending = rec->events[ei].spike.extended;
+                        break;
+                    }
+                }
+
+                if (spike_evt_idx >= 0) {
+                    float pre  = extending ? 0.0f : 1.0f;
+                    float post = extending ? 1.0f : 0.0f;
+
+                    if (phase == ANIM_PHASE_ENVIRONMENT) {
+                        int cur_idx = ps->anim.effect_event_idx;
+                        if (spike_evt_idx == cur_idx) {
+                            /* Currently animating this spike */
+                            float t = anim_queue_effect_progress(&ps->anim);
+                            if (extending) {
+                                /* Damped oscillation: violent extend with bounce
+                                 * y(t) = 1 - exp(-5t) * cos(2.5π t)
+                                 * t=0→y=0, overshoot ~14% at t≈0.4, settles to 1.0 */
+                                y_scale = 1.0f - expf(-5.0f * t)
+                                        * cosf(2.5f * (float)M_PI * t);
+                            } else {
+                                /* Quick retraction */
+                                float ease = t * t; /* ease-in */
+                                y_scale = 1.0f - ease;
+                            }
+                        } else if ((!reversing && spike_evt_idx > cur_idx) ||
+                                   ( reversing && spike_evt_idx < cur_idx)) {
+                            y_scale = pre;  /* pending */
+                        } else {
+                            y_scale = post; /* already played */
+                        }
+                    } else {
+                        /* Before env phase → pre-change; after → post-change */
+                        bool env_done;
+                        if (!reversing) {
+                            env_done = (phase == ANIM_PHASE_MINOTAUR_STEP1 ||
+                                        phase == ANIM_PHASE_MINOTAUR_STEP2);
+                        } else {
+                            env_done = false; /* reverse: env plays before theseus */
+                            if (phase == ANIM_PHASE_MINOTAUR_STEP1 ||
+                                phase == ANIM_PHASE_MINOTAUR_STEP2) {
+                                env_done = false; /* mino first in reverse */
+                            } else {
+                                env_done = true;  /* theseus/effects come after env in reverse */
+                            }
+                        }
+                        y_scale = env_done ? post : pre;
+                    }
+                }
+            }
+
+            if (y_scale < 0.001f) continue;
+
+            float model[16];
+            memset(model, 0, sizeof(model));
+            model[0]  = 1.0f;
+            model[5]  = y_scale;
+            model[10] = 1.0f;
+            model[15] = 1.0f;
+            model[12] = (float)feat->col + 0.5f;
+            model[13] = 0.0f;
+            model[14] = (float)feat->row + 0.5f;
+            shader_set_mat4(shader, "u_model", model);
+            voxel_mesh_draw(&ps->spike_mesh);
         }
 
         /* Reset model matrix */
@@ -3439,6 +3588,7 @@ static void puzzle_on_exit(State* self) {
         actor_render_destroy(&ps->theseus_parts);
         actor_render_destroy(&ps->minotaur_parts);
         voxel_mesh_destroy(&ps->groove_box_mesh);
+        voxel_mesh_destroy(&ps->spike_mesh);
         destroy_shadow_resources(ps);
         free(ps->groove_tile_map);
         ps->groove_tile_map = NULL;
@@ -4165,6 +4315,7 @@ static void puzzle_destroy(State* self) {
         actor_render_destroy(&ps->theseus_parts);
         actor_render_destroy(&ps->minotaur_parts);
         voxel_mesh_destroy(&ps->groove_box_mesh);
+        voxel_mesh_destroy(&ps->spike_mesh);
         destroy_shadow_resources(ps);
         free(ps->groove_tile_map);
         ps->groove_tile_map = NULL;

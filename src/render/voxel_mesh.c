@@ -1084,3 +1084,64 @@ void voxel_mesh_add_polygon_cap(VoxelMesh* mesh,
         raw_verts_append(mesh, tri, 3);
     }
 }
+
+/* Compute face normal for a triangle via cross product (normalized). */
+static void pyramid_face_normal(const float v0[3], const float v1[3],
+                                 const float v2[3], float out[3]) {
+    float e1[3] = { v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2] };
+    float e2[3] = { v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2] };
+    out[0] = e1[1] * e2[2] - e1[2] * e2[1];
+    out[1] = e1[2] * e2[0] - e1[0] * e2[2];
+    out[2] = e1[0] * e2[1] - e1[1] * e2[0];
+    float len = sqrtf(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]);
+    if (len > 1e-8f) { out[0] /= len; out[1] /= len; out[2] /= len; }
+}
+
+void voxel_mesh_add_pyramid(VoxelMesh* mesh,
+                             float cx, float cz, float base_y,
+                             float hw, float hd, float height,
+                             float r, float g, float b, float a) {
+    float am = (float)AO_MODE_ATLAS;
+
+    /* Base corners (Y = base_y) */
+    float c[4][3] = {
+        { cx - hw, base_y, cz - hd },  /* 0: front-left  */
+        { cx + hw, base_y, cz - hd },  /* 1: front-right */
+        { cx + hw, base_y, cz + hd },  /* 2: back-right  */
+        { cx - hw, base_y, cz + hd },  /* 3: back-left   */
+    };
+    float apex[3] = { cx, base_y + height, cz };
+
+    float tri[3 * FLOATS_PER_VERTEX];
+
+    /* 4 triangular side faces */
+    for (int i = 0; i < 4; i++) {
+        int j = (i + 1) % 4;
+        float n[3];
+        pyramid_face_normal(c[i], c[j], apex, n);
+        emit_raw_vert(tri + 0 * 13, c[i][0], c[i][1], c[i][2],
+                      n[0], n[1], n[2], r, g, b, a, 0, 0, am);
+        emit_raw_vert(tri + 1 * 13, c[j][0], c[j][1], c[j][2],
+                      n[0], n[1], n[2], r, g, b, a, 0, 0, am);
+        emit_raw_vert(tri + 2 * 13, apex[0], apex[1], apex[2],
+                      n[0], n[1], n[2], r, g, b, a, 0, 0, am);
+        raw_verts_append(mesh, tri, 3);
+    }
+
+    /* Base quad (facing down) — two triangles */
+    emit_raw_vert(tri + 0 * 13, c[0][0], c[0][1], c[0][2],
+                  0, -1, 0, r, g, b, a, 0, 0, am);
+    emit_raw_vert(tri + 1 * 13, c[2][0], c[2][1], c[2][2],
+                  0, -1, 0, r, g, b, a, 0, 0, am);
+    emit_raw_vert(tri + 2 * 13, c[1][0], c[1][1], c[1][2],
+                  0, -1, 0, r, g, b, a, 0, 0, am);
+    raw_verts_append(mesh, tri, 3);
+
+    emit_raw_vert(tri + 0 * 13, c[0][0], c[0][1], c[0][2],
+                  0, -1, 0, r, g, b, a, 0, 0, am);
+    emit_raw_vert(tri + 1 * 13, c[3][0], c[3][1], c[3][2],
+                  0, -1, 0, r, g, b, a, 0, 0, am);
+    emit_raw_vert(tri + 2 * 13, c[2][0], c[2][1], c[2][2],
+                  0, -1, 0, r, g, b, a, 0, 0, am);
+    raw_verts_append(mesh, tri, 3);
+}
