@@ -235,6 +235,8 @@ typedef struct {
 
     /* Camera shake (triggered on minotaur stomp) */
     float           shake_timer;       /* seconds remaining (0 = inactive) */
+    float           shake_max_duration;/* total duration of the current shake */
+    float           shake_amp;         /* amplitude for the current shake */
     float           shake_offset_x;    /* current random X offset (world units) */
     float           shake_offset_z;    /* current random Z offset (world units) */
 
@@ -3652,6 +3654,30 @@ static void puzzle_update(State* self, float dt) {
                                     (float)ps->grid->theseus_col,
                                     (float)ps->grid->theseus_row,
                                     ps->grid, &ps->cached_biome);
+                    /* For squish deaths, set minotaur approach direction
+                     * so voxels scatter away from the roll direction. */
+                    if (dtype == DEATH_SQUISH) {
+                        const TurnRecord* rec = &ps->anim.record;
+                        float mdx, mdz;
+                        if (rec->minotaur_steps >= 2) {
+                            /* Use step 2 direction (final approach) */
+                            mdx = (float)(rec->minotaur_after2_col - rec->minotaur_after1_col);
+                            mdz = (float)(rec->minotaur_after2_row - rec->minotaur_after1_row);
+                        } else if (rec->minotaur_steps >= 1) {
+                            mdx = (float)(rec->minotaur_after1_col - rec->minotaur_start_col);
+                            mdz = (float)(rec->minotaur_after1_row - rec->minotaur_start_row);
+                        } else {
+                            mdx = 0.0f; mdz = 0.0f;
+                        }
+                        death_anim_set_approach(&ps->death_anim, mdx, mdz);
+
+                        /* Stronger camera shake on death impact */
+                        #define DEATH_SHAKE_DURATION 0.25f
+                        #define DEATH_SHAKE_AMPLITUDE 0.05f
+                        ps->shake_timer = DEATH_SHAKE_DURATION;
+                        ps->shake_max_duration = DEATH_SHAKE_DURATION;
+                        ps->shake_amp = DEATH_SHAKE_AMPLITUDE;
+                    }
                     ps->death_anim_pending = true;
                     ps->anim_result_pending = false;
                 } else {
@@ -3899,6 +3925,8 @@ static void puzzle_update(State* self, float dt) {
                 #define SHAKE_DURATION 0.15f
                 #define SHAKE_AMPLITUDE 0.03f
                 ps->shake_timer = SHAKE_DURATION;
+                ps->shake_max_duration = SHAKE_DURATION;
+                ps->shake_amp = SHAKE_AMPLITUDE;
             }
         }
 
@@ -3918,6 +3946,8 @@ static void puzzle_update(State* self, float dt) {
 
                 #define SHAKE_MID_DURATION 0.10f
                 ps->shake_timer = SHAKE_MID_DURATION;
+                ps->shake_max_duration = SHAKE_MID_DURATION;
+                ps->shake_amp = SHAKE_AMPLITUDE;
             }
             ps->was_mino_in_step1 = in_step1;
         } else {
@@ -3949,9 +3979,9 @@ static void puzzle_update(State* self, float dt) {
             ps->shake_offset_z = 0.0f;
         } else {
             float intensity = g_settings.shake_intensity;
-            float elapsed = SHAKE_DURATION - ps->shake_timer;
+            float elapsed = ps->shake_max_duration - ps->shake_timer;
             float envelope = expf(-elapsed * SHAKE_DAMPING);
-            float amp = SHAKE_AMPLITUDE * intensity * envelope;
+            float amp = ps->shake_amp * intensity * envelope;
             ps->shake_offset_x = amp * sinf(elapsed * SHAKE_FREQ_X);
             ps->shake_offset_z = amp * sinf(elapsed * SHAKE_FREQ_Z);
         }

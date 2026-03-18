@@ -23,8 +23,8 @@
 /* Maximum death voxels per animation */
 #define DEATH_VOXEL_MAX     64
 
-/* Maximum keyframes per voxel (init + collisions + rest) */
-#define VOXEL_KEYFRAME_MAX  8
+/* Maximum keyframes per voxel (init + periodic samples + collisions + rest) */
+#define VOXEL_KEYFRAME_MAX  32
 
 /* Death type — determines scatter pattern (initialized in Steps 6.10–6.14) */
 typedef enum {
@@ -68,6 +68,7 @@ typedef struct {
     /* Keyframe trajectory recording for accurate undo reversal */
     VoxelKeyframe keyframes[VOXEL_KEYFRAME_MAX];
     int           keyframe_count;
+    float         last_keyframe_time; /* time of last recorded keyframe */
 } DeathVoxel;
 
 /* Death animation state */
@@ -82,6 +83,14 @@ typedef struct {
     bool        finished;       /* True when playback (forward or reverse) is done */
     bool        reversing;      /* True during reverse (undo) playback */
     float       reverse_duration; /* Duration of reverse playback */
+
+    /* Actor center (XZ) at decomposition time — for radial scatter */
+    float       center_x;
+    float       center_z;
+
+    /* Squish-specific: approach direction (normalized XZ) for scatter bias */
+    float       approach_dx;
+    float       approach_dz;
 
     /* Environment references for tile queries during simulation */
     const Grid*       grid;
@@ -104,6 +113,13 @@ void death_anim_init(DeathAnim* da, DeathType type,
                      float actor_x, float actor_z,
                      const Grid* grid,
                      const BiomeConfig* biome);
+
+/*
+ * Set the Minotaur's approach direction for DEATH_SQUISH scatter bias.
+ * Call after death_anim_init() and before the first update.
+ * dx, dz: direction the Minotaur was moving (need not be normalized).
+ */
+void death_anim_set_approach(DeathAnim* da, float dx, float dz);
 
 /*
  * Advance the death animation by dt seconds.

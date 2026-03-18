@@ -503,7 +503,7 @@ Wall-bounce collision response and keyframe-based trajectory recording for frame
 
 ---
 
-### Step 6.10 — Death: Minotaur Squish
+### Step 6.10 — Death: Minotaur Squish ✅
 
 The Minotaur rolls onto Theseus's tile and crushes him. Voxels flatten and scatter outward.
 

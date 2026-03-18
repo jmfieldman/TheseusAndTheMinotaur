@@ -22,6 +22,10 @@
 #define DEFAULT_DURATION  3.0f
 #define REVERSE_DURATION_FACTOR 0.5f
 
+/* Squish-specific: Y scale compression phase */
+#define SQUASH_PHASE_DURATION 0.15f  /* seconds to compress Y scale */
+#define SQUASH_SCALE_Y        0.2f   /* compressed Y scale target */
+
 /* Subdivision: decompose actor body into N×N×N sub-cubes */
 #define DECOMPOSE_N  4
 
@@ -269,9 +273,11 @@ static void apply_generic_scatter(DeathAnim* da) {
     for (int i = 0; i < da->count; i++) {
         DeathVoxel* v = &da->voxels[i];
 
-        /* Direction from actor center outward */
-        float dx = v->pos[0] - v->orig_pos[0];
-        float dz = v->pos[2] - v->orig_pos[2];
+        /* Direction from actor center outward — normalize */
+        float dx = v->pos[0] - da->center_x;
+        float dz = v->pos[2] - da->center_z;
+        float dlen = sqrtf(dx * dx + dz * dz);
+        if (dlen > 0.001f) { dx /= dlen; dz /= dlen; }
 
         /* Add some randomness using a simple deterministic hash */
         unsigned int seed = (unsigned int)(i * 2654435761u);
@@ -300,15 +306,33 @@ static void apply_generic_scatter(DeathAnim* da) {
 
 /*
  * DEATH_SQUISH scatter: Minotaur rolls onto Theseus — voxels slide
- * outward along the ground with low force, no upward arc.
+ * outward along the ground with no upward arc.
+ *
+ * The Minotaur's approach direction biases the scatter: voxels scatter
+ * more strongly AWAY from the Minotaur's roll direction.
+ *
+ * Velocities are stored but NOT applied during the squash phase (first
+ * SQUASH_PHASE_DURATION seconds) — the update loop holds them frozen
+ * while Y scale compresses, then releases them.
  */
 static void apply_squish_scatter(DeathAnim* da) {
+    /* Approach direction (set after init via death_anim_set_approach).
+     * Defaults to (0,0) if not set — pure radial scatter. */
+    float adx = da->approach_dx;
+    float adz = da->approach_dz;
+
+    /* "Away" direction = opposite of approach */
+    float away_x = -adx;
+    float away_z = -adz;
+
     for (int i = 0; i < da->count; i++) {
         DeathVoxel* v = &da->voxels[i];
 
-        /* Direction from actor center outward (XZ only) */
-        float dx = v->pos[0] - v->orig_pos[0];
-        float dz = v->pos[2] - v->orig_pos[2];
+        /* Radial direction from actor center outward (XZ only) — normalize */
+        float rx = v->pos[0] - da->center_x;
+        float rz = v->pos[2] - da->center_z;
+        float rlen = sqrtf(rx * rx + rz * rz);
+        if (rlen > 0.001f) { rx /= rlen; rz /= rlen; }
 
         /* Deterministic per-voxel noise */
         unsigned int seed = (unsigned int)(i * 2654435761u);
@@ -317,9 +341,9 @@ static void apply_squish_scatter(DeathAnim* da) {
         float rand2 = ((float)(seed & 0xFFFF) / 65535.0f) * 2.0f - 1.0f;
         seed = seed * 1664525u + 1013904223u;
 
-        /* Moderate horizontal scatter — outward from center + small random */
-        v->vel[0] = dx * 6.0f + rand1 * 1.5f;
-        v->vel[2] = dz * 6.0f + rand2 * 1.5f;
+        /* Radial outward (primary) + away-from-minotaur bias (subtle) + noise */
+        v->vel[0] = rx * 2.5f + away_x * 0.8f + rand1 * 0.5f;
+        v->vel[2] = rz * 2.5f + away_z * 0.8f + rand2 * 0.5f;
 
         /* No upward launch — squashed flat */
         v->vel[1] = 0.0f;
@@ -422,6 +446,8 @@ void death_anim_init(DeathAnim* da, DeathType type,
     /* Decompose actor into sub-cubes */
     float cx = actor_x + 0.5f;  /* tile center */
     float cz = actor_z + 0.5f;
+    da->center_x = cx;
+    da->center_z = cz;
     decompose_actor(da, actor, cx, cz);
 
     /* Apply scatter velocities based on death type */
@@ -495,19 +521,17 @@ void death_anim_update(DeathAnim* da, float dt) {
             if (seg_t < 0.0f) seg_t = 0.0f;
             if (seg_t > 1.0f) seg_t = 1.0f;
 
-            /* Between keyframes, simulate physics forward from kf_a
-             * for (seg_t * seg_len) seconds.  This gives exact trajectory
-             * retracing since physics between keyframes is deterministic
-             * (constant gravity + initial velocity). */
-            float elapsed = seg_t * seg_len;
+            /* Lerp position and rotation between keyframes.
+             * Simple lerp is used instead of physics replay because the
+             * forward simulation includes continuous friction, which makes
+             * ballistic replay inaccurate between keyframes. */
+            v->pos[0] = kf_a->pos[0] + (kf_b->pos[0] - kf_a->pos[0]) * seg_t;
+            v->pos[1] = kf_a->pos[1] + (kf_b->pos[1] - kf_a->pos[1]) * seg_t;
+            v->pos[2] = kf_a->pos[2] + (kf_b->pos[2] - kf_a->pos[2]) * seg_t;
 
-            v->pos[0] = kf_a->pos[0] + kf_a->vel[0] * elapsed;
-            v->pos[1] = kf_a->pos[1] + kf_a->vel[1] * elapsed + 0.5f * GRAVITY * elapsed * elapsed;
-            v->pos[2] = kf_a->pos[2] + kf_a->vel[2] * elapsed;
-
-            v->rot[0] = kf_a->rot[0] + kf_a->angular_vel[0] * elapsed;
-            v->rot[1] = kf_a->rot[1] + kf_a->angular_vel[1] * elapsed;
-            v->rot[2] = kf_a->rot[2] + kf_a->angular_vel[2] * elapsed;
+            v->rot[0] = kf_a->rot[0] + (kf_b->rot[0] - kf_a->rot[0]) * seg_t;
+            v->rot[1] = kf_a->rot[1] + (kf_b->rot[1] - kf_a->rot[1]) * seg_t;
+            v->rot[2] = kf_a->rot[2] + (kf_b->rot[2] - kf_a->rot[2]) * seg_t;
 
             /* Scale: lerp between keyframes */
             for (int c = 0; c < 3; c++) {
@@ -635,6 +659,27 @@ void death_anim_update(DeathAnim* da, float dt) {
             }
         }
 
+        /* Ground friction: continuously dampen horizontal velocity while
+         * on or near the floor.  Uses exponential decay so the result is
+         * framerate-independent (same distance regardless of dt). */
+        if (voxel_bottom <= surface.surface_y + 0.02f) {
+            float decay = expf(-3.0f * dt);  /* half-life ≈ 0.23s */
+            v->vel[0] *= decay;
+            v->vel[2] *= decay;
+            v->angular_vel[0] *= decay;
+            v->angular_vel[1] *= decay;
+            v->angular_vel[2] *= decay;
+        }
+
+        /* Periodic keyframe sampling for smooth reverse playback.
+         * Since we use position lerp (not physics replay) during reverse,
+         * we need keyframes at regular intervals to trace the path. */
+        #define KEYFRAME_INTERVAL 0.1f  /* seconds between periodic samples */
+        if (da->timer - v->last_keyframe_time >= KEYFRAME_INTERVAL) {
+            record_keyframe(v, da->timer);
+            v->last_keyframe_time = da->timer;
+        }
+
         /* Rest detection */
         float speed_sq = v->vel[0] * v->vel[0] +
                          v->vel[1] * v->vel[1] +
@@ -746,6 +791,27 @@ void death_anim_render(const DeathAnim* da, GLuint shader) {
     }
 
     glBindVertexArray(0);
+}
+
+/* ── Approach direction ─────────────────────────────────── */
+
+void death_anim_set_approach(DeathAnim* da, float dx, float dz) {
+    /* Normalize */
+    float len = sqrtf(dx * dx + dz * dz);
+    if (len > 0.001f) {
+        da->approach_dx = dx / len;
+        da->approach_dz = dz / len;
+    } else {
+        da->approach_dx = 0.0f;
+        da->approach_dz = 0.0f;
+    }
+
+    /* Re-apply scatter with the now-known direction.
+     * This is safe because init already called apply_squish_scatter
+     * with approach=(0,0), and we haven't started updating yet. */
+    if (da->type == DEATH_SQUISH) {
+        apply_squish_scatter(da);
+    }
 }
 
 /* ── Reverse playback ──────────────────────────────────── */
