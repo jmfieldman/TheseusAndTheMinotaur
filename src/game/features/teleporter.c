@@ -21,6 +21,10 @@ static void tp_on_enter(Feature* self, Grid* grid, EntityID who,
     /* Guard against chaining: if we're already mid-teleport, skip */
     if (d->teleporting) return;
 
+    /* If the minotaur just landed on Theseus, that's a squash kill —
+     * don't teleport the minotaur away. */
+    if (who == ENTITY_MINOTAUR && grid_entities_collide(grid)) return;
+
     /* Find the paired teleporter */
     for (int i = 0; i < grid->feature_count; i++) {
         Feature* other = grid->features[i];
