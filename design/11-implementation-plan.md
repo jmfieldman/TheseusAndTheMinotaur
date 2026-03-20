@@ -699,6 +699,43 @@ Per-biome level-selection diorama with graph navigation, pre-rendered backdrop, 
 
 ---
 
+### Step 11.0 — Scenery Editor Tool
+
+Interactive utility for authoring overworld scenery. This is a **prerequisite** for all subsequent overworld substeps — the overworld rendering pipeline depends on having terrain types and models defined in the scenery library, and biome scenery files authored. See [09 -- Content Pipeline](09-content-pipeline.md) §7.6 for the full tool description.
+
+The editor is a **standalone application** that reuses the game's rendering code (voxel mesh builder, diorama generator, camera) but has its own UI layer and input handling. It does not ship with the game.
+
+**Files:**
+
+- `tools/scenery_editor/main.c` — Entry point, SDL window, main loop.
+- `tools/scenery_editor/editor_ui.h / .c` — ImGui-based (or simple custom) UI:
+  - Mode tabs: Library Editor, Scenery Painter, Preview.
+  - Property panels for editing procgen params.
+  - File save/load controls.
+- `tools/scenery_editor/library_editor.h / .c` — Library editor mode:
+  - List/add/remove/duplicate terrain types, features, and models.
+  - Edit `procgen` params (color pickers, sliders, variant lists).
+  - Live 3D preview: renders the selected entry's voxel geometry in real-time, regenerating on param change. Shows a 3×3 tile grid to visualize per-tile seeded variation.
+  - Save to `scenery_library.yml`.
+- `tools/scenery_editor/scenery_painter.h / .c` — Scenery painter mode:
+  - Load a biome's `overworld_scenery.yml` + `overworld.yml` (for graph overlay).
+  - Grid view showing current terrain/feature/model placements.
+  - **Terrain brush:** Select a terrain type from the library, click/drag to paint tiles.
+  - **Feature brush:** Select a feature, click to place (auto-snaps to grid). Drag for multi-tile features (rivers, roads).
+  - **Model stamp:** Select a model, click to place, scroll to rotate.
+  - **Eraser:** Remove features/models from tiles.
+  - Graph overlay toggle: shows node positions and paths from `overworld.yml` as a translucent reference layer.
+  - Save to `overworld_scenery.yml`.
+- `tools/scenery_editor/preview.h / .c` — Full preview mode:
+  - Renders the complete overworld diorama (terrain + features + models + LOD mini-dioramas + graph paths) using the same `overworld_gen` pipeline as the game.
+  - Free camera: pan, zoom, rotate to inspect the result.
+  - Toggle layers: terrain only, features only, models only, LOD meshes, graph overlay.
+- Update `CMakeLists.txt` — Add `scenery_editor` build target (separate executable, links against the same `src/render` and `src/data` libraries as the game).
+
+**Verification:** Create a terrain type in the library editor → see it render in the 3×3 preview with per-tile variation. Paint terrain onto a biome grid in the scenery painter → save → reload → placements persist. Place features and models → verify they appear at correct grid positions. Open preview mode → full overworld diorama matches expectations. Round-trip test: author scenery in editor → run game → overworld renders the same scene.
+
+---
+
 ### Step 11.1 — Overworld Data Loading
 
 Load and parse all overworld data files into runtime data structures.
@@ -738,8 +775,8 @@ Generate the biome's overworld terrain and scenery geometry from the loaded data
 - `src/render/overworld_gen.h / .c` — Overworld diorama generator:
   - `overworld_gen_build(VoxelMesh* out, const SceneryData*, const SceneryLibrary*, const BiomeConfig*, const OverworldData*)` — Generates the full overworld terrain mesh:
     1. **Platform base** — Large platform under the entire overworld grid.
-    2. **Terrain tiles** — For each grid cell, generate ground geometry based on the terrain type's procgen params (color, surface style). Skip tiles flagged `animated` (they render live).
-    3. **Terrain features** — Generate overlaid features (forests, mountains, rivers) at their placed positions using the feature's procgen params.
+    2. **Terrain tiles** — For each grid cell, generate ground geometry based on the terrain type's procgen params (color, surface style). Apply per-tile seeded variation: color jitter, surface detail variation. Skip tiles flagged `animated` (they render live). Seed: `hash(biome_id, col, row)`.
+    3. **Terrain features** — Generate overlaid features (forests, mountains, rivers) at their placed positions. Apply per-tile seeded variation per §09 §7.4.4: sub-element scatter from `variants` list with `count_range`, `position_jitter`, `scale_range`, `rotation_random`; edge-awareness thinning against neighboring terrain types.
     4. **Models** — Generate placed model geometry (houses, bridges, portals, statues) at their grid positions with rotation.
     5. **Path geometry** — Generate visual paths (connecting lines/roads) between nodes using the waypoint data from `overworld.yml`. Path style derived from biome config.
     6. **Edge border** — Overworld perimeter treatment (ocean, cliffs, void).

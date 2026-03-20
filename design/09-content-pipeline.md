@@ -715,12 +715,24 @@ terrain_features:
       tree_density: 0.8
       tree_height_range: [3.0, 5.0]
       canopy_spread: 1.2
+      variants: [pine_tall, pine_short, oak, dead_tree]
+      count_range: [3, 6]
+      position_jitter: 0.35
+      scale_range: [0.8, 1.2]
+      rotation_random: true
+      edge_thinning: 0.6
 
   - id: forest_sparse
     description: Light tree coverage
     procgen:
       tree_density: 0.3
       tree_height_range: [2.5, 4.0]
+      variants: [pine_tall, oak, stump]
+      count_range: [1, 3]
+      position_jitter: 0.4
+      scale_range: [0.7, 1.1]
+      rotation_random: true
+      edge_thinning: 0.8
 
   - id: river
     description: Flowing river segment
@@ -792,6 +804,60 @@ Each library entry's `procgen` block defines parameters consumed by the
 overworld diorama generator to produce voxel geometry at runtime. The
 `animated` flag on terrain types and features indicates tiles that must be
 rendered live rather than baked into the backdrop (see §7.5.1).
+
+#### 7.4.4 Per-Tile Seeded Variation
+
+To keep overworld maps visually interesting without requiring hand-placement of
+every detail, the overworld generator applies **per-tile seeded variation** to
+terrain types and features. Each tile's geometry is generated using a
+deterministic seed derived from `hash(biome_id, col, row)`, so the same map
+always produces the same output but every tile looks unique.
+
+Variation is controlled by parameters in each library entry's `procgen` block.
+The generator applies these variation axes:
+
+- **Color jitter** — Small per-tile random offset to the base color (controlled
+  by the existing `color_variation` parameter). Each tile's ground color shifts
+  by up to ±`color_variation` in HSV space. Individual sub-elements (paving
+  stones, tree trunks) get an additional smaller jitter on top.
+- **Sub-element scatter** — Features that contain multiple sub-elements (trees
+  in a forest, rocks on a mountain, grass blades) randomly select from the
+  entry's `variants` list and scatter them within the tile with position jitter,
+  random Y-rotation, and scale variation. Parameters:
+  - `variants` — List of sub-element model IDs to randomly select from.
+  - `count_range` — `[min, max]` number of sub-elements per tile.
+  - `position_jitter` — Maximum XZ offset from grid center (0.0–0.5).
+  - `scale_range` — `[min, max]` uniform scale multiplier.
+  - `rotation_random` — If true, apply random Y-axis rotation per sub-element.
+- **Edge awareness** — Optional `edge_thinning` parameter (0.0–1.0). When set,
+  tiles adjacent to a different terrain type reduce their sub-element count and
+  height, creating natural-looking transitions (e.g., forest treeline thins at
+  the edge of a clearing). The generator checks the 4 cardinal neighbors; each
+  non-matching neighbor reduces density by `edge_thinning * 0.25`.
+- **Height variation** — For terrain features with vertical extent (mountains,
+  trees), the `height_range` parameter specifies `[min, max]` and the per-tile
+  seed selects a value within that range.
+
+Example of a terrain feature with full variation params:
+
+```yaml
+  - id: forest_dense
+    description: Dense tree canopy coverage
+    procgen:
+      tree_density: 0.8
+      tree_height_range: [3.0, 5.0]
+      canopy_spread: 1.2
+      variants: [pine_tall, pine_short, oak, dead_tree]
+      count_range: [3, 6]
+      position_jitter: 0.35
+      scale_range: [0.8, 1.2]
+      rotation_random: true
+      edge_thinning: 0.6
+```
+
+The scenery editor (§7.6) paints "this tile is `forest_dense`" — the generator
+handles making each forest tile visually distinct. This keeps authoring simple
+(paint broad regions) while producing rich, varied output.
 
 ### 7.5 Overworld Scenery File (Per-Biome)
 
@@ -891,8 +957,10 @@ The scenery editor is needed **before serious overworld map work begins**,
 since the overworld rendering pipeline depends on having models and terrain
 defined in the library.
 
-> **TBD:** Implementation details for the scenery editor (standalone app vs.
-> in-engine debug mode, technology stack, etc.).
+The scenery editor is a **standalone application** (`tools/scenery_editor/`)
+that reuses the game's rendering and data-loading code but has its own UI layer.
+It does not ship with the game. See [11 -- Implementation Plan](11-implementation-plan.md)
+Step 11.0 for full implementation details.
 
 ## 8. Save File Format (YAML)
 
