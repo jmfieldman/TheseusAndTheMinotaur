@@ -463,12 +463,15 @@ Each biome is a data-driven bundle:
 ```
 biomes/
   dark_forest/
-    biome.json         -- palette, feature set, procgen configuration
-    overworld.yml      -- overworld graph, nodes, edges, star gates, secrets
-    prefabs/           -- decoration voxel cluster prefabs (JSON or binary)
-    music/             -- biome soundtrack(s)
-    ambient/           -- ambient loop(s)
-    sfx/               -- biome-specific SFX overrides
+    biome.json              -- palette, feature set, procgen configuration
+    overworld.yml           -- overworld graph, nodes, edges, star gates, secrets
+    overworld_scenery.yml   -- overworld scenery tile placement (per-biome)
+    prefabs/                -- decoration voxel cluster prefabs (JSON or binary)
+    music/                  -- biome soundtrack(s)
+    ambient/                -- ambient loop(s)
+    sfx/                    -- biome-specific SFX overrides
+
+scenery_library.yml         -- shared library of terrain types, features, and models
 ```
 
 ### 6.1 biome.json
@@ -644,6 +647,253 @@ paths:
 - **secret.reveal_condition:** Trigger for revealing the secret node (see
   [04 -- Overworld](04-overworld.md) §8).
 
+## 7.4 Overworld Scenery Library
+
+The **scenery library** (`scenery_library.yml`, stored at the top level of the
+biomes directory) defines all reusable terrain types, terrain features, and
+model pieces available for overworld map authoring. This is a shared library
+referenced by every biome's `overworld_scenery.yml`.
+
+The library contains three categories:
+
+#### 7.4.1 Terrain Types
+
+**One per tile.** Defines the ground type for each overworld grid cell.
+
+```yaml
+terrain_types:
+  - id: grass
+    description: Standard grass ground
+    procgen:
+      base_color: "#4a5240"
+      color_variation: 0.05
+      surface: grass_blades
+
+  - id: dirt_path
+    description: Worn dirt walking path
+    procgen:
+      base_color: "#8b7355"
+      color_variation: 0.03
+      surface: packed_earth
+
+  - id: shallow_water
+    description: Shallow coastal water
+    animated: true
+    procgen:
+      base_color: "#2a4a6a"
+      wave_speed: 0.5
+      transparency: 0.3
+
+  - id: sand
+    description: Sandy beach ground
+    procgen:
+      base_color: "#c2b280"
+      color_variation: 0.04
+      surface: sand_grains
+
+  - id: stone_floor
+    description: Paved stone tiles
+    procgen:
+      base_color: "#7a7a72"
+      color_variation: 0.06
+      surface: flagstone
+```
+
+Terrain types with `animated: true` are rendered as live 3D tiles on top of
+the backdrop (not baked into the pre-rendered image). See §7.5.1.
+
+#### 7.4.2 Terrain Features
+
+Multi-tile or overlaid features that sit on top of terrain. These represent
+natural or environmental formations.
+
+```yaml
+terrain_features:
+  - id: forest_dense
+    description: Dense tree canopy coverage
+    procgen:
+      tree_density: 0.8
+      tree_height_range: [3.0, 5.0]
+      canopy_spread: 1.2
+
+  - id: forest_sparse
+    description: Light tree coverage
+    procgen:
+      tree_density: 0.3
+      tree_height_range: [2.5, 4.0]
+
+  - id: river
+    description: Flowing river segment
+    animated: true
+    procgen:
+      width: 0.6
+      flow_speed: 0.4
+      bank_style: natural
+
+  - id: mountain
+    description: Rocky mountain formation
+    procgen:
+      peak_height: 6.0
+      roughness: 0.5
+      snow_line: 4.0
+
+  - id: lava_flow
+    description: Flowing lava channel
+    animated: true
+    procgen:
+      width: 0.4
+      glow_color: "#ff4400"
+      flow_speed: 0.2
+```
+
+#### 7.4.3 Models
+
+Individual placed objects — specific things like buildings, bridges, statues,
+or landmarks.
+
+```yaml
+models:
+  - id: stone_bridge
+    description: Small arched stone bridge
+    size: { cols: 1, rows: 2 }
+    procgen:
+      style: arched
+      material: sandstone
+
+  - id: ruined_house
+    description: Crumbling stone cottage
+    size: { cols: 1, rows: 1 }
+    procgen:
+      wall_height: 2.0
+      decay: 0.6
+
+  - id: statue_hero
+    description: Heroic statue on pedestal
+    size: { cols: 1, rows: 1 }
+    procgen:
+      pedestal_height: 1.5
+      style: greek
+
+  - id: wooden_dock
+    description: Small wooden pier
+    size: { cols: 1, rows: 3 }
+    procgen:
+      plank_style: weathered
+
+  - id: portal_arch
+    description: Ornate stone archway (biome transition)
+    size: { cols: 1, rows: 1 }
+    procgen:
+      arch_height: 4.0
+      glow_color: "#8866ff"
+```
+
+Each library entry's `procgen` block defines parameters consumed by the
+overworld diorama generator to produce voxel geometry at runtime. The
+`animated` flag on terrain types and features indicates tiles that must be
+rendered live rather than baked into the backdrop (see §7.5.1).
+
+### 7.5 Overworld Scenery File (Per-Biome)
+
+Each biome has an `overworld_scenery.yml` that defines the explicit placement
+of all scenery elements on the overworld grid. This is a separate file from
+`overworld.yml` (which defines the navigation graph) for size management and
+to allow independent editing with the scenery editor tool (see §7.6).
+
+The scenery file uses the same grid coordinate system and `grid_size` as the
+biome's `overworld.yml`.
+
+```yaml
+biome: dark_forest
+grid_size: { cols: 8, rows: 6 }
+
+# Terrain layer: one entry per grid cell (defines ground type)
+terrain:
+  - { col: 0, row: 0, type: grass }
+  - { col: 1, row: 0, type: grass }
+  - { col: 2, row: 0, type: shallow_water }
+  - { col: 3, row: 0, type: dirt_path }
+  - { col: 0, row: 1, type: grass }
+  - { col: 1, row: 1, type: dirt_path }
+  # ... one entry per cell in the grid
+
+# Terrain features: overlaid on terrain tiles
+features:
+  - type: forest_dense
+    positions:
+      - { col: 3, row: 0 }
+      - { col: 3, row: 1 }
+      - { col: 4, row: 0 }
+  - type: river
+    waypoints:
+      - { col: 0, row: 2 }
+      - { col: 1, row: 2 }
+      - { col: 2, row: 3 }
+  - type: mountain
+    positions:
+      - { col: 6, row: 0 }
+      - { col: 7, row: 0 }
+      - { col: 6, row: 1 }
+
+# Models: individually placed objects
+models:
+  - type: stone_bridge
+    position: { col: 2, row: 3 }
+    rotation: 90
+  - type: ruined_house
+    position: { col: 5, row: 1 }
+  - type: portal_arch
+    position: { col: 1, row: 0 }
+```
+
+#### 7.5.1 Animated Tiles
+
+Tiles that contain animated content (flowing water, lava, animated texture
+effects) are **not baked** into the pre-rendered overworld backdrop. Instead,
+they are rendered as **live 3D geometry** every frame on top of the backdrop
+image, in the same layer as other live overlay elements (Theseus token, node
+state indicators, etc.).
+
+A tile is marked as animated when:
+
+- Its **terrain type** has `animated: true` in the scenery library.
+- It contains a **terrain feature** with `animated: true`.
+
+The engine collects all animated tile positions at biome load time and renders
+them as live geometry. The backdrop texture has these tile regions left empty
+(or filled with a neutral base color) so the live tiles composite cleanly on
+top. Animation is achieved via **sprite sheet cycling** — each animated tile
+type defines a sequence of pre-rendered frames that the engine cycles through
+at a configured frame rate. No 3D mesh animation or procedural shader effects
+are used for scenery animation.
+
+This keeps the vast majority of the overworld as a cheap static backdrop image
+while allowing localized motion for water, lava, and similar effects.
+
+### 7.6 Scenery Editor Tool
+
+An interactive utility (separate from the game engine) for authoring overworld
+scenery. The tool provides:
+
+1. **Library editor** — Create and modify terrain types, terrain features, and
+   models in `scenery_library.yml`. Preview the procedurally generated voxel
+   geometry for each entry in real-time.
+2. **Scenery painter** — Load a biome's `overworld_scenery.yml` and
+   interactively paint terrain types, place terrain features, and position
+   models on the grid. Changes are saved back to the YAML file. The overworld
+   graph from `overworld.yml` can be overlaid as a reference layer showing
+   node positions and paths.
+3. **Preview** — Render the full overworld diorama (scenery + LOD
+   mini-dioramas + graph overlay) to verify the visual result before running
+   the game.
+
+The scenery editor is needed **before serious overworld map work begins**,
+since the overworld rendering pipeline depends on having models and terrain
+defined in the library.
+
+> **TBD:** Implementation details for the scenery editor (standalone app vs.
+> in-engine debug mode, technology stack, etc.).
+
 ## 8. Save File Format (YAML)
 
 Save files use YAML for human readability and debugging. One file per save
@@ -739,10 +989,13 @@ Source Assets (JSON, YAML, OGG, WAV, TTF)
 Asset Packager (build step)
     │  • Validates level JSON (schema, wall consistency, door placement)
     │  • Validates biome configs (palette ranges, procgen params)
+    │  • Validates scenery files (library references, grid bounds)
     │  • Packages all static data into gamedata.tar.gz:
     │      - Level JSON files (per-biome directories)
     │      - Biome configs (biome.json, procgen config)
     │      - Overworld definitions (overworld.yml)
+    │      - Overworld scenery (overworld_scenery.yml per biome)
+    │      - Scenery library (scenery_library.yml)
     │      - Localization strings (strings/*.json)
     │  • Font file (theseus.ttf) shipped separately in assets/fonts/
     │  • Audio files (OGG, WAV) shipped separately in assets/audio/

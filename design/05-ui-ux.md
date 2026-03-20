@@ -142,7 +142,9 @@ transitions are smooth camera movements rather than cuts or dissolves.
 
 1. Player confirms entry on a level node (mini-diorama).
 2. Camera **zooms in** toward the mini-diorama. The orthographic projection
-   bounds smoothly interpolate from overworld framing to puzzle framing.
+   bounds smoothly interpolate from overworld framing to puzzle framing. The
+   overworld **backdrop image remains in use** for all non-puzzle scenery —
+   only the target puzzle renders as live 3D geometry for the LOD crossfade.
 3. During the zoom, the **low-detail LOD mesh fades** to the **high-detail
    puzzle mesh** (quick crossfade once the diorama fills enough of the
    screen that detail matters).
@@ -162,7 +164,10 @@ transitions are smooth camera movements rather than cuts or dissolves.
    - Stars earned: ★ for completion, ★★ for optimal move count
    - New star indicator if this is the first time earning a star tier
 3. Camera **zooms out** from the completed puzzle to a mid-level overworld
-   view. The high-detail mesh fades back to LOD during zoom-out.
+   view. The high-detail mesh fades back to LOD during zoom-out. The overworld
+   **backdrop image remains in use** for all non-puzzle scenery — only the
+   source puzzle (zooming out from) and destination puzzle (zooming into)
+   render as live 3D.
 4. The completed node's visual state updates (flag / torch appears on the
    mini-diorama).
 5. Camera **pans** across the overworld to the next unbeaten puzzle node.
@@ -202,9 +207,17 @@ The player can press Confirm at any point to accelerate the transition.
 
 - When using a transition node on the overworld, the current biome diorama
   transitions out and the new biome diorama transitions in.
-- Could be a dissolve, a camera pan through a doorway/portal, or a diorama
-  swap animation. All mini-dioramas for the new biome are generated during
-  the transition loading screen.
+- The graphic transition uses a **fade-out / fade-in** (fade to black, load,
+  fade from black) or a **themed wipe** (directional wipe matching the
+  transition node theme — e.g. a portal swirl, a door closing/opening). The
+  specific transition style can vary per transition node and is defined in
+  the biome's overworld data.
+- During the transition, the new biome's data is loaded: the engine checks the
+  backdrop disk cache for a matching texture (see
+  [08 -- Engine Architecture](08-engine-architecture.md) §3.3.6). On cache
+  hit, loading is near-instant. On cache miss (first visit), all LOD meshes
+  and overworld scenery are generated and the backdrop is rendered and cached.
+  A loading bar is shown during this process.
 
 ## 7. Pause Menu
 

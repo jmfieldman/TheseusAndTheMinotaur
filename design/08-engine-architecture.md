@@ -157,9 +157,10 @@ for the visual design rationale.
  8. Render overlays (HUD, touch controls, UI)
 ```
 
-**During zoom transitions** (overworld ↔ puzzle), the backdrop is bypassed
-and all geometry renders live so that camera interpolation and LOD crossfade
-are seamless. See §3.3.6.
+**During zoom transitions** (overworld ↔ puzzle or puzzle ↔ puzzle), the
+overworld backdrop **remains in use** for all non-puzzle scenery. Only the
+source and destination puzzle dioramas render as live 3D for LOD crossfade.
+See §3.3.5 and §3.3.6.
 
 #### 3.3.3 Voxel Rendering (Procedural)
 
@@ -214,18 +215,31 @@ smooth interpolation of the **orthographic projection bounds**:
   with appropriate padding.
 - **Zoom animation:** Smoothly interpolate ortho bounds (position + scale)
   using an easing curve (e.g. ease-in-out cubic). Duration ~0.8--1.2s.
-- **Backdrop bypass:** During zoom transitions, the backdrop render-to-texture
-  system (§3.3.6) is **bypassed entirely**. All geometry (overworld terrain,
-  LOD meshes, puzzle meshes) renders live so that the interpolating camera,
-  LOD crossfade, and parallax between layers work correctly. Once the camera
-  settles at its final position, the appropriate backdrop (overworld or puzzle)
-  is re-rendered at the new framing and used for steady-state rendering.
+- **Backdrop compositing during transitions:** During zoom transitions, the
+  overworld **backdrop image continues to be used** for all non-puzzle scenery.
+  Because the projection is orthographic, the backdrop is pixel-identical to
+  live rendering at any zoom level — no parallax or distortion occurs when
+  zooming into a region of the backdrop. Only the **source and destination
+  puzzle dioramas** render as live 3D geometry during the transition, enabling
+  the LOD↔full-detail crossfade. All other overworld terrain, scenery, and
+  non-involved mini-dioramas remain as the backdrop image.
+
+  This requires **precise pixel alignment** between the backdrop image and the
+  live puzzle geometry at every point during the zoom interpolation. The ortho
+  projection matrix used to render the backdrop must produce coordinates that
+  match exactly when the same matrix is used for live geometry at any zoom
+  level. See §3.3.6 for the pixel alignment contract.
+
+  Once the camera settles at its final position, the appropriate steady-state
+  backdrop (overworld or puzzle) is used for subsequent frames.
 - **LOD crossfade:** During zoom-in, once the target diorama exceeds a
   screen-space size threshold, the LOD mesh fades out and the full-detail
   mesh fades in (alpha crossfade over ~0.2--0.3s). Reverse on zoom-out.
 - **Auto-progression (puzzle → puzzle):** Zoom out to a mid-level view
   (partial overworld), pan to the next puzzle node, zoom in. The zoom-out
-  and pan can overlap for a fluid camera move. All live rendering throughout.
+  and pan can overlap for a fluid camera move. The overworld backdrop is used
+  for all scenery throughout; only the source puzzle (zooming out from) and
+  destination puzzle (zooming into) render as live 3D for LOD crossfade.
 
 #### 3.3.6 Backdrop Render-to-Texture System
 
@@ -266,18 +280,56 @@ live rendering — see [02 -- Visual Style](02-visual-style.md) §9.
 - Node state changes that affect baked appearance (if not handled by live
   overlay tinting — see [04 -- Overworld](04-overworld.md) §2.5).
 
-**Performance:** Rendering a diorama's static geometry to an offscreen FBO
-takes <10ms on target hardware. This is done once per level/biome load, making
-it negligible behind a loading screen. Textures are regenerated on each load
-(not cached to disk), since the render cost is trivial and this avoids cache
-directory management, storage budget, and invalidation complexity.
+**Disk caching:**
 
-**Transition bypass:** During zoom transitions (overworld ↔ puzzle or
-puzzle ↔ puzzle auto-progression), the backdrop system is **bypassed entirely**.
-All geometry renders live with the interpolating camera so that zoom, pan, and
-LOD crossfade work seamlessly. Once the camera settles at its final resting
-position, the backdrop FBO is rendered at the new framing and used for all
-subsequent steady-state frames until the next transition.
+Overworld backdrop textures are **cached to disk** to avoid re-rendering on
+subsequent biome loads. The cache key is a **hash of all source data** that
+affects the rendered output:
+
+- Biome procgen configuration (`biome.json`)
+- Overworld graph data (`overworld.yml`)
+- Overworld scenery data (`overworld_scenery.yml`)
+- Level data for all puzzles in the biome (affects LOD mini-diorama geometry)
+- Viewport dimensions (backdrop must match exact pixel size)
+
+The hash is computed at biome load time. If a cached texture exists with a
+matching hash, it is loaded from disk directly — skipping mesh generation and
+rendering entirely. If no cache hit, the full render pipeline runs and the
+result is saved to disk.
+
+Cache location: platform-specific cache directory (see
+[10 -- Platform Targets](10-platform-targets.md) §3.1). Cache files are
+named by biome ID + hash (e.g. `dark_forest_a3f7b2c1.png`). Old cache
+entries with non-matching hashes are deleted when a new entry is written
+for the same biome.
+
+**Puzzle backdrops** (single-diorama static geometry) are small enough to
+re-render on each load (<10ms on target hardware) and are **not cached** to
+disk. Only overworld backdrops benefit from caching due to the larger scene
+complexity (~10 LOD meshes + full biome terrain and scenery).
+
+This caching strategy ensures that the first visit to a biome may show a
+loading bar (5--10 seconds for mesh generation + render), but subsequent
+visits load near-instantly from the cached texture.
+
+**Transition compositing:** During zoom transitions (overworld ↔ puzzle or
+puzzle ↔ puzzle auto-progression), the overworld backdrop **remains in use**
+for all non-puzzle scenery. Because the projection is orthographic, the
+backdrop image is pixel-identical to live rendering at any zoom level — the
+engine can zoom into a region of the backdrop and it will match the 3D scene
+exactly. Only the **source and destination puzzle dioramas** render as live
+3D geometry during the transition, enabling the LOD↔full-detail mesh
+crossfade. All other terrain, scenery, and non-involved mini-dioramas stay as
+the backdrop image.
+
+This approach is both performant (only two puzzles render live) and visually
+seamless (ortho projection guarantees the backdrop matches live geometry).
+The pixel alignment contract (above) is critical — any misregistration between
+the backdrop and live puzzle geometry would be visible as seams.
+
+Once the camera settles at its final resting position, the appropriate
+steady-state backdrop (overworld or puzzle) is used for all subsequent frames
+until the next transition.
 
 #### 3.3.4 Shader Requirements
 
@@ -474,12 +526,17 @@ mapping). The engine loads strings from a data file at startup, keyed by locale.
 - Assets loaded at scene transitions (not during gameplay).
 - Since all geometry is procedurally generated, there are **no mesh files** to
   load. Biome "assets" are the parsed JSON configs + audio files.
-- **Biome load:** All LOD meshes for the biome's ~10 puzzles are procedurally
-  generated and uploaded to VRAM. Overworld diorama mesh is procedurally
-  generated. The **overworld backdrop texture** is rendered to an offscreen FBO
-  (capturing the entire biome diorama with all LOD meshes — see §3.3.6). Audio
-  (music, ambient, SFX) is loaded from disk. This all happens during the biome
-  transition loading screen.
+- **Biome load:** The engine checks the **backdrop disk cache** (see §3.3.6)
+  for a cached overworld texture matching the current biome data hash. On
+  cache hit, the texture is loaded directly from disk — no mesh generation or
+  rendering is needed, and the load is near-instant. On cache miss, all LOD
+  meshes for the biome's ~10 puzzles are procedurally generated and uploaded
+  to VRAM, the overworld diorama mesh (terrain, scenery from
+  `overworld_scenery.yml`, paths, decorations) is procedurally generated, and
+  the **overworld backdrop texture** is rendered to an offscreen FBO and cached
+  to disk. Audio (music, ambient, SFX) is loaded from disk. This all happens
+  during the biome transition loading screen (5--10 seconds on first visit,
+  near-instant on subsequent visits).
 - **Puzzle enter:** Full-detail mesh for the target puzzle is procedurally
   generated and uploaded. The **puzzle backdrop texture** is rendered to an
   offscreen FBO (capturing all static decorative geometry — see §3.3.6). The

@@ -17,10 +17,23 @@ interesting, not a rigid grid.
 ## 2. Biome Dioramas
 
 Each biome's overworld is a **static diorama** (no scrolling or panning). The
-entire biome map fits on screen at once, rendered in the same voxel art style
-as the puzzle levels. Like puzzle dioramas, the overworld diorama is
-**procedurally generated** from the biome's overworld definition
-(`overworld.yml`) and procgen config — no external mesh files are used.
+entire biome map fits on screen at once at the most zoomed-out level, rendered
+in the same voxel art style as the puzzle levels. The camera only zooms in
+when entering a puzzle or during puzzle-to-puzzle transitions; returning to
+the overworld always restores the fully zoomed-out view.
+
+The overworld diorama is **procedurally generated** from three data sources:
+
+1. **`overworld.yml`** — Navigation graph (nodes, edges, star gates, secrets).
+2. **`overworld_scenery.yml`** — Explicit placement of terrain, features, and
+   models on the grid (see [09 -- Content Pipeline](09-content-pipeline.md)
+   §7.5).
+3. **`scenery_library.yml`** — Shared library of terrain types, terrain
+   features, and model definitions (see
+   [09 -- Content Pipeline](09-content-pipeline.md) §7.4).
+
+No external mesh files are used — all geometry is generated from these
+definitions at runtime.
 
 ### 2.1 Visual Design
 
@@ -36,8 +49,11 @@ as the puzzle levels. Like puzzle dioramas, the overworld diorama is
 - **Actors are not shown** on the mini-dioramas at overworld scale. Theseus
   and the Minotaur only appear during the zoom-in transition when entering a
   puzzle (see [05 -- UI/UX](05-ui-ux.md) §6).
-- Fun idle animations and decorative details are encouraged (e.g. birds, gears
-  turning, water flowing), but these are purely cosmetic.
+- **Animated scenery tiles** (flowing water, lava, etc.) are rendered as live
+  3D on top of the backdrop using **sprite sheet cycling** (a sequence of
+  pre-rendered frames). No 3D mesh animation is used. See
+  [09 -- Content Pipeline](09-content-pipeline.md) §7.5.1 for details on how
+  tiles are flagged as animated.
 
 ### 2.2 Mini-Diorama LOD
 
@@ -78,10 +94,18 @@ makes the overworld a living map of the player's progress.
 
 ### 2.5 Pre-Rendered Overworld Image
 
-The overworld diorama (biome terrain, paths, decorative scenery, and all
-mini-diorama LOD meshes) is **pre-rendered to a static texture** when the biome
-loads. With orthographic projection this produces a pixel-identical result to
-live rendering — see [02 -- Visual Style](02-visual-style.md) §9.
+The overworld diorama (biome terrain, scenery, decorative elements, and all
+mini-diorama LOD meshes) is **pre-rendered to a static texture**. This texture
+is **cached to disk** keyed by a hash of the biome's source data (overworld
+graph, scenery, level data, and procgen config). On first biome load, the
+backdrop is rendered and cached; subsequent loads reuse the cached texture if
+the data hash matches, avoiding a potentially expensive re-render. The cache
+is invalidated automatically when any source data changes. See
+[08 -- Engine Architecture](08-engine-architecture.md) §3.3.6 for caching
+details.
+
+With orthographic projection this produces a pixel-identical result to live
+rendering — see [02 -- Visual Style](02-visual-style.md) §9.
 
 During normal overworld navigation, the engine draws:
 
@@ -92,10 +116,11 @@ During normal overworld navigation, the engine draws:
    - **Theseus player token** — Animated along paths between nodes.
    - **Node state indicators** — Flags, torches, glow effects that reflect
      completion status (see §2.3). These may change as the player progresses.
-   - **Idle decorative animations** — Birds, turning gears, flowing water,
-     flickering lanterns. These are optional cosmetic live elements rendered
-     over the static backdrop for visual richness. The backdrop provides the
-     static geometry; the live layer adds motion.
+   - **Animated scenery tiles** — Tiles flagged as animated in the scenery
+     data (flowing water, lava, etc.) are rendered as live 3D geometry with
+     animated textures. These tiles are left empty in the backdrop texture
+     and composited on top each frame. See
+     [09 -- Content Pipeline](09-content-pipeline.md) §7.5.1.
    - **Secret node reveal animations** — When a secret node appears (§8.2),
      the reveal effect renders live on top of the backdrop. Once the reveal
      completes, the backdrop is **re-rendered** to include the newly visible
@@ -118,13 +143,22 @@ During normal overworld navigation, the engine draws:
 
 **Transition handling:**
 
-During zoom transitions (overworld → puzzle or puzzle → overworld), the
-pre-rendered backdrop is **not used**. Both layers render as live geometry
-during the animated camera move so that the zoom, pan, and LOD crossfade
-are seamless. Once the camera settles at its final position (full overworld
-view or puzzle view), the backdrop texture is rendered at the new framing and
-used for subsequent static frames. See
-[08 -- Engine Architecture](08-engine-architecture.md) §3.3.6.
+During zoom transitions (overworld → puzzle, puzzle → overworld, or puzzle →
+puzzle auto-progression), the pre-rendered overworld backdrop **continues to
+be used** for all non-puzzle scenery. Because the projection is orthographic,
+the backdrop image is pixel-identical to live rendering at any zoom level.
+Only the **source and destination puzzle dioramas** render as live 3D geometry
+during the transition (for LOD↔full-detail crossfade). All other overworld
+scenery, terrain, and non-involved mini-dioramas remain as the backdrop image.
+
+This means the engine must be **extremely precise** about aligning the
+pre-rendered backdrop image with live 3D puzzle geometry — any misregistration
+would be visible as seams during the transition. See
+[08 -- Engine Architecture](08-engine-architecture.md) §3.3.5 and §3.3.6 for
+the pixel alignment contract and zoom camera system.
+
+Once the camera settles at its final position (full overworld view or puzzle
+view), the appropriate backdrop texture is used for subsequent static frames.
 
 ## 3. Graph Structure
 
@@ -188,6 +222,11 @@ subject to these constraints:
   (which may be long and winding).
 - Movement is **free** (no turn system, no Minotaur on the overworld).
 - Input: cardinal directions (at most one path per direction from each node).
+- **Input is locked during movement.** When the player presses a direction,
+  Theseus begins walking toward the next node and the player cannot input
+  another direction until Theseus arrives. The player watches Theseus walk
+  the connecting path and arrive at the destination node before being able
+  to move again.
 
 ## 5. Level Entry, Replay, and Auto-Progression
 

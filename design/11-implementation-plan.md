@@ -661,20 +661,26 @@ End-of-level flow with star display and progression.
 
 ## Step 10 — Backdrop Render-to-Texture System
 
-Offscreen FBO rendering pipeline for pre-rendering static geometry to textures. This is the foundation for both puzzle backdrops and overworld backdrops. See [02 -- Visual Style](02-visual-style.md) §9 and [08 -- Engine Architecture](08-engine-architecture.md) §3.3.6.
+Offscreen FBO rendering pipeline for pre-rendering static geometry to textures, with disk caching for overworld backdrops. This is the foundation for both puzzle backdrops and overworld backdrops. See [02 -- Visual Style](02-visual-style.md) §9 and [08 -- Engine Architecture](08-engine-architecture.md) §3.3.6.
 
 **Files:**
 
 - `src/render/backdrop.h / .c` — Backdrop render-to-texture system:
-  - `Backdrop` struct: FBO handle, color texture handle, pixel dimensions, ortho projection matrix.
+  - `Backdrop` struct: FBO handle, color texture handle, pixel dimensions, ortho projection matrix, optional disk cache path.
   - `backdrop_create(Backdrop*, int width, int height)` — Allocate FBO + color texture at exact pixel dimensions.
   - `backdrop_begin_render(Backdrop*, const mat4 ortho_proj)` — Bind FBO, set viewport to FBO dimensions, set projection. Stores the ortho matrix for pixel-alignment verification.
   - `backdrop_end_render(Backdrop*)` — Unbind FBO, restore previous viewport.
   - `backdrop_draw(const Backdrop*, GLuint shader)` — Draw the backdrop as a single textured quad at Z-behind all live geometry, using the stored ortho projection. Uses `GL_NEAREST` sampling to prevent sub-pixel blur.
   - `backdrop_resize(Backdrop*, int new_width, int new_height)` — Reallocate FBO at new dimensions. Called on viewport resize.
   - `backdrop_destroy(Backdrop*)` — Release FBO + texture.
-- Update `src/render/README.md` — Add backdrop entry.
-- Integration into puzzle scene (render the backdrop mesh split — decorative geometry only — into the FBO at level load, draw it each frame behind gameplay layer).
+- `src/render/backdrop_cache.h / .c` — Disk caching for overworld backdrop textures:
+  - `backdrop_cache_path(const char* biome_id, uint64_t data_hash, int width, int height)` → platform-specific cache file path (e.g. `dark_forest_a3f7b2c1_1920x1080.png`).
+  - `backdrop_cache_load(Backdrop*, const char* path)` → `bool` — Attempt to load a cached texture from disk into the backdrop's GL texture. Returns false on miss.
+  - `backdrop_cache_save(const Backdrop*, const char* path)` — Read back the FBO texture and write to disk (PNG format).
+  - `backdrop_cache_evict(const char* biome_id)` — Delete any existing cache entries for the given biome (old hashes).
+  - Hash computation: `backdrop_cache_compute_hash(const OverworldData*, const SceneryData*, const BiomeConfig*, const LevelData* levels[], int level_count)` → `uint64_t`. Hashes all source data that affects the rendered output.
+- Update `src/render/README.md` — Add backdrop and backdrop_cache entries.
+- Integration into puzzle scene (render the backdrop mesh split — decorative geometry only — into the FBO at level load, draw it each frame behind gameplay layer). Puzzle backdrops are not disk-cached (render cost is trivial, <10ms).
 
 **Pixel alignment contract:**
 
@@ -683,76 +689,261 @@ Offscreen FBO rendering pipeline for pre-rendering static geometry to textures. 
 - The backdrop quad uses `GL_NEAREST` filtering (1:1 texel-to-pixel).
 - On viewport resize, the backdrop is re-rendered at the new dimensions.
 
-**Verification:** Pre-rendered backdrop is visually indistinguishable from live rendering. Toggle backdrop on/off at runtime (debug key) to confirm pixel-identical output. No seams visible at the boundary between backdrop and live gameplay geometry.
+**Verification:** Pre-rendered backdrop is visually indistinguishable from live rendering. Toggle backdrop on/off at runtime (debug key) to confirm pixel-identical output. No seams visible at the boundary between backdrop and live gameplay geometry. Disk cache: verify cache file is written on first render, loaded on second run, and invalidated when source data changes.
 
 ---
 
 ## Step 11 — Overworld Scene
 
-Per-biome level-selection diorama with graph navigation. The overworld diorama is pre-rendered to a backdrop texture (using the system from Step 10), with live overlay elements composited on top.
-
-**Files:**
-
-- `src/scene/overworld_scene.h / .c` — Implements `State` vtable:
-  - Load overworld graph definition (YAML) for current biome
-  - Generate biome diorama mesh + all LOD mini-diorama meshes
-  - Pre-render entire overworld to backdrop texture via `backdrop_*()` API
-  - Draw backdrop each frame, then render live overlay elements on top:
-    - Theseus player token (animated along paths)
-    - Node state indicators (flags, torches, completion glow)
-    - Optional idle decorative animations (birds, gears, water)
-    - Star gate visual effects
-  - Cardinal direction navigation between nodes
-  - Enter node → push zoom transition → puzzle scene
-  - Back → return to biome select or title
-  - Star gate nodes block until threshold met
-  - Re-render backdrop on secret node reveal or viewport resize
-- `src/data/overworld_data.h / .c` — Load overworld YAML (nodes, edges, positions, star gates)
-- `assets/overworld/stone_labyrinth.yml` — First biome overworld graph
-- `assets/overworld/dark_forest.yml` — Second biome overworld graph
-
-**Verification:** Navigate between level nodes, enter levels, see locked star gates. Backdrop rendering matches live rendering (toggle with debug key). Live overlay elements (Theseus token, state indicators) render correctly on top of the static image.
+Per-biome level-selection diorama with graph navigation, pre-rendered backdrop, live overlays, and biome transitions. Broken into substeps that each have a distinct workload and verification stage.
 
 ---
 
-## Step 12 — LOD Mesh Generation
+### Step 11.1 — Overworld Data Loading
 
-Simplified diorama meshes for overworld level nodes. These are baked into the overworld backdrop texture.
-
-**Files:**
-
-- `src/render/lod_gen.h / .c` — Generates simplified mini-dioramas from level data:
-  - Flat checkerboard floor (no paving detail)
-  - Wall silhouettes (no mortar/block detail)
-  - Omit decorations, lanterns
-  - Diorama platform silhouette
-- Update `src/scene/overworld_scene.c` — Include LOD meshes in the overworld backdrop render pass. Node state indicators (completion flags, star overlays) are rendered as live overlay elements, not baked into the backdrop.
-
-**Verification:** Overworld backdrop shows recognizable mini-dioramas at each node. Completed levels have live overlay visual indicators.
-
----
-
-## Step 13 — Zoom Transitions
-
-Seamless zoom between overworld and puzzle views. During transitions, the backdrop system is **bypassed** and all geometry renders live so that camera interpolation and LOD crossfade work seamlessly.
+Load and parse all overworld data files into runtime data structures.
 
 **Files:**
 
-- `src/scene/zoom_transition.h / .c` — Transition state pushed between overworld and puzzle:
-  - On start: flag backdrop system as bypassed, switch to live rendering of all geometry (both overworld terrain + LOD meshes and the incoming/outgoing puzzle mesh)
-  - Zoom camera from overworld view → close-up on selected node
-  - Crossfade LOD mesh → full-detail diorama mesh
-  - Reverse on exit (puzzle → overworld)
-  - Duration ~0.8–1.2 seconds
-  - On completion: re-render backdrop at final camera position, resume steady-state backdrop compositing
-  - Auto-progression (puzzle → puzzle): zoom out to mid-level, pan across overworld, zoom into next node — all live rendering during the move
-- Update `src/render/camera.c` — Smooth camera interpolation support
+- `src/data/overworld_data.h / .c` — Load `overworld.yml`:
+  - `OverworldData` struct: `biome_id`, `grid_size` (cols, rows), `start_node`, array of `OverworldNode` (id, type, level_id, position, exits map, star_threshold, reveal_condition), array of `OverworldPath` (from, to, waypoints).
+  - `overworld_data_load(OverworldData*, const char* yaml_path)` — Parse YAML via libyaml.
+  - `overworld_data_destroy(OverworldData*)` — Free all allocations.
+- `src/data/scenery_library.h / .c` — Load `scenery_library.yml`:
+  - `SceneryLibrary` struct: arrays of `TerrainType`, `TerrainFeature`, `SceneryModel`. Each entry has an `id`, procgen params, and `animated` flag.
+  - `scenery_library_load(SceneryLibrary*, const char* yaml_path)`.
+  - `scenery_library_lookup_terrain(const SceneryLibrary*, const char* id)` → `TerrainType*`.
+  - `scenery_library_lookup_feature(const SceneryLibrary*, const char* id)` → `TerrainFeature*`.
+  - `scenery_library_lookup_model(const SceneryLibrary*, const char* id)` → `SceneryModel*`.
+  - `scenery_library_destroy(SceneryLibrary*)`.
+- `src/data/scenery_data.h / .c` — Load per-biome `overworld_scenery.yml`:
+  - `SceneryData` struct: `grid_size`, array of `SceneryTerrain` (col, row, type_id), array of `SceneryFeaturePlacement` (type_id, positions or waypoints), array of `SceneryModelPlacement` (type_id, position, rotation).
+  - `scenery_data_load(SceneryData*, const char* yaml_path)`.
+  - `scenery_data_destroy(SceneryData*)`.
+- `assets/overworld/stone_labyrinth/overworld.yml` — First biome overworld graph.
+- `assets/overworld/stone_labyrinth/overworld_scenery.yml` — First biome scenery.
+- `assets/scenery_library.yml` — Shared scenery library (initial set of terrain types and models).
+- Update `src/data/README.md` — Add overworld_data, scenery_library, scenery_data entries.
 
-**Verification:** Entering/exiting a level has smooth zoom animation with LOD crossfade. No pop-in or jarring cuts. Transition from live rendering back to backdrop compositing is seamless (no visible frame where the switch happens).
+**Verification:** All three files load without errors. Dump loaded data to console (debug log). Verify node count, grid size, terrain tile count, feature count, and model count match the YAML. Verify library lookups resolve all IDs referenced by scenery data. Verify invalid YAML produces clean error messages.
 
 ---
 
-## Step 14 — Audio System
+### Step 11.2 — Overworld Terrain Mesh Generation
+
+Generate the biome's overworld terrain and scenery geometry from the loaded data.
+
+**Files:**
+
+- `src/render/overworld_gen.h / .c` — Overworld diorama generator:
+  - `overworld_gen_build(VoxelMesh* out, const SceneryData*, const SceneryLibrary*, const BiomeConfig*, const OverworldData*)` — Generates the full overworld terrain mesh:
+    1. **Platform base** — Large platform under the entire overworld grid.
+    2. **Terrain tiles** — For each grid cell, generate ground geometry based on the terrain type's procgen params (color, surface style). Skip tiles flagged `animated` (they render live).
+    3. **Terrain features** — Generate overlaid features (forests, mountains, rivers) at their placed positions using the feature's procgen params.
+    4. **Models** — Generate placed model geometry (houses, bridges, portals, statues) at their grid positions with rotation.
+    5. **Path geometry** — Generate visual paths (connecting lines/roads) between nodes using the waypoint data from `overworld.yml`. Path style derived from biome config.
+    6. **Edge border** — Overworld perimeter treatment (ocean, cliffs, void).
+  - Uses seeded RNG (seed from biome_id hash) for deterministic output.
+  - Returns list of animated tile positions (for live rendering exclusion from backdrop).
+
+**Verification:** Render the overworld terrain mesh live (no backdrop yet). Visually inspect: terrain types are distinguishable, features are placed at correct grid positions, models appear at correct locations with correct rotation, paths connect the right nodes, edge border looks clean. Toggle wireframe to verify geometry density is reasonable.
+
+---
+
+### Step 11.3 — LOD Mini-Diorama Generation
+
+Generate simplified diorama meshes for all puzzles in the biome and position them on the overworld grid.
+
+**Files:**
+
+- `src/render/lod_gen.h / .c` — LOD mesh generator:
+  - `lod_gen_build(VoxelMesh* out, const Grid* level, const BiomeConfig*)` — Generates a simplified mini-diorama from level data:
+    - Flat checkerboard floor (single quad per tile, no paving detail)
+    - Wall silhouettes (simplified block shapes, no mortar/block detail)
+    - Simple openings for entrance/exit doors
+    - Exit door glow quad (simple emissive indicator)
+    - Simplified diorama platform block
+    - Simplified lantern pillars (no detail)
+    - **Omitted:** Floor scatter, wall surface decorations, wall-top crumble, edge border, environmental feature detail.
+  - Uses same seeded RNG as full-detail generator for consistent silhouette.
+- Update `src/scene/overworld_scene.c` (or `overworld_gen.c`):
+  - Load all level JSON for the current biome.
+  - Call `lod_gen_build()` for each level.
+  - Position each LOD mesh at its node's grid coordinate within the overworld scene, scaled to fit one grid cell.
+  - All LOD meshes are included in the overworld terrain render (and later baked into the backdrop).
+
+**Verification:** Render the overworld with LOD meshes placed at node positions (still live, no backdrop). Each mini-diorama is recognizable — wall layouts match the actual puzzle, checkerboard floor is visible, exit glow is present. Verify LOD meshes are correctly positioned at their graph node coordinates. Compare LOD mesh to full-detail mesh for the same level to confirm the silhouette matches.
+
+---
+
+### Step 11.4 — Overworld Backdrop Pre-Rendering and Disk Caching
+
+Pre-render the entire overworld (terrain + LOD meshes) to a backdrop texture and cache it to disk.
+
+**Files:**
+
+- `src/scene/overworld_scene.h / .c` — Backdrop integration:
+  - At biome load: compute data hash via `backdrop_cache_compute_hash()`.
+  - Attempt `backdrop_cache_load()` with the hash. On hit → skip mesh generation and rendering entirely, load texture from disk.
+  - On miss → generate terrain mesh (Step 11.2), generate LOD meshes (Step 11.3), render all static geometry into FBO via `backdrop_begin_render()` / `backdrop_end_render()`, save to disk via `backdrop_cache_save()`, evict old cache entries.
+  - Animated tile positions (from terrain gen) are recorded — these regions are left blank in the backdrop.
+  - On viewport resize: invalidate and re-render (but don't re-generate meshes; re-render from existing meshes into new FBO size). Update cache.
+  - On secret node reveal: re-render backdrop to include new node/path geometry. Update cache.
+
+**Verification:** First biome load shows a loading bar while meshes generate and backdrop renders. Second load (same data) is near-instant — verify via timing log that cache was hit and no mesh generation occurred. Modify a level JSON file and reload — verify cache is invalidated and backdrop is re-generated. Toggle backdrop on/off (debug key) to confirm pixel-identical match with live rendering. Animated tile regions in the backdrop are blank/neutral colored.
+
+---
+
+### Step 11.5 — Live Overlay Rendering
+
+Render all dynamic elements that composite on top of the static backdrop.
+
+**Files:**
+
+- Update `src/scene/overworld_scene.c` — Live overlay layer:
+  - **Theseus player token** — Small figure rendered at the current node position (or interpolated along a path during movement). Uses the actor mesh from Step 6, scaled down.
+  - **Node state indicators** — Per-node overlays based on save data:
+    - Not yet reached: desaturation tint (semi-transparent grey overlay quad over the mini-diorama region).
+    - Available (unbeaten): subtle pulse glow.
+    - Beaten (1 star): flag or torch sprite.
+    - Optimal (2 stars): golden flag or double torch, enhanced glow.
+  - **Animated scenery tiles** — For each tile flagged `animated`, render its geometry live with sprite sheet cycling (frame index = `floor(time * frame_rate) % frame_count`). Sprite sheets are generated from the terrain type / feature procgen params at biome load time.
+  - **Star gate effects** — Glow, shimmer, or lock icon on star gate nodes. Locked vs. unlocked visual state based on current star count.
+- `src/render/sprite_anim.h / .c` — Sprite sheet animation helper:
+  - `SpriteAnim` struct: texture handle, frame count, frame rate, current frame.
+  - `sprite_anim_update(SpriteAnim*, float dt)` — Advance frame.
+  - `sprite_anim_bind(const SpriteAnim*)` — Bind current frame's texture region.
+
+**Verification:** Theseus token is visible on the overworld at the correct node. Node state indicators match save data — verify with a save file that has a mix of completed/incomplete/optimal levels. Animated tiles show visible motion (water flows, etc.) at correct positions. Star gates show locked/unlocked state. All overlays align correctly with the backdrop image — no visible offset or misregistration.
+
+---
+
+### Step 11.6 — Graph Navigation
+
+Cardinal direction movement between nodes with input locking and navigation rules.
+
+**Files:**
+
+- Update `src/scene/overworld_scene.c` — Navigation system:
+  - Accept cardinal direction input (N/S/E/W) from the input manager.
+  - Look up the current node's `exits` map for the pressed direction.
+  - Apply navigation rules before allowing movement:
+    - From a completed node → can move to any adjacent node.
+    - From an incomplete node → can only move to a completed adjacent node.
+    - Star gate nodes → passable only if biome star count ≥ threshold.
+    - If no valid exit in pressed direction → ignore input.
+  - On valid move: **lock input**, begin Theseus walk animation along the path waypoints from current node to destination node. Token follows the visual path (interpolating through waypoints, not straight-line).
+  - On walk completion: **unlock input**, update current node. Save current position to save data (auto-save).
+  - Walk speed: configurable, ~2–3 grid cells per second.
+  - Confirm/Enter on a level node → signal level entry (handled in Step 11.7).
+  - Confirm/Enter on a transition node → signal biome transition (handled in Step 11.7).
+
+**Verification:** Navigate between nodes using cardinal directions. Verify input is locked during walk animation (rapid key presses don't queue or skip). Verify navigation rules: can't advance past an unsolved level, can retreat to solved levels, star gates block when insufficient stars. Verify Theseus follows the visual path waypoints (not straight-line). Verify current node persists across save/load.
+
+---
+
+### Step 11.7 — Node Interaction and Biome Transitions
+
+Level entry, biome transitions, and the loading screen flow.
+
+**Files:**
+
+- Update `src/scene/overworld_scene.c` — Node interaction:
+  - **Level entry:** On confirm at a level node, signal the scene manager to begin a zoom transition (Step 12) into the puzzle scene for that level.
+  - **Biome transition:** On confirm at a transition node:
+    1. Begin **fade-out** (or themed wipe) over ~0.5s.
+    2. Once screen is fully occluded, unload current biome data (meshes, backdrop, audio).
+    3. Load new biome: parse data files, check backdrop cache, generate meshes on cache miss. Show **loading bar** during generation (with progress updates: "Generating terrain…", "Generating puzzles…", "Rendering backdrop…").
+    4. Position Theseus at the `target_node` specified by the transition.
+    5. Begin **fade-in** (or reverse wipe) to reveal the new biome.
+  - **Loading bar UI:** Simple progress bar rendered during the fade-occluded period. On cache hit, loading is near-instant (progress jumps to 100%). On cache miss, progress updates as each generation stage completes.
+- `src/scene/loading_screen.h / .c` — Minimal loading screen with progress bar:
+  - `loading_screen_show(const char* message)` — Display loading bar with message.
+  - `loading_screen_set_progress(float progress)` — Update bar (0.0–1.0).
+  - `loading_screen_hide()` — Fade out loading screen.
+- Update `src/data/save_data.c` — Save/load current biome + current node position.
+
+**Verification:** Enter a level from the overworld — zoom transition begins (actual zoom implemented in Step 12; for now, verify the scene transition occurs). Activate a biome transition node — screen fades out, loading bar appears, new biome loads, screen fades in with Theseus at the correct starting node. Verify first-visit loading shows progress bar for 5–10 seconds. Verify second visit loads near-instantly (cache hit). Verify save file records current biome and node — quit and reload places Theseus at the saved position in the saved biome.
+
+---
+
+## Step 12 — Zoom Transitions
+
+Seamless zoom between overworld and puzzle views. During transitions, the overworld **backdrop remains in use** for all non-puzzle scenery. Only the source and destination puzzle dioramas render as live 3D for the LOD↔full-detail crossfade. See [08 -- Engine Architecture](08-engine-architecture.md) §3.3.5.
+
+---
+
+### Step 12.1 — Zoom Camera Interpolation
+
+Smooth orthographic camera zoom/pan with easing.
+
+**Files:**
+
+- `src/scene/zoom_transition.h / .c` — Transition state (pushed between overworld and puzzle):
+  - `ZoomTransition` struct: source ortho bounds, destination ortho bounds, easing function, duration, elapsed time, source/destination puzzle IDs.
+  - `zoom_transition_start(ZoomTransition*, OrthoRect from, OrthoRect to, float duration, EasingFunc ease)` — Begin interpolation.
+  - `zoom_transition_update(ZoomTransition*, float dt)` → `bool finished` — Advance interpolation. Returns the current interpolated `OrthoRect` for the camera.
+  - Easing: ease-in-out cubic (default). Duration: ~0.8–1.2s.
+  - For auto-progression (puzzle → puzzle): three-phase interpolation — zoom out to mid-level, pan across overworld, zoom in. The zoom-out and pan phases can overlap for fluid motion.
+- Update `src/render/camera.h / .c`:
+  - `camera_set_ortho_rect(Camera*, OrthoRect)` — Set ortho bounds directly (used during zoom interpolation).
+  - `camera_lerp_ortho(OrthoRect from, OrthoRect to, float t, EasingFunc)` → `OrthoRect` — Interpolate between two ortho framings.
+
+**Verification:** Trigger a zoom transition (debug key or entering a level). Camera smoothly zooms from the overworld framing to the puzzle framing with ease-in-out motion. No jerky movement or sudden jumps. Reverse zoom (puzzle → overworld) is equally smooth. Mid-zoom camera framing shows the correct intermediate view. Auto-progression pan across overworld is fluid.
+
+---
+
+### Step 12.2 — LOD↔Full-Detail Crossfade
+
+Swap between LOD and full-detail puzzle meshes during the zoom.
+
+**Files:**
+
+- Update `src/scene/zoom_transition.c`:
+  - During zoom-in: once the target diorama exceeds a screen-space size threshold, begin crossfading the LOD mesh out (alpha → 0) and the full-detail mesh in (alpha → 1). Crossfade duration: ~0.2–0.3s.
+  - During zoom-out: reverse crossfade — full-detail mesh fades out, LOD mesh fades in.
+  - Only the **target puzzle's** LOD and full-detail meshes participate in the crossfade. All other LOD meshes remain part of the backdrop image and are not rendered live.
+  - The full-detail mesh is generated at the start of the zoom-in transition (or pre-generated if coming from auto-progression). The previous puzzle's full-detail mesh is released once fully off-screen.
+- Update `src/render/renderer.c`:
+  - Support alpha-blended rendering of voxel meshes for the crossfade (enable blending, pass alpha uniform to shader during crossfade period only).
+
+**Verification:** Zoom into a level — the LOD mini-diorama smoothly fades to the full-detail diorama. No visible pop or sudden geometry swap. The crossfade threshold is tuned so the swap happens when the LOD simplifications would become noticeable. Zoom out — full-detail fades back to LOD cleanly. The overworld backdrop image is visible behind the live puzzle geometry throughout the transition — no gaps or seams at the boundary.
+
+---
+
+### Step 12.3 — Backdrop Compositing During Transitions
+
+Ensure the overworld backdrop image and live puzzle geometry align pixel-perfectly during zoom transitions.
+
+**Files:**
+
+- Update `src/scene/zoom_transition.c`:
+  - During the transition, render in this order each frame:
+    1. Draw the overworld backdrop texture (full image, zoomed/cropped to the current camera framing).
+    2. Draw the source puzzle mesh as live 3D (if still on-screen during zoom).
+    3. Draw the destination puzzle mesh as live 3D (LOD or full-detail depending on crossfade state).
+    4. Draw live overlay elements (Theseus token, animated tiles, node indicators).
+    5. Post-processing (vignette, bloom).
+  - The backdrop quad must be drawn using the **same interpolated ortho projection** as the live geometry, ensuring they share the same coordinate space at every frame.
+  - On transition completion (camera settled at puzzle framing): switch to the puzzle scene's steady-state rendering (puzzle backdrop + live gameplay layer). On transition completion (camera settled at overworld framing): switch to overworld steady-state rendering (overworld backdrop + live overlay layer).
+
+**Verification:** During the entire zoom transition, the overworld backdrop image and the live puzzle geometry are seamlessly composited — no visible seam, gap, or misalignment between the backdrop and live layers. Test by zooming slowly (debug: 5× duration) and inspecting the boundary between backdrop and live puzzle geometry at various zoom levels. Verify that the transition endpoint is seamless — the frame where steady-state rendering resumes looks identical to the last frame of the transition.
+
+---
+
+### Step 12 — Overall Verification
+
+After all substeps are complete, perform a full integration test:
+
+1. **Overworld → puzzle:** Press confirm on a level node. Camera zooms smoothly, LOD crossfades to full-detail, backdrop stays seamless throughout. Level start sequence begins on arrival.
+2. **Puzzle → overworld:** Exit from pause menu. Camera zooms out, full-detail crossfades to LOD, backdrop stays seamless. Theseus token appears at the correct node.
+3. **Auto-progression (puzzle → puzzle):** Complete a level. Camera zooms out, pans across overworld to the next level, zooms in. Backdrop is used throughout; only the source and destination puzzles render live. LOD crossfade works correctly at both ends.
+4. **Skip/accelerate:** Press confirm during any transition to accelerate it. The accelerated transition is still smooth (no jarring snap).
+5. **Edge cases:** Zoom transition during a viewport resize. Transition to/from the first and last levels in a biome. Transition when the source and destination puzzles are adjacent (minimal pan).
+
+---
+
+## Step 13 — Audio System
 
 Sound effects, music, and ambient audio.
 
@@ -774,7 +965,7 @@ Sound effects, music, and ambient audio.
 
 ---
 
-## Step 15 — Touch Input Adapter (iOS)
+## Step 14 — Touch Input Adapter (iOS)
 
 On-screen controls for iOS/iPadOS (portrait mode).
 
@@ -792,7 +983,7 @@ On-screen controls for iOS/iPadOS (portrait mode).
 
 ---
 
-## Step 16 — Apple TV Remote Adapter
+## Step 15 — Apple TV Remote Adapter
 
 Siri Remote and MFi gamepad support for tvOS.
 
@@ -810,7 +1001,7 @@ Siri Remote and MFi gamepad support for tvOS.
 
 ---
 
-## Step 17 — Level Content (Full Biome Set)
+## Step 16 — Level Content (Full Biome Set)
 
 Author all level JSON files and overworld graphs for every biome.
 
@@ -827,7 +1018,7 @@ Author all level JSON files and overworld graphs for every biome.
 
 ---
 
-## Step 18 — Audio Content
+## Step 17 — Audio Content
 
 Replace placeholder audio with final assets.
 
@@ -842,7 +1033,7 @@ Replace placeholder audio with final assets.
 
 ---
 
-## Step 19 — Font and Visual Assets
+## Step 18 — Font and Visual Assets
 
 Replace placeholder font and add any remaining visual assets.
 
@@ -856,7 +1047,7 @@ Replace placeholder font and add any remaining visual assets.
 
 ---
 
-## Step 20 — Platform Builds and Testing
+## Step 19 — Platform Builds and Testing
 
 Build, test, and fix per-platform issues.
 
@@ -877,7 +1068,7 @@ Build, test, and fix per-platform issues.
 
 ---
 
-## Step 21 — Polish and Ship
+## Step 20 — Polish and Ship
 
 Final pass before release.
 
